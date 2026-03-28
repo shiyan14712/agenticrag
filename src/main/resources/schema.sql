@@ -1,3 +1,17 @@
+-- 简化版：一租户一用户模式（企业号），User与Tenant概念合并
+CREATE TABLE IF NOT EXISTS sys_user (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(128) NOT NULL COMMENT '账号业务唯一标识（单租户模式下，逻辑上等同于 tenant_id）',
+    username VARCHAR(128) NOT NULL COMMENT '企业账号登录名',
+    password VARCHAR(255) NOT NULL COMMENT '密码的散列值',
+    roles VARCHAR(512) DEFAULT NULL COMMENT '账号的角色列表（逗号分隔），可用于简单 RAG 拦截验证',
+    status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE' COMMENT '账号状态：ACTIVE, DISABLED',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_user_id (user_id),
+    UNIQUE KEY uk_username (username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统用户表（企业号）';
+
 -- 用户长期记忆表：由大模型在发现用户偏好时存入，或拦截器拉取作为 System Prompt
 CREATE TABLE IF NOT EXISTS user_global_memory (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -13,7 +27,7 @@ CREATE TABLE IF NOT EXISTS user_global_memory (
 CREATE TABLE IF NOT EXISTS document_metadata (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     document_id VARCHAR(128) NOT NULL COMMENT '业务文档ID，对外暴露的唯一追踪编号',
-    tenant_id VARCHAR(128) NOT NULL COMMENT '多租户ID隔离',
+    tenant_id VARCHAR(128) NOT NULL COMMENT '多租户ID隔离（在简化一企业号模式下，可直接复用 user_id）',
     kb_id VARCHAR(128) NOT NULL COMMENT '所归属的逻辑知识库ID',
     file_name VARCHAR(255) NOT NULL COMMENT '原文件名',
     file_extension VARCHAR(32) NOT NULL COMMENT '文件扩展名，决定策略工厂的走向(如: md, pdf, txt)',
@@ -29,7 +43,7 @@ CREATE TABLE IF NOT EXISTS document_metadata (
 CREATE TABLE chat_session (
     id              BIGINT          PRIMARY KEY AUTO_INCREMENT,
     session_id      VARCHAR(36)     NOT NULL UNIQUE COMMENT 'UUID v7，兼顾唯一性与时间排序',
-    user_id         BIGINT          NOT NULL COMMENT '关联用户表',
+    user_id         VARCHAR(128)    NOT NULL COMMENT '关联用户表 sys_user.user_id',
     title           VARCHAR(200)    DEFAULT NULL COMMENT '会话标题，首轮对话后由 LLM 自动生成',
     status          VARCHAR(16)     NOT NULL DEFAULT 'ACTIVE' COMMENT 'ACTIVE / ARCHIVED / DELETED',
     model_id        VARCHAR(64)     DEFAULT NULL COMMENT '该会话绑定的模型标识（可选）',
