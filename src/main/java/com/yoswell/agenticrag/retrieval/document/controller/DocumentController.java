@@ -64,6 +64,7 @@ public class DocumentController {
     @GetMapping("/{documentId}/status")
     public Mono<Map<String, String>> getDocumentStatus(@PathVariable String documentId) {
         String tenantId = SecurityUtils.getCurrentTenantId();
+        // 注意：这里的 service 方法要查库，是同步阻塞方法，因此放在 boundedElastic 线程池中执行
         return Mono.fromCallable(() -> documentService.getDocumentStatusDetails(documentId, tenantId))
                 .subscribeOn(Schedulers.boundedElastic());
     }

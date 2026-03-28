@@ -14,7 +14,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import com.yoswell.agenticrag.core.agent.dto.RetrievedChunk;
+import com.yoswell.agenticrag.core.agent.dto.RetrievedChunkDTO;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -76,7 +76,7 @@ public class KnowledgeChunkIndexService {
      * @param size 返回数量
      * @return 检索结果
      */
-    public List<RetrievedChunk> searchByKeyword(String query, String tenantId, List<String> allowedRoles, int size) {
+    public List<RetrievedChunkDTO> searchByKeyword(String query, String tenantId, List<String> allowedRoles, int size) {
         try {
             Request request = new Request("POST", "/" + indexName + "/_search");
             request.setJsonEntity(buildKeywordSearchPayload(query, tenantId, allowedRoles, size));
@@ -96,7 +96,7 @@ public class KnowledgeChunkIndexService {
      * @param size 返回数量
      * @return 检索结果
      */
-    public List<RetrievedChunk> searchByVector(List<Float> queryVector, String tenantId, List<String> allowedRoles, int size) {
+    public List<RetrievedChunkDTO> searchByVector(List<Float> queryVector, String tenantId, List<String> allowedRoles, int size) {
         if (queryVector == null || queryVector.isEmpty()) {
             return List.of();
         }
@@ -192,13 +192,13 @@ public class KnowledgeChunkIndexService {
      * @param response Elasticsearch 查询响应
      * @return 标准化后的检索结果
      */
-    private List<RetrievedChunk> parseSearchHits(JsonNode response) {
+    private List<RetrievedChunkDTO> parseSearchHits(JsonNode response) {
         JsonNode hits = response.path("hits").path("hits");
         if (!hits.isArray() || hits.isEmpty()) {
             return List.of();
         }
 
-        ArrayList<RetrievedChunk> chunks = new ArrayList<>(hits.size());
+        ArrayList<RetrievedChunkDTO> chunks = new ArrayList<>(hits.size());
         for (JsonNode hit : hits) {
             JsonNode source = hit.path("_source");
             ArrayList<String> roles = new ArrayList<>();
@@ -207,7 +207,7 @@ public class KnowledgeChunkIndexService {
                 roleNode.forEach(node -> roles.add(node.asText()));
             }
 
-            chunks.add(new RetrievedChunk(
+            chunks.add(new RetrievedChunkDTO(
                     source.path("chunkId").asText(hit.path("_id").asText()),
                     source.path("documentId").asText(),
                     source.path("documentName").asText(),

@@ -11,7 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.yoswell.agenticrag.retrieval.document.dto.DocumentParseRequest;
+import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentParseRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentMetadata;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentProcessingStatus;
@@ -118,7 +118,7 @@ public class DocumentService {
 
         log.info("Document metadata persisted to MySQL: documentId={}, status={}", documentId, metadata.getStatus());
 
-        documentMessageProducer.sendDocParseRequest(new DocumentParseRequest(
+        documentMessageProducer.sendDocParseRequest(new DocumentParseRequestDTO(
                 documentId,
                 tenantId,
                 metadata.getKbId(),

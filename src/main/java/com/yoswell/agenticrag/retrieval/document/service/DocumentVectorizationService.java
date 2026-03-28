@@ -11,7 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.yoswell.agenticrag.retrieval.document.dto.DocumentVectorizeRequest;
+import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentVectorizeRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentMetadata;
 import com.yoswell.agenticrag.retrieval.document.index.KnowledgeChunkDocument;
 import com.yoswell.agenticrag.retrieval.document.index.KnowledgeChunkIndexService;
@@ -59,7 +59,7 @@ public class DocumentVectorizationService {
      * @param request 向量化阶段的上下文消息
      */
     @Transactional
-    public void vectorize(DocumentVectorizeRequest request) {
+    public void vectorize(DocumentVectorizeRequestDTO request) {
         DocumentMetadata metadata = requireMetadata(request.documentId());
         updateStatus(metadata, DocumentProcessingStatus.PARSING);
 

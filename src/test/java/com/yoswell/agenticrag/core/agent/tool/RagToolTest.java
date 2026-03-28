@@ -20,8 +20,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.yoswell.agenticrag.core.agent.context.RagRetrievalContextHolder;
-import com.yoswell.agenticrag.core.agent.dto.RagSearchResult;
-import com.yoswell.agenticrag.core.agent.dto.RetrievedChunk;
+import com.yoswell.agenticrag.core.agent.dto.RagSearchResultDTO;
+import com.yoswell.agenticrag.core.agent.dto.RetrievedChunkDTO;
 import com.yoswell.agenticrag.core.agent.rag.RerankerClient;
 import com.yoswell.agenticrag.retrieval.document.index.KnowledgeChunkIndexService;
 import com.yoswell.agenticrag.web.security.model.TenantUser;
@@ -77,7 +77,7 @@ class RagToolTest {
         String observation = ragTool.searchEnterpriseKnowledge("budget");
 
         assertThat(observation).contains("[Doc ID: doc-1][Chunk ID: chk-1]");
-        verify(ragRetrievalContextHolder).publish(org.mockito.ArgumentMatchers.argThat((RagSearchResult result) ->
+        verify(ragRetrievalContextHolder).publish(org.mockito.ArgumentMatchers.argThat((RagSearchResultDTO result) ->
                 result.citations().size() == 2
                         && result.citations().get(0).docId().equals("doc-1")
                         && result.citations().get(0).chunkId().equals("chk-1")));
@@ -85,17 +85,17 @@ class RagToolTest {
 
     @Test
     void calculateRrfFusionPrefersChunksReturnedByBothChannels() {
-        List<RetrievedChunk> fused = ragTool.calculateRrfFusion(
+        List<RetrievedChunkDTO> fused = ragTool.calculateRrfFusion(
                 List.of(chunk("shared", "doc-1", 0.9), chunk("only-bm25", "doc-2", 0.8)),
                 List.of(chunk("shared", "doc-1", 0.7), chunk("only-knn", "doc-3", 0.6))
         );
 
-        assertThat(fused).extracting(RetrievedChunk::chunkId)
+        assertThat(fused).extracting(RetrievedChunkDTO::chunkId)
                 .containsExactly("shared", "only-bm25", "only-knn");
     }
 
-    private RetrievedChunk chunk(String chunkId, String documentId, double score) {
-        return new RetrievedChunk(
+    private RetrievedChunkDTO chunk(String chunkId, String documentId, double score) {
+        return new RetrievedChunkDTO(
                 chunkId,
                 documentId,
                 documentId + ".txt",

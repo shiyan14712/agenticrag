@@ -1,6 +1,6 @@
 package com.yoswell.agenticrag.core.agent.ai;
 
-import com.yoswell.agenticrag.core.agent.dto.IntentDecision;
+import com.yoswell.agenticrag.core.agent.dto.IntentDecisionDTO;
 
 import dev.langchain4j.service.SystemMessage;
 import dev.langchain4j.service.UserMessage;
@@ -14,5 +14,5 @@ public interface IntentRouterAgent {
         "Your task is to analyze the user request and strictly output the classification based on the schema.",
         "Allowed intents are: 'rag_search' (knowledge based questions) or 'small_talk' (generic or casual prompts)."
     })
-    IntentDecision classify(@UserMessage String userMessage);
+    IntentDecisionDTO classify(@UserMessage String userMessage);
 }

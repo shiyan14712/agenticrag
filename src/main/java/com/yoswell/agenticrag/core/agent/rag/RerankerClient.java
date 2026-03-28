@@ -18,7 +18,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
-import com.yoswell.agenticrag.core.agent.dto.RetrievedChunk;
+import com.yoswell.agenticrag.core.agent.dto.RetrievedChunkDTO;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -49,7 +49,7 @@ public class RerankerClient {
                 .build();
     }
 
-    public List<RetrievedChunk> rerank(String query, List<RetrievedChunk> chunks) {
+    public List<RetrievedChunkDTO> rerank(String query, List<RetrievedChunkDTO> chunks) {
         if (chunks == null || chunks.isEmpty() || !StringUtils.hasText(rerankerApiUrl)) {
             return chunks == null ? List.of() : List.copyOf(chunks);
         }
@@ -68,7 +68,7 @@ public class RerankerClient {
         }
     }
 
-    private HttpRequest buildRequest(String query, List<RetrievedChunk> chunks) throws IOException {
+    private HttpRequest buildRequest(String query, List<RetrievedChunkDTO> chunks) throws IOException {
         ObjectNode payload = objectMapper.createObjectNode();
         if (StringUtils.hasText(rerankerModelName)) {
             payload.put("model", rerankerModelName);
@@ -90,7 +90,7 @@ public class RerankerClient {
         return builder.build();
     }
 
-    private List<RetrievedChunk> mergeRerankerResponse(List<RetrievedChunk> chunks, String body) throws IOException {
+    private List<RetrievedChunkDTO> mergeRerankerResponse(List<RetrievedChunkDTO> chunks, String body) throws IOException {
         JsonNode root = objectMapper.readTree(body);
         JsonNode results = root.path("results");
         if (!results.isArray() || results.isEmpty()) {
@@ -102,14 +102,14 @@ public class RerankerClient {
             rerankerScores.put(result.path("index").asInt(), result.path("relevance_score").asDouble());
         }
 
-        ArrayList<RetrievedChunk> reordered = new ArrayList<>(chunks.size());
+        ArrayList<RetrievedChunkDTO> reordered = new ArrayList<>(chunks.size());
         rerankerScores.entrySet().stream()
                 .sorted(Map.Entry.<Integer, Double>comparingByValue(Comparator.reverseOrder()))
                 .forEach(entry -> {
                     int index = entry.getKey();
                     if (index >= 0 && index < chunks.size()) {
-                        RetrievedChunk chunk = chunks.get(index);
-                        reordered.add(new RetrievedChunk(
+                        RetrievedChunkDTO chunk = chunks.get(index);
+                        reordered.add(new RetrievedChunkDTO(
                                 chunk.chunkId(),
                                 chunk.documentId(),
                                 chunk.documentName(),

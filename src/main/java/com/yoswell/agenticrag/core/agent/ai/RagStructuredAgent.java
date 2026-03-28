@@ -1,6 +1,6 @@
 package com.yoswell.agenticrag.core.agent.ai;
 
-import com.yoswell.agenticrag.core.agent.dto.RagStructuredResponse;
+import com.yoswell.agenticrag.core.agent.dto.RagStructuredResponseDTO;
 
 import dev.langchain4j.service.MemoryId;
 import dev.langchain4j.service.SystemMessage;
@@ -15,5 +15,5 @@ public interface RagStructuredAgent {
         "You MUST respond ONLY with a valid JSON document matching the requested JSON Schema.",
         "Extract the information to answer, supply exact references as citations, and suggest follow-up questions."
     })
-    RagStructuredResponse askStructured(@MemoryId String sessionId, @UserMessage String userMessage);
+    RagStructuredResponseDTO askStructured(@MemoryId String sessionId, @UserMessage String userMessage);
 }

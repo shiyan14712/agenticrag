@@ -15,7 +15,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import com.yoswell.agenticrag.retrieval.document.dto.DocumentVectorizeRequest;
+import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentVectorizeRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentMetadata;
 import com.yoswell.agenticrag.retrieval.document.index.KnowledgeChunkDocument;
 import com.yoswell.agenticrag.retrieval.document.index.KnowledgeChunkIndexService;
@@ -84,7 +84,7 @@ class DocumentVectorizationServiceTest {
             return 1;
         }).when(documentMetadataMapper).updateById(any(DocumentMetadata.class));
 
-        documentVectorizationService.vectorize(new DocumentVectorizeRequest(
+        documentVectorizationService.vectorize(new DocumentVectorizeRequestDTO(
                 "doc-1",
                 "tenant-a",
                 "kb-1",

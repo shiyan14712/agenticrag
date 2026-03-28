@@ -1,6 +1,5 @@
 package com.yoswell.agenticrag.core.agent.orchestrator;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import org.slf4j.Logger;
@@ -11,9 +10,9 @@ import org.springframework.stereotype.Service;
 import com.yoswell.agenticrag.core.agent.ai.EnterpriseAgent;
 import com.yoswell.agenticrag.core.agent.ai.IntentRouterAgent;
 import com.yoswell.agenticrag.core.agent.context.RagRetrievalContextHolder;
-import com.yoswell.agenticrag.core.agent.dto.CitationDto;
-import com.yoswell.agenticrag.core.agent.dto.IntentDecision;
-import com.yoswell.agenticrag.core.agent.dto.RagSearchResult;
+import com.yoswell.agenticrag.core.agent.dto.CitationDTO;
+import com.yoswell.agenticrag.core.agent.dto.IntentDecisionDTO;
+import com.yoswell.agenticrag.core.agent.dto.RagSearchResultDTO;
 import com.yoswell.agenticrag.platform.session.service.ChatMessageService;
 
 import dev.langchain4j.service.TokenStream;
@@ -50,7 +49,7 @@ public class ChatOrchestrator {
                     chatMessageService.saveUserMessage(sessionId, message);
 
                     log.info("START: Scene 4A - Intent Routing via strict JSON Schema Constraint");
-                    IntentDecision decision = intentRouterAgent.classify(message);
+                    IntentDecisionDTO decision = intentRouterAgent.classify(message);
                     log.info("ROUTER DECIDED: intent={}, confidence={}", decision.intent(), decision.confidence());
 
                     sink.next(ServerSentEvent.builder(decision.intent()).event("intent_resolved").build());
@@ -66,11 +65,11 @@ public class ChatOrchestrator {
                                 sink.next(ServerSentEvent.builder(token).event("message").build());
                             })
                             .onComplete(response -> {
-                                List<CitationDto> citations = List.of();
+                                List<CitationDTO> citations = List.of();
                                 try {
                                     if ("rag_search".equals(decision.intent())) {
                                         citations = ragRetrievalContextHolder.consume(sessionId)
-                                                .map(RagSearchResult::citations)
+                                                .map(RagSearchResultDTO::citations)
                                                 .orElse(List.of());
                                         emitCitationsWidget(sink, citations);
                                     }
@@ -94,7 +93,7 @@ public class ChatOrchestrator {
     }
 
     private void emitCitationsWidget(reactor.core.publisher.FluxSink<ServerSentEvent<String>> sink,
-                                     List<CitationDto> citations) {
+                                     List<CitationDTO> citations) {
         if (citations == null || citations.isEmpty()) {
             return;
         }

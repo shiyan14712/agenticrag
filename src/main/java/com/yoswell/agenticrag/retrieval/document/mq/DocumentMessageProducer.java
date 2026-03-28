@@ -5,7 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
-import com.yoswell.agenticrag.retrieval.document.dto.DocumentParseRequest;
+import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentParseRequestDTO;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
@@ -31,7 +31,7 @@ public class DocumentMessageProducer {
      *
      * @param request 解析阶段所需的上下文
      */
-    public void sendDocParseRequest(DocumentParseRequest request) {
+    public void sendDocParseRequest(DocumentParseRequestDTO request) {
         log.info("Sending doc-parse-request for documentId: {}, url: {}", request.documentId(), request.fileUrl());
         try {
             String payload = objectMapper.writeValueAsString(request);

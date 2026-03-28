@@ -12,9 +12,9 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 
 import com.yoswell.agenticrag.core.agent.context.RagRetrievalContextHolder;
-import com.yoswell.agenticrag.core.agent.dto.CitationDto;
-import com.yoswell.agenticrag.core.agent.dto.RagSearchResult;
-import com.yoswell.agenticrag.core.agent.dto.RetrievedChunk;
+import com.yoswell.agenticrag.core.agent.dto.CitationDTO;
+import com.yoswell.agenticrag.core.agent.dto.RagSearchResultDTO;
+import com.yoswell.agenticrag.core.agent.dto.RetrievedChunkDTO;
 import com.yoswell.agenticrag.core.agent.rag.RerankerClient;
 import com.yoswell.agenticrag.retrieval.document.index.KnowledgeChunkIndexService;
 import com.yoswell.agenticrag.web.security.model.TenantUser;
@@ -69,13 +69,13 @@ public class RagTool {
             List<String> allowedRoles = List.of(role);
             log.debug("Building hybrid retrieval request for tenant={}, roles={}", tenantId, allowedRoles);
 
-            List<RetrievedChunk> bm25Hits = knowledgeChunkIndexService.searchByKeyword(query, tenantId, allowedRoles, bm25TopK);
-            List<RetrievedChunk> knnHits = knowledgeChunkIndexService.searchByVector(queryVector.vectorAsList(), tenantId, allowedRoles, knnTopK);
-            List<RetrievedChunk> fusedChunks = calculateRrfFusion(bm25Hits, knnHits);
-            List<RetrievedChunk> rerankedChunks = crossAttentionRerank(fusedChunks, query);
-            List<RetrievedChunk> topChunks = rerankedChunks.stream().limit(rerankTopN).toList();
+            List<RetrievedChunkDTO> bm25Hits = knowledgeChunkIndexService.searchByKeyword(query, tenantId, allowedRoles, bm25TopK);
+            List<RetrievedChunkDTO> knnHits = knowledgeChunkIndexService.searchByVector(queryVector.vectorAsList(), tenantId, allowedRoles, knnTopK);
+            List<RetrievedChunkDTO> fusedChunks = calculateRrfFusion(bm25Hits, knnHits);
+            List<RetrievedChunkDTO> rerankedChunks = crossAttentionRerank(fusedChunks, query);
+            List<RetrievedChunkDTO> topChunks = rerankedChunks.stream().limit(rerankTopN).toList();
 
-            RagSearchResult result = new RagSearchResult(
+            RagSearchResultDTO result = new RagSearchResultDTO(
                     buildObservation(topChunks),
                     topChunks,
                     buildCitations(topChunks)
@@ -89,8 +89,8 @@ public class RagTool {
         }
     }
 
-    List<RetrievedChunk> calculateRrfFusion(List<RetrievedChunk> bm25Hits, List<RetrievedChunk> knnHits) {
-        Map<String, RetrievedChunk> chunkRegistry = new LinkedHashMap<>();
+    List<RetrievedChunkDTO> calculateRrfFusion(List<RetrievedChunkDTO> bm25Hits, List<RetrievedChunkDTO> knnHits) {
+        Map<String, RetrievedChunkDTO> chunkRegistry = new LinkedHashMap<>();
         Map<String, Double> rrfScores = new LinkedHashMap<>();
 
         mergeRrfScores(bm25Hits, chunkRegistry, rrfScores);
@@ -102,23 +102,23 @@ public class RagTool {
                 .toList();
     }
 
-    List<RetrievedChunk> crossAttentionRerank(List<RetrievedChunk> fusedChunks, String query) {
+    List<RetrievedChunkDTO> crossAttentionRerank(List<RetrievedChunkDTO> fusedChunks, String query) {
         log.debug("Reranking {} documents against query...", fusedChunks.size());
         return rerankerClient.rerank(query, fusedChunks);
     }
 
-    private void mergeRrfScores(List<RetrievedChunk> hits,
-                                Map<String, RetrievedChunk> chunkRegistry,
+    private void mergeRrfScores(List<RetrievedChunkDTO> hits,
+                                Map<String, RetrievedChunkDTO> chunkRegistry,
                                 Map<String, Double> rrfScores) {
         for (int index = 0; index < hits.size(); index++) {
-            RetrievedChunk hit = hits.get(index);
+            RetrievedChunkDTO hit = hits.get(index);
             chunkRegistry.putIfAbsent(hit.chunkId(), hit);
             rrfScores.merge(hit.chunkId(), 1.0d / (RRF_K + index + 1), Double::sum);
         }
     }
 
-    private RetrievedChunk withScore(RetrievedChunk chunk, double score) {
-        return new RetrievedChunk(
+    private RetrievedChunkDTO withScore(RetrievedChunkDTO chunk, double score) {
+        return new RetrievedChunkDTO(
                 chunk.chunkId(),
                 chunk.documentId(),
                 chunk.documentName(),
@@ -131,9 +131,9 @@ public class RagTool {
         );
     }
 
-    private String buildObservation(List<RetrievedChunk> topChunks) {
+    private String buildObservation(List<RetrievedChunkDTO> topChunks) {
         StringBuilder builder = new StringBuilder();
-        for (RetrievedChunk topChunk : topChunks) {
+        for (RetrievedChunkDTO topChunk : topChunks) {
             builder.append("[Doc ID: ")
                     .append(topChunk.documentId())
                     .append("][Chunk ID: ")
@@ -145,10 +145,10 @@ public class RagTool {
         return builder.toString().trim();
     }
 
-    private List<CitationDto> buildCitations(List<RetrievedChunk> topChunks) {
-        ArrayList<CitationDto> citations = new ArrayList<>(topChunks.size());
-        for (RetrievedChunk topChunk : topChunks) {
-            citations.add(new CitationDto(
+    private List<CitationDTO> buildCitations(List<RetrievedChunkDTO> topChunks) {
+        ArrayList<CitationDTO> citations = new ArrayList<>(topChunks.size());
+        for (RetrievedChunkDTO topChunk : topChunks) {
+            citations.add(new CitationDTO(
                     topChunk.documentId(),
                     topChunk.documentName(),
                     topChunk.chunkId(),

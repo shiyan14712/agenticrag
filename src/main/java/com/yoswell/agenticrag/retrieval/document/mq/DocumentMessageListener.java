@@ -7,7 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
 
-import com.yoswell.agenticrag.retrieval.document.dto.DocumentVectorizeRequest;
+import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentVectorizeRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentVectorizationService;
 
 import tools.jackson.databind.ObjectMapper;
@@ -40,7 +40,7 @@ public class DocumentMessageListener {
     public void listenVectorizeRequest(String message) {
         log.info("Received doc-vectorize-request from Kafka: {}", message);
         try {
-            DocumentVectorizeRequest request = objectMapper.readValue(message, DocumentVectorizeRequest.class);
+            DocumentVectorizeRequestDTO request = objectMapper.readValue(message, DocumentVectorizeRequestDTO.class);
             documentVectorizationService.vectorize(request);
         } catch (Exception exception) {
             log.error("Failed to process doc-vectorize-request", exception);

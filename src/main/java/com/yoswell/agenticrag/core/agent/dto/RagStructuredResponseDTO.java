@@ -1,0 +1,25 @@
+package com.yoswell.agenticrag.core.agent.dto;
+
+import java.util.List;
+
+/**
+ * RAG 结构化响应数据传输对象
+ * 
+ * <p>正式的非流式 JSON Schema 格式，用于客户端一次性拉取聚合后的结构化数据。</p>
+ * 
+ * <p>该 DTO 遵循严格的 JSON Schema 规范，适用于非 SSE 场景下的单次请求 - 响应模式，
+ * 确保返回给前端的数据包含完整的答案、引用溯源和建议问题。</p>
+ * 
+ * <p>参考架构文档：CLAUDE.md - Agent 编排与对话交互模块</p>
+ * 
+ * @param answer 大模型生成的最终答案文本（Markdown 格式）
+ * @param citations 引用溯源列表，每个引用包含文档 ID、块 ID 和置信度评分
+ * @param suggestedQuestions 建议的后续问题列表，引导用户深入探索相关主题
+ * @author AgenticRAG
+ * @since 2026-03-28
+ */
+public record RagStructuredResponseDTO(
+    String answer,
+    List<CitationDTO> citations,
+    List<String> suggestedQuestions
+) {}

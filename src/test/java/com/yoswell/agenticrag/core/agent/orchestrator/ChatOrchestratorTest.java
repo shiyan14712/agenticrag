@@ -19,9 +19,9 @@ import org.springframework.http.codec.ServerSentEvent;
 import com.yoswell.agenticrag.core.agent.ai.EnterpriseAgent;
 import com.yoswell.agenticrag.core.agent.ai.IntentRouterAgent;
 import com.yoswell.agenticrag.core.agent.context.RagRetrievalContextHolder;
-import com.yoswell.agenticrag.core.agent.dto.CitationDto;
-import com.yoswell.agenticrag.core.agent.dto.IntentDecision;
-import com.yoswell.agenticrag.core.agent.dto.RagSearchResult;
+import com.yoswell.agenticrag.core.agent.dto.CitationDTO;
+import com.yoswell.agenticrag.core.agent.dto.IntentDecisionDTO;
+import com.yoswell.agenticrag.core.agent.dto.RagSearchResultDTO;
 import com.yoswell.agenticrag.platform.session.service.ChatMessageService;
 
 import dev.langchain4j.data.message.AiMessage;
@@ -46,13 +46,13 @@ class ChatOrchestratorTest {
 
     @Test
     void dispatchDynamicStreamEmitsCitationsAfterMessageTokens() {
-        when(intentRouterAgent.classify("查一下财报")).thenReturn(new IntentDecision("rag_search", 0.95));
+        when(intentRouterAgent.classify("查一下财报")).thenReturn(new IntentDecisionDTO("rag_search", 0.95));
         when(ragRetrievalContextHolder.bindSession("session-1")).thenReturn(() -> {
         });
-        when(ragRetrievalContextHolder.consume("session-1")).thenReturn(Optional.of(new RagSearchResult(
+        when(ragRetrievalContextHolder.consume("session-1")).thenReturn(Optional.of(new RagSearchResultDTO(
                 "observation",
                 List.of(),
-                List.of(new CitationDto("doc-1", "财报.pdf", "chk-1", 0.93))
+                List.of(new CitationDTO("doc-1", "财报.pdf", "chk-1", 0.93))
         )));
         when(enterpriseAgent.chat("session-1", "查一下财报")).thenReturn(new FakeTokenStream(List.of("第一段", "第二段")));
 
@@ -71,7 +71,7 @@ class ChatOrchestratorTest {
         assertThat(events).isNotNull();
         assertThat(events).extracting(ServerSentEvent::event)
                 .containsExactly("intent_resolved", "message", "message", "citations");
-        verify(chatMessageService).saveAssistantMessage("session-1", "第一段第二段", List.of(new CitationDto("doc-1", "财报.pdf", "chk-1", 0.93)));
+        verify(chatMessageService).saveAssistantMessage("session-1", "第一段第二段", List.of(new CitationDTO("doc-1", "财报.pdf", "chk-1", 0.93)));
     }
 
     private static class FakeTokenStream implements TokenStream {

@@ -1,12 +1,12 @@
-package com.yoswell.agenticrag.retrieval.document.dto;
+package com.yoswell.agenticrag.retrieval.document.dto.request;
 
 import java.util.List;
 
 /**
- * 文档进入向量化阶段时使用的消息体。
+ * 文档上传成功后投递到解析链路的消息体。
  *
- * <p>它和解析消息拥有相近字段，但语义不同：这里表达的是
- * “当前文档可以继续进行切块、embedding 和索引写入”。</p>
+ * <p>它描述的是“哪个文档需要继续进入解析流程”，因此只保留后续阶段所需的
+ * 最小上下文，不直接携带文件二进制内容。</p>
  *
  * @param documentId 业务侧文档唯一标识
  * @param tenantId 文档所属租户
@@ -17,7 +17,7 @@ import java.util.List;
  * @param allowedRoles 文档允许访问的角色列表
  * @param timestamp 消息创建时间戳，用于链路追踪
  */
-public record DocumentVectorizeRequest(
+public record DocumentParseRequestDTO(
         String documentId,
         String tenantId,
         String kbId,

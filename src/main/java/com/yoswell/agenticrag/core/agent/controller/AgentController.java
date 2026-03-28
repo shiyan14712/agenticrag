@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.yoswell.agenticrag.core.agent.ai.RagStructuredAgent;
-import com.yoswell.agenticrag.core.agent.dto.RagStructuredResponse;
+import com.yoswell.agenticrag.core.agent.dto.RagStructuredResponseDTO;
 import com.yoswell.agenticrag.core.agent.orchestrator.ChatOrchestrator;
 import com.yoswell.agenticrag.platform.session.service.SessionService;
 import com.yoswell.agenticrag.util.SecurityUtils;
@@ -73,7 +73,7 @@ public class AgentController {
      * @return Mono格式封装的受Jackson与LLM绑定的强JSON格式响应对象 
      */
     @PostMapping(value = "/chat/structured", produces = MediaType.APPLICATION_JSON_VALUE)
-    public Mono<RagStructuredResponse> chatStructured(
+    public Mono<RagStructuredResponseDTO> chatStructured(
             @RequestHeader(value = "X-Session-Id", defaultValue = "default_session") String sessionId,
             @RequestBody String message) {
         
