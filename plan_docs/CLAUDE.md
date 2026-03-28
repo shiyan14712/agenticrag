@@ -7,7 +7,7 @@
 
 ## 0. 项目概述 (Project Overview)
 本项目是一个基于 Java 生态（Spring Boot 4.0.5 + LangChain4j）的企业级 Agentic RAG（检索增强生成智能体）系统。
-本系统的核心理念是**“渐进式能力叠加”**。它不仅提供传统的对话问答，更具备双模式 Agent 编排（ReAct & Plan-and-Execute）、分级上下文压缩、跨会话长期记忆、以及基于 MinerU 的高精度异构文档解析管道。
+本系统的核心理念是**“渐进式能力叠加”**。它不仅提供传统的对话问答，更具备单一 Agent 编排（ReAct）、分级上下文压缩、跨会话长期记忆、以及基于 MinerU 的高精度异构文档解析管道。
 
 **核心存储规范（不可违背）：**
 *   **MinIO**：负责所有物理文件的存储（原始 PDF/Word、解析后的庞大 Markdown 文件、提取的图片）。
@@ -22,12 +22,10 @@
 **目标**：Agent 是系统的“大脑”，负责意图路由、步骤编排并与前端进行富媒体交互。本模块严格遵循“非确定性内容输出自然语言，确定性流程输出 JSON Schema”的原则。
 
 *   **技术栈**：Spring Boot WebFlux (SSE), LangChain4j, JSON Schema (Jackson)
-*   **双模式 Agent 编排机制**：
-    1.  **ReAct 模式 (常规问答)**：基于 LangChain4j `AiServices`。大模型根据当前上下文，按照 `Thought -> Action (调用 Tool) -> Observation` 循环自主执行。
-    2.  **Plan-and-Execute 模式 (复杂任务)**：针对宏大任务（如“对比A和B并生成报告”）。主 Agent 首先输出一个符合 JSON Schema 的**执行计划数组**（Todos），Java 后端解析该数组并迭代执行子任务（或交由 Sub-Agents 执行），最后汇总生成答案。
+*   **单一 Agent 编排机制**：
+    * **ReAct 模式 (常规问答)**：基于 LangChain4j `AiServices`。大模型根据当前上下文，按照 `Thought -> Action (调用 Tool) -> Observation` 循环自主执行。
 *   **前端接口预留与 SSE 契约 (Rich UI Rendering)**：
     系统提供统一的 WebFlux SSE 接口 `/api/v1/agent/chat/stream`。后端会向前端推送不同类型的 Event，前端据此渲染不同的 UI 组件：
-    *   `event: plan_steps` -> 推送 JSON 数组，前端渲染为 **Todos 进度条**。
     *   `event: tool_call` -> 推送工具执行状态（如“正在检索知识库：2025财报”），前端渲染为加载动画。
     *   `event: message` -> 推送 Markdown 文本流，前端渲染为打字机对话。
     *   `event: citations` -> 推送 JSON 格式的溯源数组（包含 `doc_id`, `chunk_id`），前端渲染为**富文本引用卡片**。

@@ -11,7 +11,6 @@ import org.springframework.web.bind.annotation.RestController;
 import com.yoswell.agenticrag.core.agent.ai.RagStructuredAgent;
 import com.yoswell.agenticrag.core.agent.dto.RagStructuredResponse;
 import com.yoswell.agenticrag.core.agent.orchestrator.ChatOrchestrator;
-import com.yoswell.agenticrag.core.agent.orchestrator.PlanAndExecuteOrchestrator;
 import com.yoswell.agenticrag.platform.session.service.SessionService;
 import com.yoswell.agenticrag.util.SecurityUtils;
 
@@ -32,18 +31,14 @@ public class AgentController {
     private final ChatOrchestrator chatOrchestrator;
     private final RagStructuredAgent ragStructuredAgent;
     private final SessionService sessionService;
-    private final PlanAndExecuteOrchestrator planAndExecuteOrchestrator;
 
-    public AgentController(ChatOrchestrator chatOrchestrator, 
-                           RagStructuredAgent ragStructuredAgent, 
-                           SessionService sessionService,
-                           PlanAndExecuteOrchestrator planAndExecuteOrchestrator) {
+    public AgentController(ChatOrchestrator chatOrchestrator,
+                           RagStructuredAgent ragStructuredAgent,
+                           SessionService sessionService) {
         this.chatOrchestrator = chatOrchestrator;
         this.ragStructuredAgent = ragStructuredAgent;
         this.sessionService = sessionService;
-        this.planAndExecuteOrchestrator = planAndExecuteOrchestrator;
     }
-
     /**
      * 发起基础的多轮增量流式对话(Streaming Conversation)
      *
@@ -65,26 +60,6 @@ public class AgentController {
     }
 
 
-    /**
-     * 发起复杂任务的 Plan-and-Execute 宏调度流
-     * 
-     * 场景：用户提交宏大复杂的分析任务时触发。该端点会先调度 PlannerAgent 生成计划(Todos)，
-     * 再经由 ExecutorAgent 逐一完成，最后使用 SynthesizerAgent 归纳输出。
-     * 流中将通过不同 event (如 plan_steps, tool_call, message) 推动前端进度渲染。
-     * 
-     * @param sessionId 会话边界
-     * @param message 让实体执行或者提供答案的问题
-     * @return 响应式的服务器发送事件流(ServerSentEvent 流)
-     */
-    @PostMapping(value = "/chat/plan-execute/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<ServerSentEvent<String>> planAndExecuteStream(
-            @RequestHeader(value = "X-Session-Id", defaultValue = "default_session") String sessionId,
-            @RequestBody String message) {
-        
-        String userId = SecurityUtils.getCurrentUserId();
-        sessionService.verifySessionAccess(sessionId, userId);
-        return planAndExecuteOrchestrator.executeComplexTask(message);
-    }
 
     /**
      * 结构化格式化输出要求模式(Structural Data Generating)

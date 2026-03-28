@@ -25,18 +25,15 @@ public class ChatOrchestrator {
 
     private final IntentRouterAgent intentRouterAgent;
     private final EnterpriseAgent enterpriseAgent;
-    private final PlanAndExecuteOrchestrator planAndExecuteOrchestrator;
     private final ObjectMapper objectMapper;
     private final ChatMessageService chatMessageService;
 
     public ChatOrchestrator(IntentRouterAgent intentRouterAgent,
                             EnterpriseAgent enterpriseAgent,
-                            PlanAndExecuteOrchestrator planAndExecuteOrchestrator,
                             ObjectMapper objectMapper,
                             ChatMessageService chatMessageService) {
         this.intentRouterAgent = intentRouterAgent;
         this.enterpriseAgent = enterpriseAgent;
-        this.planAndExecuteOrchestrator = planAndExecuteOrchestrator;
         this.objectMapper = objectMapper;
         this.chatMessageService = chatMessageService;
     }
@@ -53,25 +50,7 @@ public class ChatOrchestrator {
 
                     sink.next(ServerSentEvent.builder(decision.intent()).event("intent_resolved").build());
 
-                    if ("complex_plan".equals(decision.intent())) {
-                        log.info("ROUTED TO: Scene 4B - Plan Generation");
-                        
-                        StringBuilder fullResponse = new StringBuilder();
-                        planAndExecuteOrchestrator.executeComplexTask(message)
-                            .doOnNext(event -> {
-                                sink.next(event);
-                                if ("message".equals(event.event())) {
-                                    fullResponse.append(event.data());
-                                }
-                            })
-                            .doOnComplete(() -> {
-                                chatMessageService.saveAssistantMessage(sessionId, fullResponse.toString(), null);
-                                sink.complete();
-                            })
-                            .doOnError(sink::error)
-                            .subscribe();
 
-                    } else {
                         log.info("ROUTED TO: Scene 3 - Natural Language SSE");
                         StringBuilder fullResponse = new StringBuilder();
                         TokenStream tokenStream = enterpriseAgent.chat(sessionId, message);
@@ -90,7 +69,6 @@ public class ChatOrchestrator {
                             })
                             .onError(sink::error)
                             .start();
-                    }
                 } catch (Exception e) {
                     log.error("Error inside WebFlux Virtual Thread execution", e);
                     sink.error(e);

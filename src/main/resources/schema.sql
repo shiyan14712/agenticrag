@@ -48,11 +48,11 @@ CREATE TABLE chat_message (
     session_id      VARCHAR(36)     NOT NULL COMMENT '关联 chat_session.session_id',
     role            VARCHAR(16)     NOT NULL COMMENT 'user / assistant / system / tool',
     content         TEXT            NOT NULL COMMENT '消息正文（Markdown / JSON）',
-    content_type    VARCHAR(16)     NOT NULL DEFAULT 'text' COMMENT 'text / tool_call / tool_result / plan',
+    content_type    VARCHAR(16)     NOT NULL DEFAULT 'text' COMMENT 'text / tool_call / tool_result',
     token_count     INT             DEFAULT NULL COMMENT '该条消息估算 token 数，用于上下文窗口管理',
 
     -- 结构化元数据（JSON 列，而非打平为多列）
-    metadata        JSON            DEFAULT NULL COMMENT '扩展字段：citations[], tool_name, plan_steps[] 等',
+    metadata        JSON            DEFAULT NULL COMMENT '扩展字段：citations[], tool_name, 等',
 
     -- 压缩状态标记
     compression_level VARCHAR(4)    DEFAULT 'L1' COMMENT 'L1(原文) / L2(摘要) / L3(实体)',

@@ -12,7 +12,7 @@ public interface IntentRouterAgent {
     @SystemMessage({
         "You are an intent routing classifier.",
         "Your task is to analyze the user request and strictly output the classification based on the schema.",
-        "Allowed intents are: 'rag_search' (knowledge based questions), 'complex_plan' (multi-step macro tasks like compare, generate full reports), 'small_talk' (generic or casual prompts)."
+        "Allowed intents are: 'rag_search' (knowledge based questions) or 'small_talk' (generic or casual prompts)."
     })
     IntentDecision classify(@UserMessage String userMessage);
 }
