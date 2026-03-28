@@ -6,10 +6,10 @@
 ---
 
 ## 0. 项目概述 (Project Overview)
-本项目是一个基于 Java 生态（Spring Boot 4.0.5 + LangChain4j）的企业级 Agentic RAG（检索增强生成智能体）系统。
+本项目是一个基于 Java21 生态（Spring Boot 4.0.5 + LangChain4j）的企业级 Agentic RAG（检索增强生成智能体）系统。
 本系统的核心理念是**“渐进式能力叠加”**。它不仅提供传统的对话问答，更具备单一 Agent 编排（ReAct）、分级上下文压缩、跨会话长期记忆、以及基于 MinerU 的高精度异构文档解析管道。
 
-**核心存储规范（不可违背）：**
+**核心存储规范，分工明确各司其职：**
 *   **MinIO**：负责所有物理文件的存储（原始 PDF/Word、解析后的庞大 Markdown 文件、提取的图片）。
 *   **MySQL**：只存元数据指针（文档状态、MinIO URL、权限配置）和用户长期记忆（`user_global_memory`），绝对不存文件文本。
 *   **Redis**：负责短期与中短期对话上下文缓存（Session Memory）和高频热点数据。
@@ -48,13 +48,16 @@
     *   **混合检索 (Hybrid Search)**：在 ElasticSearch 中通过 Java API 并发执行两路查询：向量相似度匹配 + BM25 全文检索。
     *   **RRF 融合与重排序**：将双路召回的结果（Top 20）使用倒数秩融合（Reciprocal Rank Fusion）合并，随后统一发送至独立的 Reranker 模型进行 Cross-Attention 交叉打分，截取 Top `rerank-top-n`。
     *   **Context 组装**：将这 Top 5 的 Chunk 组装成带有明确 `[Doc ID]` 标记的文本块，作为 Tool 的返回值（Observation）喂给 Agent。
+*   **工程落地补充（已实现约束）**：
+    *   ElasticSearch 连接配置必须从 `spring.elasticsearch.uris / username / password / api-key` 读取，不允许在 Java Config 中写死 `localhost`。
+    *   除了给 LLM 的 Observation 文本外，RAG 检索还必须同步生成结构化检索结果（`RetrievedChunk` / `CitationDto`），供 `ChatOrchestrator` 在 SSE 结束时推送 `event: citations`。
+    *   Reranker 必须允许失败降级；当外部 reranker endpoint 不可用时，系统应回退到 RRF 融合后的顺序而不是整条链路报错中断。
 
 ## 3. Session 管理[core]
 
 它是 Agent 对话流程的基础设施层——没有 Session，Agent 和 Memory 模块都无法正确工作。
 
 *   **技术栈**: MyBatis-Plus3.5.16, MySQL, Redis
-
 
 ### 设计目标
 
@@ -89,6 +92,10 @@
     *   **持久化介质**：MySQL `user_global_memory` 表（取代单机 `.md` 文件以支持分布式部署）。
     *   **自动提取**：提供 `@Tool("save_user_preference")`。Agent 发现用户偏好（如“我只看核心代码”、“用中文回复”）时自主调用该工具写入 MySQL。
     *   **生命周期**：每次新建 Session，拦截器自动读取该用户的长期记忆表，转化为 System Prompt 注入对话初始上下文中。
+*   **工程落地补充（已实现约束）**：
+    *   `memoryId` 在当前工程中等价于真实 `sessionId`，绝对不要假设它是 `"userId_sessionId"` 拼接串；需要先查 `chat_session` 再拿到 `user_id`。
+    *   LangChain4j 侧必须显式挂接 `ChatMemoryProvider`，确保 `@AiService` 真正使用 `HierarchicalChatMemoryStore`，不能只定义 Store Bean 却没有被 AI Service 消费。
+    *   L2/L3 压缩结果除了写 Redis 以外，还必须回写 `chat_message.compressed_content` 与 `chat_session.summary`，否则“分层记忆”无法在持久化层闭环。
 
 ## 5. 异构文档处理与消息管道模块
 
@@ -103,6 +110,11 @@
     为了未来优雅地兼容 TXT、DOCX 等格式，此处**必须**使用设计模式：
     *   **Strategy Pattern (策略模式)**：定义 `DocumentParserStrategy` 接口，下设 `MinerUMarkdownStrategy` (根据 Markdown 标题层级结合 Overlap 切分) 和 `StandardTxtStrategy`。
     *   **Factory Method (工厂模式)**：`DocumentParserFactory` 根据 MySQL 中的文件后缀动态组装并返回具体的策略执行类。
+*   **工程落地补充（已实现约束）**：
+    *   `doc-parse-request` 与 `doc-vectorize-request` 必须是显式 JSON DTO，不要再发送松散 `Map` 或靠日志约定字段名。
+    *   `DocumentParserStrategy` 不应再使用 `void parse(...)` 这种“只执行不返回”的接口；必须返回标准化解析结果（例如 `ParsedDocument` + `ParsedDocumentChunk`），这样向量化链路才能稳定消费。
+    *   Java 侧 `doc-vectorize-request` 的真实流程已经确定为：回读 MinIO 内容 -> 根据扩展名选择策略 -> 分块 -> embedding -> 写 ES -> 更新 `document_metadata.status`。
+    *   `document_metadata` 的代码模型与 schema 必须始终保持一致，至少包括 `document_id / tenant_id / kb_id / allowed_roles / status / minio_url / file_extension` 这些字段。
 
 ## 6. 权限控制与安全模块
 

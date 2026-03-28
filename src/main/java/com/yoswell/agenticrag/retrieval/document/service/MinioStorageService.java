@@ -1,6 +1,8 @@
 package com.yoswell.agenticrag.retrieval.document.service;
 
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,6 +10,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import io.minio.BucketExistsArgs;
+import io.minio.GetObjectArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
@@ -65,6 +68,24 @@ public class MinioStorageService {
         }
     }
 
+    public byte[] readFile(String fileUrl) {
+        ParsedMinioLocation location = parseLocation(fileUrl);
+        try (InputStream inputStream = minioClient.getObject(
+                GetObjectArgs.builder()
+                        .bucket(location.bucket())
+                        .object(location.objectName())
+                        .build())) {
+            return inputStream.readAllBytes();
+        } catch (Exception e) {
+            log.error("Failed to read file from MinIO: {}", fileUrl, e);
+            throw new RuntimeException("MinIO read failed for: " + fileUrl, e);
+        }
+    }
+
+    public String readUtf8String(String fileUrl) {
+        return new String(readFile(fileUrl), StandardCharsets.UTF_8);
+    }
+
     private void ensureBucketExists(String bucket) {
         try {
             boolean exists = minioClient.bucketExists(BucketExistsArgs.builder().bucket(bucket).build());
@@ -76,5 +97,37 @@ public class MinioStorageService {
             log.error("Failed to ensure bucket exists: {}", bucket, e);
             throw new RuntimeException("MinIO bucket check failed", e);
         }
+    }
+
+    private ParsedMinioLocation parseLocation(String fileUrl) {
+        if (fileUrl == null || fileUrl.isBlank()) {
+            throw new IllegalArgumentException("File URL cannot be blank");
+        }
+
+        String normalizedEndpoint = endpoint.endsWith("/") ? endpoint.substring(0, endpoint.length() - 1) : endpoint;
+        String normalizedUrl = fileUrl.trim();
+
+        if (normalizedUrl.startsWith("minio://")) {
+            String path = normalizedUrl.substring("minio://".length());
+            String[] segments = path.split("/", 2);
+            if (segments.length < 2) {
+                throw new IllegalArgumentException("Invalid MinIO URL: " + fileUrl);
+            }
+            return new ParsedMinioLocation(segments[0], segments[1]);
+        }
+
+        if (!normalizedUrl.startsWith(normalizedEndpoint + "/")) {
+            throw new IllegalArgumentException("Unsupported MinIO URL: " + fileUrl);
+        }
+
+        String path = normalizedUrl.substring(normalizedEndpoint.length() + 1);
+        String[] segments = path.split("/", 2);
+        if (segments.length < 2) {
+            throw new IllegalArgumentException("Invalid MinIO URL path: " + fileUrl);
+        }
+        return new ParsedMinioLocation(segments[0], segments[1]);
+    }
+
+    private record ParsedMinioLocation(String bucket, String objectName) {
     }
 }

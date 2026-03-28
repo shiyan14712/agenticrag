@@ -1,15 +1,17 @@
 package com.yoswell.agenticrag.retrieval.document.parser.strategy;
 
-import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.springframework.stereotype.Component;
+
+import com.yoswell.agenticrag.retrieval.document.parser.model.DocumentParseSource;
+import com.yoswell.agenticrag.retrieval.document.parser.model.ParsedDocument;
+import com.yoswell.agenticrag.retrieval.document.parser.model.ParsedDocumentChunk;
 
 @Component
 public class MinerUMarkdownStrategy implements DocumentParserStrategy {
@@ -20,20 +22,14 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
     private static final int DEFAULT_CHUNK_SIZE = 1200;
     private static final int DEFAULT_CHUNK_OVERLAP = 200;
 
-    private volatile List<String> lastChunks = List.of();
-
     @Override
-    public void parse(String fileUrl) {
-        Path path = resolvePath(fileUrl);
-        if (!Files.isRegularFile(path)) {
-            throw new IllegalArgumentException("Markdown file does not exist: " + fileUrl);
-        }
-
-        lastChunks = chunkMarkdown(readMarkdown(path), DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP);
-    }
-
-    List<String> getLastChunks() {
-        return lastChunks;
+    public ParsedDocument parse(DocumentParseSource source) {
+        List<String> chunks = chunkMarkdown(source.content(), DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP);
+        return new ParsedDocument(
+                source.fileUrl(),
+                source.fileName(),
+                toParsedChunks(source, chunks)
+        );
     }
 
     static List<String> chunkMarkdown(String markdown, int chunkSize, int overlap) {
@@ -53,6 +49,23 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
             appendChunks(section, normalizedChunkSize, normalizedOverlap, chunks);
         }
         return List.copyOf(chunks);
+    }
+
+    private static List<ParsedDocumentChunk> toParsedChunks(DocumentParseSource source, List<String> chunks) {
+        ArrayList<ParsedDocumentChunk> parsedChunks = new ArrayList<>(chunks.size());
+        for (int index = 0; index < chunks.size(); index++) {
+            parsedChunks.add(new ParsedDocumentChunk(
+                    deterministicChunkId(source, index),
+                    index,
+                    chunks.get(index)
+            ));
+        }
+        return List.copyOf(parsedChunks);
+    }
+
+    private static String deterministicChunkId(DocumentParseSource source, int index) {
+        String seed = source.fileUrl() + "|" + source.fileName() + "|" + index;
+        return "chk-" + UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8));
     }
 
     private static List<Section> splitSections(String markdown) {
@@ -95,7 +108,7 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
         String trailingBody = body.toString().strip();
         addSection(sections, headingStack, body);
         if (trailingBody.isEmpty() && !headingStack.isEmpty()
-            && (sections.isEmpty() || !sections.get(sections.size() - 1).headings().equals(headingStack))) {
+                && (sections.isEmpty() || !sections.get(sections.size() - 1).headings().equals(headingStack))) {
             sections.add(new Section(List.copyOf(headingStack), ""));
         }
 
@@ -208,21 +221,6 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
             builder.append(' ').append(heading.title());
         }
         return builder.toString();
-    }
-
-    private static Path resolvePath(String fileUrl) {
-        if (fileUrl == null || fileUrl.isBlank()) {
-            throw new IllegalArgumentException("File URL cannot be blank");
-        }
-        return fileUrl.startsWith("file:") ? Path.of(java.net.URI.create(fileUrl)) : Path.of(fileUrl);
-    }
-
-    private static String readMarkdown(Path path) {
-        try {
-            return Files.readString(path, StandardCharsets.UTF_8);
-        } catch (java.io.IOException exception) {
-            throw new UncheckedIOException("Failed to read markdown file: " + path, exception);
-        }
     }
 
     private record Heading(int level, String title) {

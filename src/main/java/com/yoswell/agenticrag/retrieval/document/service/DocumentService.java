@@ -1,6 +1,7 @@
 package com.yoswell.agenticrag.retrieval.document.service;
 
 import java.io.InputStream;
+import java.util.List;
 import java.util.UUID;
 
 import org.slf4j.Logger;
@@ -13,8 +14,10 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.yoswell.agenticrag.retrieval.document.dto.DocumentParseRequest;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentMetadata;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
+import com.yoswell.agenticrag.retrieval.document.model.DocumentProcessingStatus;
 import com.yoswell.agenticrag.retrieval.document.mq.DocumentMessageProducer;
 
 /**
@@ -26,6 +29,8 @@ import com.yoswell.agenticrag.retrieval.document.mq.DocumentMessageProducer;
 public class DocumentService {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentService.class);
+    private static final String DEFAULT_KB_ID = "default-kb";
+    private static final List<String> DEFAULT_ALLOWED_ROLES = List.of("ROLE_USER");
 
     private final MinioStorageService minioStorageService;
     private final DocumentMetadataMapper documentMetadataMapper;
@@ -86,14 +91,25 @@ public class DocumentService {
         metadata.setDocumentId(documentId);
         metadata.setFileName(fileName);
         metadata.setTenantId(tenantId);
+        metadata.setKbId(DEFAULT_KB_ID);
         metadata.setMinioUrl(minioUrl);
         metadata.setFileExtension(extension);
-        metadata.setStatus("UPLOADED_PENDING_PARSING");
+        metadata.setAllowedRoles(String.join(",", DEFAULT_ALLOWED_ROLES));
+        metadata.setStatus(DocumentProcessingStatus.UPLOADED.value());
         documentMetadataMapper.insert(metadata);
 
         log.info("Document metadata persisted to MySQL: documentId={}, status={}", documentId, metadata.getStatus());
 
-        documentMessageProducer.sendDocParseRequest(documentId, minioUrl, extension);
+        documentMessageProducer.sendDocParseRequest(new DocumentParseRequest(
+                documentId,
+                tenantId,
+                metadata.getKbId(),
+                fileName,
+                minioUrl,
+                extension,
+                DEFAULT_ALLOWED_ROLES,
+                System.currentTimeMillis()
+        ));
 
         return metadata;
     }

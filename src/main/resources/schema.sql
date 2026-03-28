@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS user_global_memory (
 -- 文档元数图架构指针表：仅存储状态、索引依据与 MinIO URL，绝不存储内容
 CREATE TABLE IF NOT EXISTS document_metadata (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(128) NOT NULL COMMENT '业务文档ID，对外暴露的唯一追踪编号',
     tenant_id VARCHAR(128) NOT NULL COMMENT '多租户ID隔离',
     kb_id VARCHAR(128) NOT NULL COMMENT '所归属的逻辑知识库ID',
     file_name VARCHAR(255) NOT NULL COMMENT '原文件名',
@@ -21,6 +22,7 @@ CREATE TABLE IF NOT EXISTS document_metadata (
     allowed_roles VARCHAR(512) COMMENT '权限控制：逗号分隔的 Role 列表，存入 ES 用作拦截 Filter',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_document_id (document_id),
     INDEX idx_tenant_kb (tenant_id, kb_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='企业文档元数据流水线跟踪表';
 

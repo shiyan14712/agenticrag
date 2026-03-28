@@ -5,14 +5,15 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.yoswell.agenticrag.platform.session.cache.SessionRedisManager;
 import com.yoswell.agenticrag.platform.session.entity.ChatMessage;
 import com.yoswell.agenticrag.platform.session.entity.ChatSession;
 import com.yoswell.agenticrag.platform.session.mapper.ChatMessageMapper;
 import com.yoswell.agenticrag.platform.session.mapper.ChatSessionMapper;
+
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 @Service
 public class ChatMessageService {
@@ -43,6 +44,7 @@ public class ChatMessageService {
         msg.setRole("user");
         msg.setContent(content);
         messageMapper.insert(msg);
+        incrementSessionMessageCount(sessionId, 1);
     }
 
     @Transactional
@@ -56,23 +58,35 @@ public class ChatMessageService {
         if (metadata != null) {
             try {
                 msg.setMetadata(objectMapper.writeValueAsString(metadata));
-            } catch (JsonProcessingException e) {
+            } catch (JacksonException e) {
             }
         }
         messageMapper.insert(msg);
 
-        // Update count
-        ChatSession session = sessionMapper.selectOne(
-            new QueryWrapper<ChatSession>().eq("session_id", sessionId)
-        );
-        if (session != null) {
-            session.setMessageCount(session.getMessageCount() + 2);
-            sessionMapper.updateById(session);
-            redisManager.cacheSessionMeta(session);
-
-            if (session.getTitle() == null && session.getMessageCount() >= 2) {
-                titleGenerator.generateTitleAsync(sessionId, "user query", content);
-            }
+        ChatSession session = incrementSessionMessageCount(sessionId, 1);
+        if (session != null && session.getTitle() == null && session.getMessageCount() >= 2) {
+            ChatMessage latestUserMessage = messageMapper.selectOne(new QueryWrapper<ChatMessage>()
+                    .eq("session_id", sessionId)
+                    .eq("role", "user")
+                    .orderByDesc("created_at")
+                    .last("LIMIT 1"));
+            String userMessage = latestUserMessage != null ? latestUserMessage.getContent() : "";
+            titleGenerator.generateTitleAsync(sessionId, userMessage, content);
         }
+    }
+
+    private ChatSession incrementSessionMessageCount(String sessionId, int delta) {
+        ChatSession session = sessionMapper.selectOne(
+                new QueryWrapper<ChatSession>().eq("session_id", sessionId)
+        );
+        if (session == null) {
+            return null;
+        }
+
+        int currentCount = session.getMessageCount() == null ? 0 : session.getMessageCount();
+        session.setMessageCount(currentCount + delta);
+        sessionMapper.updateById(session);
+        redisManager.cacheSessionMeta(session);
+        return session;
     }
 }

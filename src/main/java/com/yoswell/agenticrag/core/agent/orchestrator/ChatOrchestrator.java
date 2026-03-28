@@ -8,15 +8,17 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yoswell.agenticrag.core.agent.ai.EnterpriseAgent;
 import com.yoswell.agenticrag.core.agent.ai.IntentRouterAgent;
+import com.yoswell.agenticrag.core.agent.context.RagRetrievalContextHolder;
 import com.yoswell.agenticrag.core.agent.dto.CitationDto;
 import com.yoswell.agenticrag.core.agent.dto.IntentDecision;
+import com.yoswell.agenticrag.core.agent.dto.RagSearchResult;
 import com.yoswell.agenticrag.platform.session.service.ChatMessageService;
 
 import dev.langchain4j.service.TokenStream;
 import reactor.core.publisher.Flux;
+import tools.jackson.databind.ObjectMapper;
 
 @Service
 public class ChatOrchestrator {
@@ -27,15 +29,18 @@ public class ChatOrchestrator {
     private final EnterpriseAgent enterpriseAgent;
     private final ObjectMapper objectMapper;
     private final ChatMessageService chatMessageService;
+    private final RagRetrievalContextHolder ragRetrievalContextHolder;
 
     public ChatOrchestrator(IntentRouterAgent intentRouterAgent,
                             EnterpriseAgent enterpriseAgent,
                             ObjectMapper objectMapper,
-                            ChatMessageService chatMessageService) {
+                            ChatMessageService chatMessageService,
+                            RagRetrievalContextHolder ragRetrievalContextHolder) {
         this.intentRouterAgent = intentRouterAgent;
         this.enterpriseAgent = enterpriseAgent;
         this.objectMapper = objectMapper;
         this.chatMessageService = chatMessageService;
+        this.ragRetrievalContextHolder = ragRetrievalContextHolder;
     }
 
     public Flux<ServerSentEvent<String>> dispatchDynamicStream(String sessionId, String message) {
@@ -53,6 +58,7 @@ public class ChatOrchestrator {
 
                         log.info("ROUTED TO: Scene 3 - Natural Language SSE");
                         StringBuilder fullResponse = new StringBuilder();
+                        AutoCloseable retrievalScope = ragRetrievalContextHolder.bindSession(sessionId);
                         TokenStream tokenStream = enterpriseAgent.chat(sessionId, message);
                         tokenStream
                             .onNext(token -> {
@@ -60,14 +66,24 @@ public class ChatOrchestrator {
                                 sink.next(ServerSentEvent.builder(token).event("message").build());
                             })
                             .onComplete(response -> {
-                                List<CitationDto> citations = null;
-                                if ("rag_search".equals(decision.intent())) {
-                                    citations = emitMockCitationsWidget(sink);
+                                List<CitationDto> citations = List.of();
+                                try {
+                                    if ("rag_search".equals(decision.intent())) {
+                                        citations = ragRetrievalContextHolder.consume(sessionId)
+                                                .map(RagSearchResult::citations)
+                                                .orElse(List.of());
+                                        emitCitationsWidget(sink, citations);
+                                    }
+                                } finally {
+                                    closeQuietly(retrievalScope);
                                 }
                                 chatMessageService.saveAssistantMessage(sessionId, fullResponse.toString(), citations);
                                 sink.complete();
                             })
-                            .onError(sink::error)
+                            .onError(error -> {
+                                closeQuietly(retrievalScope);
+                                sink.error(error);
+                            })
                             .start();
                 } catch (Exception e) {
                     log.error("Error inside WebFlux Virtual Thread execution", e);
@@ -77,17 +93,27 @@ public class ChatOrchestrator {
         });
     }
 
-    // TODO: replace with actual retrieval and citation generation logic, this is just a mock implementation to demonstrate emitting a citations widget via SSE
-    private List<CitationDto> emitMockCitationsWidget(reactor.core.publisher.FluxSink<ServerSentEvent<String>> sink) {
-        List<CitationDto> citations = new ArrayList<>();
+    private void emitCitationsWidget(reactor.core.publisher.FluxSink<ServerSentEvent<String>> sink,
+                                     List<CitationDto> citations) {
+        if (citations == null || citations.isEmpty()) {
+            return;
+        }
         try {
-            citations.add(new CitationDto("doc-8899", "2025_Q3_Financial_Report.pdf", "chk-001", 0.92));
             String citationsJson = objectMapper.writeValueAsString(citations);
-
             sink.next(ServerSentEvent.builder(citationsJson).event("citations").build());
         } catch (Exception e) {
-            log.error("Error occurred while emitting mock citations widget", e);
+            log.error("Error occurred while emitting citations widget", e);
         }
-        return citations;
+    }
+
+    private void closeQuietly(AutoCloseable scope) {
+        if (scope == null) {
+            return;
+        }
+        try {
+            scope.close();
+        } catch (Exception e) {
+            log.debug("Failed to close rag retrieval scope cleanly", e);
+        }
     }
 }
