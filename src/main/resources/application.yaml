@@ -59,3 +59,7 @@ langchain4j:
     api-key: "jina_your_reranker_api_key"
     model-name: "jina-reranker-v2-base-multilingual"
 
+
+jwt:
+  secret: "4Z9Q8v/T2p+R1xE6wY7uI0oA4dL5sM3bF8G2hJ7vK1c="
+  expiration: 86400000
