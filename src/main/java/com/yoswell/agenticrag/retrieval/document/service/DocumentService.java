@@ -38,13 +38,16 @@ public class DocumentService {
     private final MinioStorageService minioStorageService;
     private final DocumentMetadataMapper documentMetadataMapper;
     private final DocumentMessageProducer documentMessageProducer;
+    private final org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
 
     public DocumentService(MinioStorageService minioStorageService,
                            DocumentMetadataMapper documentMetadataMapper,
-                           DocumentMessageProducer documentMessageProducer) {
+                           DocumentMessageProducer documentMessageProducer,
+                           org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate) {
         this.minioStorageService = minioStorageService;
         this.documentMetadataMapper = documentMetadataMapper;
         this.documentMessageProducer = documentMessageProducer;
+        this.redisTemplate = redisTemplate;
     }
 
     /**
@@ -164,12 +167,37 @@ public class DocumentService {
      * @return 只包含关键状态字段的 map
      */
     public java.util.Map<String, String> getDocumentStatusDetails(String documentId, String tenantId) {
+        String cacheKey = "doc:status:" + documentId + ":" + tenantId;
+        
+        try {
+            Object cachedStatus = redisTemplate.opsForValue().get(cacheKey);
+            if (cachedStatus instanceof java.util.Map) {
+                return (java.util.Map<String, String>) cachedStatus;
+            }
+        } catch (Exception e) {
+            log.warn("[Document Service] Failed to get document status from Redis: {}", e.getMessage());
+        }
+
         DocumentMetadata metadata = getDocumentStatus(documentId, tenantId);
-        return java.util.Map.of(
+        java.util.Map<String, String> statusMap = java.util.Map.of(
                 "documentId", metadata.getDocumentId(),
                 "status", metadata.getStatus(),
                 "fileName", metadata.getFileName() != null ? metadata.getFileName() : ""
         );
+        
+        try {
+            // 动态设置缓存时间：终态缓存较长，进行中状态缩短为 2 秒以保证前端轮询能较快拿到最新状态
+            long cacheSeconds = 2;
+            String status = metadata.getStatus();
+            if ("VECTORIZED".equals(status) || "FAILED".equals(status)) {
+                cacheSeconds = 60;
+            }
+            redisTemplate.opsForValue().set(cacheKey, statusMap, java.time.Duration.ofSeconds(cacheSeconds));
+        } catch (Exception e) {
+            log.warn("[Document Service] Failed to cache document status to Redis: {}", e.getMessage());
+        }
+
+        return statusMap;
     }
 
     /**
