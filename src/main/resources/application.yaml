@@ -72,5 +72,6 @@ langchain4j:
 jwt:
   secret: "YWdlbnRpY3JhZw=="
   expiration: 86400000
+  refresh-expiration: 604800000
 server:
   port: 8000

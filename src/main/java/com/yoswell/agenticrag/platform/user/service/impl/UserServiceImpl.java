@@ -1,6 +1,11 @@
 package com.yoswell.agenticrag.platform.user.service.impl;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Date;
+import java.util.HexFormat;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import javax.crypto.SecretKey;
@@ -9,14 +14,20 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.yoswell.agenticrag.common.ApiResponse;
+import com.yoswell.agenticrag.common.constants.AuthTokenCacheConstants;
 import com.yoswell.agenticrag.platform.user.dto.UserLoginReqDTO;
 import com.yoswell.agenticrag.platform.user.dto.UserLoginRespDTO;
+import com.yoswell.agenticrag.platform.user.dto.UserLogoutReqDTO;
+import com.yoswell.agenticrag.platform.user.dto.UserRefreshTokenReqDTO;
 import com.yoswell.agenticrag.platform.user.entity.SysUser;
 import com.yoswell.agenticrag.platform.user.mapper.SysUserMapper;
 import com.yoswell.agenticrag.platform.user.service.UserService;
 
+import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
@@ -31,10 +42,11 @@ public class UserServiceImpl implements UserService {
     @Value("${jwt.secret}")
     private String jwtSecret;
 
-    @Value("${jwt.expiration:86400}") // default 1 day in seconds
-    private Long jwtExpirationSeconds;
+    @Value("${jwt.expiration:86400000}")
+    private Long accessTokenExpirationMillis;
 
-    private static final String REDIS_TOKEN_PREFIX = "agenticrag:user:token:";
+    @Value("${jwt.refresh-expiration:604800000}")
+    private Long refreshTokenExpirationMillis;
 
     public UserServiceImpl(SysUserMapper sysUserMapper, PasswordEncoder passwordEncoder, StringRedisTemplate stringRedisTemplate) {
         this.sysUserMapper = sysUserMapper;
@@ -43,7 +55,44 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    public ApiResponse<UserLoginRespDTO> loginWithResponse(UserLoginReqDTO reqDTO) {
+        try {
+            return ApiResponse.success(login(reqDTO));
+        } catch (Exception e) {
+            return ApiResponse.error(401, e.getMessage());
+        }
+    }
+
+    @Override
+    public ApiResponse<UserLoginRespDTO> refreshWithResponse(UserRefreshTokenReqDTO reqDTO) {
+        try {
+            if (reqDTO == null) {
+                throw new RuntimeException("Refresh token is required");
+            }
+            return ApiResponse.success(refreshToken(reqDTO.getRefreshToken()));
+        } catch (Exception e) {
+            return ApiResponse.error(401, e.getMessage());
+        }
+    }
+
+    @Override
+    public ApiResponse<String> logoutWithResponse(String authorizationHeader, UserLogoutReqDTO reqDTO) {
+        try {
+            String accessToken = extractBearerToken(authorizationHeader);
+            String refreshToken = reqDTO == null ? null : reqDTO.getRefreshToken();
+            logout(accessToken, refreshToken);
+            return ApiResponse.success("Logout success");
+        } catch (Exception e) {
+            return ApiResponse.error(400, e.getMessage());
+        }
+    }
+
+    @Override
     public UserLoginRespDTO login(UserLoginReqDTO reqDTO) {
+        if (reqDTO == null || !StringUtils.hasText(reqDTO.getUsername()) || !StringUtils.hasText(reqDTO.getPassword())) {
+            throw new RuntimeException("Username and password are required");
+        }
+
         SysUser user = sysUserMapper.selectOne(new LambdaQueryWrapper<SysUser>()
                 .eq(SysUser::getUsername, reqDTO.getUsername())
                 .eq(SysUser::getStatus, "ACTIVE"));
@@ -56,32 +105,159 @@ public class UserServiceImpl implements UserService {
             throw new RuntimeException("Invalid username or password");
         }
 
-        // Generate JWT Token
-        SecretKey key = Keys.hmacShaKeyFor(Decoders.BASE64.decode(jwtSecret));
-        
-        long nowMillis = System.currentTimeMillis();
-        long expMillis = nowMillis + jwtExpirationSeconds * 1000;
-        Date now = new Date(nowMillis);
-        Date exp = new Date(expMillis);
+        return issueTokenPair(user);
+    }
 
-        String token = Jwts.builder()
-                .subject(user.getUserId())
-                .claim("tenantId", user.getUserId()) // 兼容现有拦截器的读取
-                .claim("role", user.getRoles())
-                .issuedAt(now)
-                .expiration(exp)
-                .signWith(key)
-                .compact();
+    @Override
+    public UserLoginRespDTO refreshToken(String refreshToken) {
+        if (!StringUtils.hasText(refreshToken)) {
+            throw new RuntimeException("Refresh token is required");
+        }
 
-        // 存入 Redis 用于拦截器双重校验（无状态下的会话管理），并设置同样的过期时间
-        stringRedisTemplate.opsForValue().set(REDIS_TOKEN_PREFIX + token, user.getUserId(), jwtExpirationSeconds, TimeUnit.SECONDS);
+        Claims claims = parseTokenClaims(refreshToken);
+        String tokenType = claims.get(AuthTokenCacheConstants.CLAIM_TOKEN_TYPE, String.class);
+        if (!AuthTokenCacheConstants.TOKEN_TYPE_REFRESH.equals(tokenType)) {
+            throw new RuntimeException("Invalid refresh token type");
+        }
 
-        return new UserLoginRespDTO(token, user.getUserId(), user.getUsername(), user.getRoles());
+        String userId = claims.getSubject();
+        if (!StringUtils.hasText(userId)) {
+            throw new RuntimeException("Invalid refresh token subject");
+        }
+
+        String refreshTokenHash = hashToken(refreshToken);
+        String cachedUserId = stringRedisTemplate.opsForValue()
+                .get(AuthTokenCacheConstants.REFRESH_TOKEN_PREFIX + refreshTokenHash);
+        if (!StringUtils.hasText(cachedUserId) || !cachedUserId.equals(userId)) {
+            throw new RuntimeException("Refresh token expired or revoked");
+        }
+
+        SysUser user = loadActiveUserByUserId(userId);
+        if (user == null) {
+            throw new RuntimeException("User does not exist or is disabled");
+        }
+
+        UserLoginRespDTO refreshed = issueTokenPair(user);
+
+        // Refresh Token 轮换：新令牌签发后，立即撤销旧 refresh token
+        stringRedisTemplate.delete(AuthTokenCacheConstants.REFRESH_TOKEN_PREFIX + refreshTokenHash);
+
+        return refreshed;
+    }
+
+    @Override
+    public void logout(String accessToken, String refreshToken) {
+        if (StringUtils.hasText(accessToken)) {
+            stringRedisTemplate.delete(AuthTokenCacheConstants.ACCESS_TOKEN_PREFIX + accessToken.trim());
+        }
+
+        if (StringUtils.hasText(refreshToken)) {
+            String refreshTokenHash = hashToken(refreshToken.trim());
+            stringRedisTemplate.delete(AuthTokenCacheConstants.REFRESH_TOKEN_PREFIX + refreshTokenHash);
+        }
     }
 
     @Override
     public boolean validateToken(String token) {
-        // 先检查 Redis 缓存中是否存在该 Token，以此作为是否过期/被注销的凭证
-        return Boolean.TRUE.equals(stringRedisTemplate.hasKey(REDIS_TOKEN_PREFIX + token));
+        if (!StringUtils.hasText(token)) {
+            return false;
+        }
+
+        return Boolean.TRUE.equals(stringRedisTemplate.hasKey(AuthTokenCacheConstants.ACCESS_TOKEN_PREFIX + token));
+    }
+
+    private UserLoginRespDTO issueTokenPair(SysUser user) {
+        long nowMillis = System.currentTimeMillis();
+
+        String accessToken = generateToken(user, AuthTokenCacheConstants.TOKEN_TYPE_ACCESS, accessTokenExpirationMillis, nowMillis);
+        String refreshToken = generateToken(user, AuthTokenCacheConstants.TOKEN_TYPE_REFRESH, refreshTokenExpirationMillis, nowMillis);
+
+        cacheAccessToken(accessToken, user.getUserId());
+        cacheRefreshToken(refreshToken, user.getUserId());
+
+        return new UserLoginRespDTO(
+                "Bearer",
+                accessToken,
+                nowMillis + accessTokenExpirationMillis,
+                refreshToken,
+                nowMillis + refreshTokenExpirationMillis,
+                user.getUserId(),
+                user.getUsername(),
+                user.getRoles());
+    }
+
+    private String generateToken(SysUser user, String tokenType, long ttlMillis, long nowMillis) {
+        SecretKey key = Keys.hmacShaKeyFor(Decoders.BASE64.decode(jwtSecret));
+        Date now = new Date(nowMillis);
+        Date exp = new Date(nowMillis + ttlMillis);
+
+        var builder = Jwts.builder()
+                .subject(user.getUserId())
+                .claim("tenantId", user.getUserId())
+                .claim("role", user.getRoles())
+                .claim(AuthTokenCacheConstants.CLAIM_TOKEN_TYPE, tokenType)
+                .issuedAt(now)
+                .expiration(exp)
+                .signWith(key);
+
+        if (AuthTokenCacheConstants.TOKEN_TYPE_REFRESH.equals(tokenType)) {
+            builder.id(UUID.randomUUID().toString());
+        }
+
+        return builder.compact();
+    }
+
+    private void cacheAccessToken(String accessToken, String userId) {
+        stringRedisTemplate.opsForValue().set(
+                AuthTokenCacheConstants.ACCESS_TOKEN_PREFIX + accessToken,
+                userId,
+                accessTokenExpirationMillis,
+                TimeUnit.MILLISECONDS);
+    }
+
+    private void cacheRefreshToken(String refreshToken, String userId) {
+        String refreshTokenHash = hashToken(refreshToken);
+        stringRedisTemplate.opsForValue().set(
+                AuthTokenCacheConstants.REFRESH_TOKEN_PREFIX + refreshTokenHash,
+                userId,
+                refreshTokenExpirationMillis,
+                TimeUnit.MILLISECONDS);
+    }
+
+    private Claims parseTokenClaims(String token) {
+        SecretKey key = Keys.hmacShaKeyFor(Decoders.BASE64.decode(jwtSecret));
+        return Jwts.parser()
+                .verifyWith(key)
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
+    }
+
+    private SysUser loadActiveUserByUserId(String userId) {
+        return sysUserMapper.selectOne(new LambdaQueryWrapper<SysUser>()
+                .eq(SysUser::getUserId, userId)
+                .eq(SysUser::getStatus, "ACTIVE"));
+    }
+
+    private String hashToken(String token) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hashBytes = digest.digest(token.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hashBytes);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 algorithm is not available", e);
+        }
+    }
+
+    private String extractBearerToken(String authorizationHeader) {
+        if (!StringUtils.hasText(authorizationHeader)) {
+            return null;
+        }
+
+        if (authorizationHeader.startsWith("Bearer ")) {
+            return authorizationHeader.substring(7);
+        }
+
+        return authorizationHeader;
     }
 }
