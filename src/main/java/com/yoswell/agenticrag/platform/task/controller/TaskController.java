@@ -1,11 +1,9 @@
 package com.yoswell.agenticrag.platform.task.controller;
 
 import java.util.Map;
-import java.util.UUID;
 
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -13,7 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.yoswell.agenticrag.web.security.model.TenantUser;
+import com.yoswell.agenticrag.util.SecurityUtils;
 import com.yoswell.agenticrag.platform.task.dto.TaskSubmitRequest;
 import com.yoswell.agenticrag.platform.task.service.TaskContext;
 import com.yoswell.agenticrag.platform.task.service.TaskService;
@@ -42,7 +40,7 @@ public class TaskController {
         }
 
         // Extract user context before entering the reactive pipeline's worker thread to prevent SecurityContext loss
-        String userId = getCurrentUserId();
+        String userId = SecurityUtils.getCurrentUserId();
 
         return Mono.fromCallable(() -> {
             TaskContext context = taskService.submitTask(request.getObjective(), userId);
@@ -64,13 +62,5 @@ public class TaskController {
     public Mono<Map<String, Object>> getTaskTodosSnapshot(@PathVariable String taskId) {
         return Mono.fromCallable(() -> taskService.getTaskSnapshot(taskId))
                 .subscribeOn(Schedulers.boundedElastic());
-    }
-
-    private String getCurrentUserId() {
-        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        if (principal instanceof TenantUser tenantUser) {
-            return tenantUser.getUserId();
-        }
-        return SecurityContextHolder.getContext().getAuthentication().getName();
     }
 }

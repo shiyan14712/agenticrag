@@ -2,7 +2,6 @@ package com.yoswell.agenticrag.core.agent.controller;
 
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -13,7 +12,7 @@ import com.yoswell.agenticrag.core.agent.ai.RagStructuredAgent;
 import com.yoswell.agenticrag.core.agent.dto.RagStructuredResponse;
 import com.yoswell.agenticrag.core.agent.orchestrator.ChatOrchestrator;
 import com.yoswell.agenticrag.platform.session.service.SessionService;
-import com.yoswell.agenticrag.web.security.model.TenantUser;
+import com.yoswell.agenticrag.util.SecurityUtils;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -38,7 +37,7 @@ public class AgentController {
             @RequestHeader(value = "X-Session-Id", defaultValue = "default_session") String sessionId,
             @RequestBody String message) {
         
-        String userId = getCurrentUserId();
+        String userId = SecurityUtils.getCurrentUserId();
         sessionService.verifySessionAccess(sessionId, userId);
         return chatOrchestrator.dispatchDynamicStream(sessionId, message);
     }
@@ -48,19 +47,11 @@ public class AgentController {
             @RequestHeader(value = "X-Session-Id", defaultValue = "default_session") String sessionId,
             @RequestBody String message) {
         
-        String userId = getCurrentUserId();
+        String userId = SecurityUtils.getCurrentUserId();
         // Execute the pipeline explicitly capturing userId above to avoid SecurityContext loss
         return Mono.fromCallable(() -> {
             sessionService.verifySessionAccess(sessionId, userId);
             return ragStructuredAgent.askStructured(sessionId, message);
         }).subscribeOn(Schedulers.boundedElastic());
-    }
-
-    private String getCurrentUserId() {
-        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        if (principal instanceof TenantUser tenantUser) {
-            return tenantUser.getUserId();
-        }
-        return SecurityContextHolder.getContext().getAuthentication().getName();
     }
 }

@@ -4,9 +4,7 @@ import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.codec.multipart.FilePart;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -14,9 +12,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.yoswell.agenticrag.retrieval.document.entity.DocumentMetadata;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentService;
-import com.yoswell.agenticrag.web.security.model.TenantUser;
+import com.yoswell.agenticrag.util.SecurityUtils;
 
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -35,7 +32,7 @@ public class DocumentController {
 
     @PostMapping(value = "/upload", consumes = "multipart/form-data")
     public Mono<Map<String, String>> uploadDocument(@RequestPart("file") FilePart file) {
-        String tenantId = getCurrentTenantId();
+        String tenantId = SecurityUtils.getCurrentTenantId();
         return documentService.handleReactiveUpload(file, tenantId)
                 .map(metadata -> Map.of(
                         "documentId", metadata.getDocumentId(),
@@ -46,16 +43,8 @@ public class DocumentController {
 
     @GetMapping("/{documentId}/status")
     public Mono<Map<String, String>> getDocumentStatus(@PathVariable String documentId) {
-        String tenantId = getCurrentTenantId();
+        String tenantId = SecurityUtils.getCurrentTenantId();
         return Mono.fromCallable(() -> documentService.getDocumentStatusDetails(documentId, tenantId))
                 .subscribeOn(Schedulers.boundedElastic());
-    }
-
-    private String getCurrentTenantId() {
-        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        if (principal instanceof TenantUser tenantUser) {
-            return tenantUser.getTenantId();
-        }
-        return "default";
     }
 }
