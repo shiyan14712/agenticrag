@@ -2,7 +2,6 @@ package com.yoswell.agenticrag.controller;
 
 import java.util.Map;
 
-import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.yoswell.agenticrag.dto.SessionCreateRequest;
 import com.yoswell.agenticrag.dto.SessionUpdateRequest;
 import com.yoswell.agenticrag.entity.ChatMessage;

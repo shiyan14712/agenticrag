@@ -1,23 +1,15 @@
 package com.yoswell.agenticrag.dto;
 
 import java.util.List;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
 
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
 public class ExecutionPlan {
 
     private List<PlanStep> steps;
 
-    // Default constructor for Jackson
-    public ExecutionPlan() {}
-
-    public ExecutionPlan(List<PlanStep> steps) {
-        this.steps = steps;
-    }
-
-    public List<PlanStep> getSteps() {
-        return steps;
-    }
-
-    public void setSteps(List<PlanStep> steps) {
-        this.steps = steps;
-    }
 }

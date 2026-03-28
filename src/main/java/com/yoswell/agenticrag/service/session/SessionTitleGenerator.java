@@ -4,6 +4,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.yoswell.agenticrag.cache.SessionRedisManager;
 import com.yoswell.agenticrag.entity.ChatSession;
 import com.yoswell.agenticrag.repository.ChatSessionRepository;
@@ -29,7 +30,9 @@ public class SessionTitleGenerator {
     @Transactional
     public void generateTitleAsync(String sessionId, String userMessage, String assistantMessage) {
         // Find session
-        ChatSession session = sessionRepository.findBySessionId(sessionId).orElse(null);
+        ChatSession session = sessionRepository.selectOne(
+            new QueryWrapper<ChatSession>().eq("session_id", sessionId)
+        );
         if (session == null || session.getTitle() != null) {
             return; // title already generated or session removed
         }
@@ -40,7 +43,7 @@ public class SessionTitleGenerator {
             String trimmedAssistant = assistantMessage.length() > 500 ? assistantMessage.substring(0, 500) : assistantMessage;
 
             String prompt = String.format(
-                "请根据以下对话内容，生成一个简洁的中文标题（不超过 20 个字，不要引号，直接输出标题文本）：\n用户：%s\n助手：%s", 
+                "请根据以下对话内容，生成一个简洁的中文标题（不超过 20 个字，不要引号，直接输出标题文本）：\n用户：%s\n助手：%s",
                 trimmedUser, trimmedAssistant
             );
 
@@ -51,14 +54,11 @@ public class SessionTitleGenerator {
             }
 
             session.setTitle(generatedTitle);
-            sessionRepository.save(session);
+            sessionRepository.updateById(session);
             redisManager.cacheSessionMeta(session);
-
-            // Optional: send SSE event back via Event Publisher or SseService here
 
         } catch (Exception e) {
             // Handle generation failure gracefully
-            e.printStackTrace();
         }
     }
 }

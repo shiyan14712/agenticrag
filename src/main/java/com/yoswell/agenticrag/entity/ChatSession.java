@@ -1,77 +1,47 @@
 package com.yoswell.agenticrag.entity;
 
+import com.baomidou.mybatisplus.annotation.*;
+import lombok.Data;
+
 import java.time.LocalDateTime;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-
-@Entity
-@Table(name = "chat_session")
+@Data
+@TableName("chat_session")
 public class ChatSession {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+
+    @TableId(type = IdType.AUTO)
     private Long id;
 
-    @Column(name = "session_id", nullable = false, unique = true, length = 36)
+    @TableField("session_id")
     private String sessionId;
 
-    @Column(name = "user_id", nullable = false)
-    private String userId;
+    @TableField("user_id")
+    private Long userId;
 
-    @Column(name = "title", length = 200)
+    @TableField("title")
     private String title;
 
-    @Column(name = "status", nullable = false, length = 16)
-    private String status = "ACTIVE";
+    @TableField("status")
+    private String status;
 
-    @Column(name = "model_id", length = 64)
+    @TableField("model_id")
     private String modelId;
 
-    @Column(name = "message_count", nullable = false)
-    private Integer messageCount = 0;
+    @TableField("message_count")
+    private Integer messageCount;
 
-    @Column(name = "summary", columnDefinition = "TEXT")
+    @TableField("summary")
     private String summary;
 
-    @Column(name = "pinned", nullable = false)
-    private Boolean pinned = false;
+    @TableField("pinned")
+    private Boolean pinned;
 
-    @Column(name = "created_at", insertable = false, updatable = false)
+    @TableField(value = "created_at", insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)
     private LocalDateTime createdAt;
 
-    @Column(name = "updated_at", insertable = false, updatable = false)
+    @TableField(value = "updated_at", insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)
     private LocalDateTime updatedAt;
 
-    @Column(name = "archived_at")
+    @TableField("archived_at")
     private LocalDateTime archivedAt;
-
-    // Getters and Setters
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
-    public String getSessionId() { return sessionId; }
-    public void setSessionId(String sessionId) { this.sessionId = sessionId; }
-    public String getUserId() { return userId; }
-    public void setUserId(String userId) { this.userId = userId; }
-    public String getTitle() { return title; }
-    public void setTitle(String title) { this.title = title; }
-    public String getStatus() { return status; }
-    public void setStatus(String status) { this.status = status; }
-    public String getModelId() { return modelId; }
-    public void setModelId(String modelId) { this.modelId = modelId; }
-    public Integer getMessageCount() { return messageCount; }
-    public void setMessageCount(Integer messageCount) { this.messageCount = messageCount; }
-    public String getSummary() { return summary; }
-    public void setSummary(String summary) { this.summary = summary; }
-    public Boolean getPinned() { return pinned; }
-    public void setPinned(Boolean pinned) { this.pinned = pinned; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
-    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
-    public LocalDateTime getArchivedAt() { return archivedAt; }
-    public void setArchivedAt(LocalDateTime archivedAt) { this.archivedAt = archivedAt; }
 }

@@ -28,7 +28,7 @@ public class PreferenceTool {
         memory.setPreferenceKey(preferenceKey);
         memory.setPreferenceValue(preferenceValue);
         
-        userGlobalMemoryRepo.save(memory);
+        userGlobalMemoryRepo.insert(memory);
         return "Preference saved successfully.";
     }
 }

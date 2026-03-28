@@ -5,12 +5,11 @@ import java.util.List;
 import java.util.UUID;
 
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.yoswell.agenticrag.cache.SessionRedisManager;
 import com.yoswell.agenticrag.dto.SessionCreateRequest;
 import com.yoswell.agenticrag.dto.SessionUpdateRequest;
@@ -28,7 +27,7 @@ public class SessionService {
     private final SessionRedisManager redisManager;
     private final ApplicationEventPublisher eventPublisher;
 
-    public SessionService(ChatSessionRepository sessionRepository, 
+    public SessionService(ChatSessionRepository sessionRepository,
                           ChatMessageRepository messageRepository,
                           SessionRedisManager redisManager,
                           ApplicationEventPublisher eventPublisher) {
@@ -41,17 +40,15 @@ public class SessionService {
     @Transactional
     public ChatSession createSession(String userId, SessionCreateRequest request) {
         ChatSession session = new ChatSession();
-        // UUID v7 placeholder, using v4 here for simplicity
         session.setSessionId(UUID.randomUUID().toString());
-        session.setUserId(userId);
+        session.setUserId(Long.parseLong(userId));
         if (request != null && request.getModelId() != null) {
             session.setModelId(request.getModelId());
         }
-        
-        session = sessionRepository.save(session);
-        
+
+        sessionRepository.insert(session);
+
         redisManager.cacheSessionMeta(session);
-        // Do not switch immediately here, or maybe switch
         redisManager.setActiveSession(userId, session.getSessionId());
 
         eventPublisher.publishEvent(new SessionCreatedEvent(session.getSessionId(), userId));
@@ -60,31 +57,36 @@ public class SessionService {
     }
 
     public Page<ChatSession> getSessions(String userId, String status, int page, int size) {
-        return sessionRepository.findByUserIdAndStatus(userId, status, 
-                PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "updatedAt", "pinned")));
+        Page<ChatSession> p = new Page<>(page, size);
+        return sessionRepository.selectPage(p, new QueryWrapper<ChatSession>()
+                .eq("user_id", userId)
+                .eq("status", status)
+                .orderByDesc("updated_at", "pinned"));
     }
 
     public ChatSession getSession(String sessionId, String userId) {
-        ChatSession session = redisManager.getSessionMetaOrFallback(sessionId, () -> 
-            sessionRepository.findBySessionId(sessionId).orElse(null)
+        ChatSession session = redisManager.getSessionMetaOrFallback(sessionId, () ->
+            sessionRepository.selectOne(new QueryWrapper<ChatSession>().eq("session_id", sessionId))
         );
 
-        if (session == null || !session.getUserId().equals(userId)) {
+        if (session == null || !session.getUserId().toString().equals(userId)) {
             throw new RuntimeException("Session not found or forbidden");
         }
         return session;
     }
 
     public Page<ChatMessage> getSessionMessages(String sessionId, String userId, int page, int size) {
-        // Validate access
         getSession(sessionId, userId);
-        return messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId, PageRequest.of(page, size));
+        Page<ChatMessage> p = new Page<>(page, size);
+        return messageRepository.selectPage(p, new QueryWrapper<ChatMessage>()
+                .eq("session_id", sessionId)
+                .orderByAsc("created_at"));
     }
 
     @Transactional
     public ChatSession updateSession(String sessionId, String userId, SessionUpdateRequest request) {
         ChatSession session = getSession(sessionId, userId);
-        
+
         boolean updated = false;
         if (request.getTitle() != null) {
             session.setTitle(request.getTitle());
@@ -96,7 +98,7 @@ public class SessionService {
         }
 
         if (updated) {
-            session = sessionRepository.save(session);
+            sessionRepository.updateById(session);
             redisManager.cacheSessionMeta(session);
         }
 
@@ -106,27 +108,29 @@ public class SessionService {
     @Transactional
     public void deleteSession(String sessionId, String userId, String mode) {
         ChatSession session = getSession(sessionId, userId);
-        
+
         if ("permanent".equalsIgnoreCase(mode)) {
-            sessionRepository.delete(session);
-            // Also delete messages in a real production sys, maybe mapped by Cascade
-            List<ChatMessage> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-            messageRepository.deleteAll(messages);
+            sessionRepository.deleteById(session.getId());
+            messageRepository.delete(new QueryWrapper<ChatMessage>().eq("session_id", sessionId));
         } else {
             session.setStatus("ARCHIVED");
             session.setArchivedAt(LocalDateTime.now());
-            sessionRepository.save(session);
+            sessionRepository.updateById(session);
         }
 
         redisManager.clearSessionCache(sessionId);
 
-        // switch if it was active
         if (sessionId.equals(redisManager.getActiveSession(userId))) {
-            List<ChatSession> activeSessions = sessionRepository.findByUserIdAndStatusOrderByUpdatedAtDesc(userId, "ACTIVE");
+            List<ChatSession> activeSessions = sessionRepository.selectList(
+                new QueryWrapper<ChatSession>()
+                    .eq("user_id", userId)
+                    .eq("status", "ACTIVE")
+                    .orderByDesc("updated_at")
+            );
             if (!activeSessions.isEmpty()) {
                 redisManager.setActiveSession(userId, activeSessions.get(0).getSessionId());
             } else {
-                redisManager.setActiveSession(userId, null); // Clear
+                redisManager.setActiveSession(userId, null);
             }
         }
     }

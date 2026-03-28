@@ -8,31 +8,28 @@ spring:
     password: 1234
     driver-class-name: com.mysql.cj.jdbc.Driver
 
-  jpa:
-    hibernate:
-      ddl-auto: update
-    show-sql: true
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.MySQLDialect
-
   data:
     redis:
       host: 10.60.31.253
       port: 6379
-      # password: "" # NO AUTH
 
   kafka:
-    # TODO: 配置您的 Kafka 地址
     bootstrap-servers: 10.60.31.253:9092
     consumer:
       group-id: agenticrag-group
-      
+
   elasticsearch:
-    # TODO: 配置您的 Elasticsearch 地址
     uris: http://10.60.31.253:9200
 
-# MinIO 配置项预留
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  global-config:
+    db-config:
+      id-type: auto
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    map-underscore-to-camel-case: true
+
 minio:
   endpoint: http://10.60.31.253:19000
   access-key: admin
@@ -58,7 +55,6 @@ langchain4j:
       api-key: "sk-your-embedding-api-key"
       model-name: "text-embedding-3-small"
   reranker:
-    # 例如使用 Cohere 或其他支持的 Reranker (这里假设配置给后续 ScoringModel 用)
     api-url: "https://api.jina.ai/v1/rerank"
     api-key: "jina_your_reranker_api_key"
     model-name: "jina-reranker-v2-base-multilingual"

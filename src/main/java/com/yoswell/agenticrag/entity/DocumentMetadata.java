@@ -1,66 +1,32 @@
 package com.yoswell.agenticrag.entity;
 
+import com.baomidou.mybatisplus.annotation.*;
+import lombok.Data;
+
 import java.time.LocalDateTime;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-
-@Entity
-@Table(name = "document_metadata")
+@Data
+@TableName("document_metadata")
 public class DocumentMetadata {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @TableId(type = IdType.AUTO)
     private Long id;
 
-    @Column(name = "tenant_id", nullable = false, length = 128)
+    @TableField("tenant_id")
     private String tenantId;
 
-    @Column(name = "kb_id", nullable = false, length = 128)
-    private String kbId;
-
-    @Column(name = "file_name", nullable = false, length = 255)
+    @TableField("file_name")
     private String fileName;
 
-    @Column(name = "file_extension", nullable = false, length = 32)
-    private String fileExtension;
+    @TableField("document_id")
+    private String documentId;
 
-    @Column(name = "minio_url", nullable = false, length = 1024)
-    private String minioUrl;
+    @TableField("status")
+    private String status;
 
-    @Column(nullable = false, length = 64)
-    private String status = "UPLOADED";
-
-    @Column(name = "allowed_roles", length = 512)
-    private String allowedRoles;
-
-    @Column(name = "created_at", insertable = false, updatable = false)
+    @TableField(value = "created_at", insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)
     private LocalDateTime createdAt;
-
-    @Column(name = "updated_at", insertable = false, updatable = false)
+    
+    @TableField(value = "updated_at", insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)
     private LocalDateTime updatedAt;
-
-    // Getters and Setters
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
-    public String getTenantId() { return tenantId; }
-    public void setTenantId(String tenantId) { this.tenantId = tenantId; }
-    public String getKbId() { return kbId; }
-    public void setKbId(String kbId) { this.kbId = kbId; }
-    public String getFileName() { return fileName; }
-    public void setFileName(String fileName) { this.fileName = fileName; }
-    public String getFileExtension() { return fileExtension; }
-    public void setFileExtension(String fileExtension) { this.fileExtension = fileExtension; }
-    public String getMinioUrl() { return minioUrl; }
-    public void setMinioUrl(String minioUrl) { this.minioUrl = minioUrl; }
-    public String getStatus() { return status; }
-    public void setStatus(String status) { this.status = status; }
-    public String getAllowedRoles() { return allowedRoles; }
-    public void setAllowedRoles(String allowedRoles) { this.allowedRoles = allowedRoles; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
 }

@@ -46,8 +46,11 @@ public class CustomChatMemoryStore implements ChatMemoryStore {
             // Session is new or expired. Load Global Memory from MySQL as interceptor.
             // Assuming memoryId pattern is "userId_sessionId", else we just pass userId directly if memoryId = userId
             String userId = memoryId.toString().split("_")[0];
-            
-            List<UserGlobalMemory> preferences = userGlobalMemoryRepo.findByUserId(userId);
+
+            List<UserGlobalMemory> preferences = userGlobalMemoryRepo.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<UserGlobalMemory>()
+                    .eq("user_id", userId)
+            );
             if (!preferences.isEmpty()) {
                 String globalMemStr = "Here are long-term facts/preferences you must remember about this user:\n" +
                     preferences.stream()

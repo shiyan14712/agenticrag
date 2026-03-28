@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.yoswell.agenticrag.cache.SessionRedisManager;
 import com.yoswell.agenticrag.entity.ChatMessage;
 import com.yoswell.agenticrag.entity.ChatSession;
@@ -15,7 +16,7 @@ import com.yoswell.agenticrag.repository.ChatSessionRepository;
 
 @Service
 public class ChatMessageService {
-    
+
     private final ChatMessageRepository messageRepository;
     private final ChatSessionRepository sessionRepository;
     private final SessionRedisManager redisManager;
@@ -41,8 +42,8 @@ public class ChatMessageService {
         msg.setSessionId(sessionId);
         msg.setRole("user");
         msg.setContent(content);
-        messageRepository.save(msg);
-        
+        messageRepository.insert(msg);
+
         // Update cache implicitly or using SessionRedisManager
     }
 
@@ -53,28 +54,28 @@ public class ChatMessageService {
         msg.setSessionId(sessionId);
         msg.setRole("assistant");
         msg.setContent(content);
-        
+
         if (metadata != null) {
             try {
                 msg.setMetadata(objectMapper.writeValueAsString(metadata));
             } catch (JsonProcessingException e) {
             }
         }
-        messageRepository.save(msg);
+        messageRepository.insert(msg);
 
         // Update count
-        ChatSession session = sessionRepository.findBySessionId(sessionId).orElse(null);
+        ChatSession session = sessionRepository.selectOne(
+            new QueryWrapper<ChatSession>().eq("session_id", sessionId)
+        );
         if (session != null) {
             session.setMessageCount(session.getMessageCount() + 2);
-            sessionRepository.save(session);
+            sessionRepository.updateById(session);
             redisManager.cacheSessionMeta(session);
-            
+
             // Generate title on first reply
             if (session.getTitle() == null && session.getMessageCount() >= 2) {
-                titleGenerator.generateTitleAsync(sessionId, "user query", content); 
+                titleGenerator.generateTitleAsync(sessionId, "user query", content);
             }
-            
-            // Note: the triggers for compression L2/L3 will be here or via listening to an event.
         }
     }
 }

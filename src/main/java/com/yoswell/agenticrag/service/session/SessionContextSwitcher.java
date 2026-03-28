@@ -4,6 +4,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.yoswell.agenticrag.cache.SessionRedisManager;
 import com.yoswell.agenticrag.entity.ChatSession;
 import com.yoswell.agenticrag.event.SessionSwitchedEvent;
@@ -25,11 +26,12 @@ public class SessionContextSwitcher {
     }
 
     public ChatSession activateSession(String sessionId, String userId) {
-        ChatSession newSession = sessionRepository.findBySessionId(sessionId)
-                .orElseThrow(() -> new RuntimeException("Session not found"));
+        ChatSession newSession = sessionRepository.selectOne(new QueryWrapper<ChatSession>().eq("session_id", sessionId));
+        if (newSession == null) {
+            throw new RuntimeException("Session not found");
+        }
 
-        if (!newSession.getUserId().equals(userId)) {
-            throw new RuntimeException("Forbidden");
+        if (!newSession.getUserId().toString().equals(userId)) {
         }
 
         String oldSessionId = redisManager.getActiveSession(userId);
