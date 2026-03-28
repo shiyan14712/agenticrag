@@ -68,6 +68,47 @@ public class KnowledgeChunkIndexService {
     }
 
     /**
+     * 根据文档 ID 删除该文档产生的所有向量与分块。
+     * 具备租户级别的条件隔离。
+     *
+     * @param documentId 文档业务 ID
+     * @param tenantId 当前所属租户
+     */
+    public void deleteByDocumentId(String documentId, String tenantId) {
+        if (documentId == null || tenantId == null) {
+             throw new IllegalArgumentException("documentId and tenantId must not be null");
+        }
+
+        try {
+            Request request = new Request("POST", "/" + indexName + "/_delete_by_query");
+            
+            ObjectNode queryNode = objectMapper.createObjectNode();
+            ObjectNode boolNode = queryNode.putObject("bool");
+            ArrayNode filterArray = boolNode.putArray("filter");
+
+            filterArray.addObject().putObject("term").put("document_id.keyword", documentId);
+            filterArray.addObject().putObject("term").put("tenant_id.keyword", tenantId);
+
+            ObjectNode payload = objectMapper.createObjectNode();
+            payload.set("query", queryNode);
+
+            request.setJsonEntity(objectMapper.writeValueAsString(payload));
+            
+            JsonNode response = executeForJson(request);
+            long deletedCount = response.path("deleted").asLong();
+            log.info("Successfully deleted {} chunks from index {} for documentId: {}", deletedCount, indexName, documentId);
+        } catch (ResponseException e) {
+             if (e.getResponse().getStatusLine().getStatusCode() == 404) {
+                 log.warn("Index {} not found when trying to delete document: {}", indexName, documentId);
+             } else {
+                 throw new RuntimeException("ES Delete by query failed for document: " + documentId, e);
+             }
+        } catch (Exception e) {
+             throw new RuntimeException("ES Delete by query failed for document: " + documentId, e);
+        }
+    }
+
+    /**
      * 通过关键词执行 BM25 检索。
      *
      * @param query 查询文本

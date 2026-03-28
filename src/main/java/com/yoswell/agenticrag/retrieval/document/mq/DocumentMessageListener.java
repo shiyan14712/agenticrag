@@ -7,7 +7,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
 
+import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentDeleteRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentVectorizeRequestDTO;
+import com.yoswell.agenticrag.retrieval.document.index.KnowledgeChunkIndexService;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentVectorizationService;
 
 import tools.jackson.databind.ObjectMapper;
@@ -24,11 +26,14 @@ public class DocumentMessageListener {
 
     private final ObjectMapper objectMapper;
     private final DocumentVectorizationService documentVectorizationService;
+    private final KnowledgeChunkIndexService knowledgeChunkIndexService;
 
     public DocumentMessageListener(ObjectMapper objectMapper,
-                                   DocumentVectorizationService documentVectorizationService) {
+                                   DocumentVectorizationService documentVectorizationService,
+                                   KnowledgeChunkIndexService knowledgeChunkIndexService) {
         this.objectMapper = objectMapper;
         this.documentVectorizationService = documentVectorizationService;
+        this.knowledgeChunkIndexService = knowledgeChunkIndexService;
     }
 
     /**
@@ -45,6 +50,23 @@ public class DocumentMessageListener {
         } catch (Exception exception) {
             log.error("Failed to process doc-vectorize-request", exception);
             throw new RuntimeException("doc-vectorize-request processing failed", exception);
+        }
+    }
+
+    /**
+     * 处理“文档删除”请求，清理 Elasticsearch 中的相关向量块。
+     *
+     * @param message Kafka 中的 JSON 字符串消息体
+     */
+    @KafkaListener(topics = "doc-delete-request", groupId = "agenticrag-group")
+    public void listenDocumentDeleteRequest(String message) {
+        log.info("Received doc-delete-request from Kafka: {}", message);
+        try {
+            DocumentDeleteRequestDTO request = objectMapper.readValue(message, DocumentDeleteRequestDTO.class);
+            knowledgeChunkIndexService.deleteByDocumentId(request.documentId(), request.tenantId());
+        } catch (Exception exception) {
+            log.error("Failed to process doc-delete-request", exception);
+            throw new RuntimeException("doc-delete-request processing failed", exception);
         }
     }
 

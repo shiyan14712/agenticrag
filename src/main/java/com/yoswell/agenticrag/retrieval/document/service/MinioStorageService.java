@@ -13,6 +13,7 @@ import io.minio.GetObjectArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
 
 /**
  * 对 MinIO 阻塞 I/O 的轻量封装。
@@ -96,6 +97,30 @@ public class MinioStorageService {
      */
     public String readUtf8String(String fileUrl) {
         return new String(readFile(fileUrl), StandardCharsets.UTF_8);
+    }
+
+    /**
+     * 按地址删除 MinIO 中的文件。
+     *
+     * @param fileUrl MinIO 地址
+     */
+    public void deleteFile(String fileUrl) {
+        if (fileUrl == null || fileUrl.isEmpty()) {
+            return;
+        }
+        ParsedMinioLocation location = parseLocation(fileUrl);
+        try {
+            minioClient.removeObject(
+                    RemoveObjectArgs.builder()
+                            .bucket(location.bucket())
+                            .object(location.objectName())
+                            .build()
+            );
+            log.info("File deleted from MinIO: {}", fileUrl);
+        } catch (Exception e) {
+            log.error("[Minio Storage Service] Failed to delete file from MinIO: {}", fileUrl, e);
+            throw new RuntimeException("MinIO delete failed for: " + fileUrl, e);
+        }
     }
 
     /**

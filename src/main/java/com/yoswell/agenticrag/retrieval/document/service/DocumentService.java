@@ -11,6 +11,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.yoswell.agenticrag.retrieval.document.dto.DocumentDTO;
+import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentDeleteRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentParseRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentMetadata;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
@@ -168,6 +170,81 @@ public class DocumentService {
                 "status", metadata.getStatus(),
                 "fileName", metadata.getFileName() != null ? metadata.getFileName() : ""
         );
+    }
+
+    /**
+     * 获取指定租户的所有文档列表。
+     *
+     * @param tenantId 当前租户 ID
+     * @return 文档 DTO 列表
+     */
+    public List<DocumentDTO> getUserDocuments(String tenantId) {
+        if (tenantId == null || tenantId.isBlank()) {
+            throw new IllegalArgumentException("Tenant ID cannot be null or empty");
+        }
+
+        List<DocumentMetadata> metadataList = documentMetadataMapper.selectList(
+                new QueryWrapper<DocumentMetadata>()
+                        .eq("tenant_id", tenantId)
+                        .orderByDesc("created_at")
+        );
+
+        return metadataList.stream()
+                .map(meta -> new DocumentDTO(
+                        meta.getDocumentId(),
+                        meta.getFileName(),
+                        meta.getFileExtension(),
+                        meta.getStatus(),
+                        meta.getCreatedAt(),
+                        meta.getUpdatedAt()
+                ))
+                .toList();
+    }
+
+    /**
+     * 删除指定文档（包含元数据和 MinIO 文件）。带有粗粒度租户隔离校验。
+     *
+     * @param documentId 文档业务 ID
+     * @param tenantId   当前租户 ID
+     */
+    @Transactional
+    public void deleteDocumentById(String documentId, String tenantId) {
+        if (documentId == null || tenantId == null) {
+            throw new IllegalArgumentException("Document ID and Tenant ID must be provided");
+        }
+
+        // 1. 查询文档确认是否存在，并强校验 tenantId 防止越权
+        DocumentMetadata metadata = documentMetadataMapper.selectOne(
+                new QueryWrapper<DocumentMetadata>()
+                        .eq("document_id", documentId)
+                        .eq("tenant_id", tenantId)
+        );
+
+        if (metadata == null) {
+            log.warn("[Document Service] Document not found or access denied for deletion. documentId: {}, tenantId: {}", documentId, tenantId);
+            throw new RuntimeException("Document not found or access denied");
+        }
+
+        // 2. 数据库删除元数据
+        documentMetadataMapper.deleteById(metadata.getId());
+        log.info("[Document Service] SUCCESS: Document metadata deleted. documentId: {}", documentId);
+
+        // 3. 异步删除 MinIO 上的文件。如果 URL 是合法的 objectName 形式，则可以通过存储服务清理。
+        if (metadata.getMinioUrl() != null && !metadata.getMinioUrl().isEmpty()) {
+            try {
+                minioStorageService.deleteFile(metadata.getMinioUrl());
+            } catch (Exception e) {
+                // 这里只记录日志，不让异常打断事务，保证数据库的先删除
+                log.error("[Document Service] Failed to delete document from MinIO. URL: {}", metadata.getMinioUrl(), e);
+            }
+        }
+        
+        // 4. 异步向 Kafka 发送文档已被删除的消息，供 ES 等下游组件完成向量删除
+        documentMessageProducer.sendDocumentDeletedRequest(new DocumentDeleteRequestDTO(
+                documentId,
+                tenantId,
+                System.currentTimeMillis()
+        ));
     }
 
     /**
