@@ -21,6 +21,7 @@ public class SessionController {
      */
     @GetMapping("/{sessionId}/history")
     public Mono<List<Map<String, String>>> getSessionHistory(@PathVariable String sessionId) {
+        // TODO: implement real session management
         // chatMemoryStore.getMessages(sessionId);
         return Mono.just(List.of(
             Map.of("role", "user", "content", "你好，请列出2025架构设计纲要"),
@@ -33,6 +34,8 @@ public class SessionController {
      */
     @DeleteMapping("/{sessionId}")
     public Mono<Void> clearSessionMemory(@PathVariable String sessionId) {
+        // TODO: implement real session management
+
         // chatMemoryStore.deleteMessages(sessionId);
         return Mono.empty();
     }
@@ -42,6 +45,8 @@ public class SessionController {
      */
     @GetMapping("/user/memory")
     public Mono<Map<String, Object>> getUserGlobalMemory() {
+        // TODO: implement real session management
+
         // String userId = SecurityContextHolder.getContext().getAuthentication().getName();
         // userGlobalMemoryRepository.findByUserId(userId);
         return Mono.just(Map.of(

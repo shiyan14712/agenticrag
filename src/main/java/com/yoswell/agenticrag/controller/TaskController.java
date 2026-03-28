@@ -29,6 +29,8 @@ public class TaskController {
     @PostMapping
     public Mono<Map<String, String>> submitTask(@RequestBody String objective) {
         String taskId = UUID.randomUUID().toString();
+        // TODO: implement real plan-and-execution logics
+
         // 底层服务异步开始拆解任务图
         // planOrchestrator.startAsync(taskId, objective);
         return Mono.just(Map.of("taskId", taskId, "status", "SUBMITTED", "objective", objective));
@@ -39,6 +41,8 @@ public class TaskController {
      */
     @GetMapping(value = "/{taskId}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> taskEventsStream(@PathVariable String taskId) {
+        // TODO: implement real plan-and-execution logics
+
         // planOrchestrator.attachToTask(taskId);
         // 此处返回 Flux 流包含 event: plan_steps, tool_call 等
         return Flux.just(ServerSentEvent.<String>builder()
@@ -52,6 +56,8 @@ public class TaskController {
      */
     @GetMapping(value = "/{taskId}/todos", produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<List<Map<String, Object>>> getTaskTodosSnapshot(@PathVariable String taskId) {
+        // TODO: implement real plan-and-execution logics
+
         // planOrchestrator.getPlanSnapshot(taskId);
         return Mono.just(List.of(
             Map.of("stepId", "1", "description", "Analyze requirements", "status", "DONE"),
