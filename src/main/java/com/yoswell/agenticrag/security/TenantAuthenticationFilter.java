@@ -19,25 +19,24 @@ public class TenantAuthenticationFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
-            
-        // 从请求头获取租户和用户身份，这里为简化示例，实际应解析 JWT Token
+
+        // TODO：从请求头获取租户和用户身份，这里为简化示例，实际应解析 JWT Token
         String tenantId = request.getHeader("X-Tenant-ID");
         String userId = request.getHeader("X-User-ID");
         String role = request.getHeader("X-User-Role");
-        
+
         if (tenantId != null && userId != null) {
             if (role == null) {
                 role = "ROLE_USER"; // 默认角色
             }
-            
+
             TenantUser principal = new TenantUser(userId, tenantId, role);
             UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                    principal, null, Collections.singletonList(new SimpleGrantedAuthority(role))
-            );
-            
+                    principal, null, Collections.singletonList(new SimpleGrantedAuthority(role)));
+
             SecurityContextHolder.getContext().setAuthentication(authentication);
         }
-        
+
         filterChain.doFilter(request, response);
     }
 }

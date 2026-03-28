@@ -11,5 +11,6 @@ public class PlanStep {
 
     private String id;
     private String description;
+    private String status; // PENDING, IN_PROGRESS, DONE, FAILED
 
 }

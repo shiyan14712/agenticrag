@@ -26,6 +26,7 @@ import com.yoswell.agenticrag.security.TenantUser;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 @RestController
 @RequestMapping("/api/v1/sessions")
@@ -41,8 +42,8 @@ public class SessionController {
 
     private String getCurrentUserId() {
         Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        if (principal instanceof TenantUser) {
-            return ((TenantUser) principal).getUserId();
+        if (principal instanceof TenantUser tenantUser) {
+            return tenantUser.getUserId();
         }
         return SecurityContextHolder.getContext().getAuthentication().getName();
     }
@@ -50,7 +51,8 @@ public class SessionController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public Mono<ChatSession> createSession(@RequestBody(required = false) SessionCreateRequest request) {
-        return Mono.fromCallable(() -> sessionService.createSession(getCurrentUserId(), request));
+        return Mono.fromCallable(() -> sessionService.createSession(getCurrentUserId(), request))
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
     @GetMapping
@@ -58,7 +60,8 @@ public class SessionController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(defaultValue = "ACTIVE") String status) {
-        return Mono.fromCallable(() -> sessionService.getSessions(getCurrentUserId(), status, page, size));
+        return Mono.fromCallable(() -> sessionService.getSessions(getCurrentUserId(), status, page, size))
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
     @GetMapping("/{sessionId}/messages")
@@ -73,19 +76,21 @@ public class SessionController {
                 "session", session,
                 "messages", messages
             );
-        });
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 
     @PutMapping("/{sessionId}/activate")
     public Mono<ChatSession> activateSession(@PathVariable String sessionId) {
-        return Mono.fromCallable(() -> sessionSwitcher.activateSession(sessionId, getCurrentUserId()));
+        return Mono.fromCallable(() -> sessionSwitcher.activateSession(sessionId, getCurrentUserId()))
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
     @PatchMapping("/{sessionId}")
     public Mono<ChatSession> updateSession(
             @PathVariable String sessionId,
             @RequestBody SessionUpdateRequest request) {
-        return Mono.fromCallable(() -> sessionService.updateSession(sessionId, getCurrentUserId(), request));
+        return Mono.fromCallable(() -> sessionService.updateSession(sessionId, getCurrentUserId(), request))
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
     @DeleteMapping("/{sessionId}")
@@ -93,8 +98,8 @@ public class SessionController {
     public Mono<Void> deleteSession(
             @PathVariable String sessionId,
             @RequestParam(defaultValue = "archive") String mode) {
-        return Mono.fromRunnable(() -> {
+        return Mono.<Void>fromRunnable(() -> {
             sessionService.deleteSession(sessionId, getCurrentUserId(), mode);
-        });
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 }

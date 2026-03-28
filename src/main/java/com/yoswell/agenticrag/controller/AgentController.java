@@ -14,6 +14,7 @@ import com.yoswell.agenticrag.service.agent.RagStructuredAgent;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 @RestController
 @RequestMapping("/api/v1/agent")
@@ -47,6 +48,7 @@ public class AgentController {
             @RequestHeader(value = "X-Session-Id", defaultValue = "default_session") String sessionId,
             @RequestBody String message) {
         return Mono.fromCallable(() -> ragStructuredAgent.askStructured(sessionId, message))
-                   .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
+                   .subscribeOn(Schedulers.boundedElastic());
     }
 }
+

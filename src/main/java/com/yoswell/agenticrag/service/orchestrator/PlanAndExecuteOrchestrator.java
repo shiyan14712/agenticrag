@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yoswell.agenticrag.dto.ExecutionPlan;
 import com.yoswell.agenticrag.dto.PlanStep;
+import com.yoswell.agenticrag.service.task.TaskContext;
 
 import reactor.core.publisher.Flux;
 
@@ -33,6 +34,10 @@ public class PlanAndExecuteOrchestrator {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 在线模式：ChatOrchestrator 路由 complex_plan 时直接调用。
+     * 返回 SSE Flux 供前端实时消费。
+     */
     public Flux<ServerSentEvent<String>> executeComplexTask(String userMessage) {
         return Flux.create(sink -> {
             // Using JDK 21+ Virtual Threads to handle blocking LangChain4j calls without starving Netty
@@ -42,6 +47,13 @@ public class PlanAndExecuteOrchestrator {
                     
                     // 1. Generate execution plan using JSON Schema constraints
                     ExecutionPlan plan = plannerAgent.generatePlan(userMessage);
+
+                    if (plan.getSteps() != null) {
+                        for (PlanStep step : plan.getSteps()) {
+                            step.setStatus("PENDING");
+                        }
+                    }
+
                     String planJson = objectMapper.writeValueAsString(plan.getSteps());
                     
                     // Emit plan to frontend for Todos UI rendering
@@ -55,6 +67,8 @@ public class PlanAndExecuteOrchestrator {
                         for (PlanStep step : plan.getSteps()) {
                             log.info("Executing step [{}] {}", step.getId(), step.getDescription());
                             
+                            step.setStatus("IN_PROGRESS");
+
                             // Emit tool/step calling state
                             sink.next(ServerSentEvent.builder("Executing Task: " + step.getDescription()).event("tool_call").build());
                             
@@ -64,6 +78,8 @@ public class PlanAndExecuteOrchestrator {
                             executionContext.append("Step ID: ").append(step.getId())
                                     .append(" | Description: ").append(step.getDescription()).append("\n")
                                     .append("Result: ").append(result).append("\n\n");
+
+                            step.setStatus("DONE");
                         }
                     }
 

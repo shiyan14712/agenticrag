@@ -21,6 +21,12 @@ public class DocumentMetadata {
     @TableField("document_id")
     private String documentId;
 
+    @TableField("minio_url")
+    private String minioUrl;
+
+    @TableField("file_extension")
+    private String fileExtension;
+
     @TableField("status")
     private String status;
 
