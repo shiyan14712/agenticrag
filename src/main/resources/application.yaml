@@ -1,3 +1,65 @@
 spring:
   application:
     name: agenticrag
+
+  datasource:
+    url: jdbc:mysql://10.60.31.253:3306/agenticrag?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
+    username: root
+    password: 1234
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+
+  data:
+    redis:
+      host: 10.60.31.253
+      port: 6379
+      # password: "" # NO AUTH
+
+  kafka:
+    # TODO: 配置您的 Kafka 地址
+    bootstrap-servers: 10.60.31.253:9092
+    consumer:
+      group-id: agenticrag-group
+      
+  elasticsearch:
+    # TODO: 配置您的 Elasticsearch 地址
+    uris: http://10.60.31.253:9200
+
+# MinIO 配置项预留
+minio:
+  endpoint: http://10.60.31.253:9000
+  access-key: your_access_key
+  secret-key: your_secret_key
+  bucket-name: agenticrag
+
+rag:
+  retrieval:
+    knn-top-k: 20
+    bm25-top-k: 20
+    rerank-top-n: 5
+
+langchain4j:
+  llm:
+    open-ai:
+      base-url: "https://api.openai.com/v1"
+      api-key: "sk-your-llm-api-key"
+      model-name: "gpt-4o"
+      temperature: 0.7
+  embedding:
+    open-ai:
+      base-url: "https://api.openai.com/v1"
+      api-key: "sk-your-embedding-api-key"
+      model-name: "text-embedding-3-small"
+  reranker:
+    # 例如使用 Cohere 或其他支持的 Reranker (这里假设配置给后续 ScoringModel 用)
+    api-url: "https://api.jina.ai/v1/rerank"
+    api-key: "jina_your_reranker_api_key"
+    model-name: "jina-reranker-v2-base-multilingual"
+
