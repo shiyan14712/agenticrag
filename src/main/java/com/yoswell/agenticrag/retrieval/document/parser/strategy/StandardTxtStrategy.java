@@ -11,12 +11,23 @@ import com.yoswell.agenticrag.retrieval.document.parser.model.DocumentParseSourc
 import com.yoswell.agenticrag.retrieval.document.parser.model.ParsedDocument;
 import com.yoswell.agenticrag.retrieval.document.parser.model.ParsedDocumentChunk;
 
+/**
+ * 面向纯文本文件的解析策略。
+ *
+ * <p>纯文本没有显式标题结构，因此这里只做长度切块和自然断点收束。</p>
+ */
 @Component
 public class StandardTxtStrategy implements DocumentParserStrategy {
 
     private static final int DEFAULT_CHUNK_SIZE = 1200;
     private static final int DEFAULT_CHUNK_OVERLAP = 200;
 
+    /**
+     * 解析纯文本内容并生成 chunk。
+     *
+     * @param source 解析输入
+     * @return 解析结果
+     */
     @Override
     public ParsedDocument parse(DocumentParseSource source) {
         List<String> chunks = chunkPlainText(source.content(), DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP);
@@ -32,6 +43,14 @@ public class StandardTxtStrategy implements DocumentParserStrategy {
         return new ParsedDocument(source.fileUrl(), source.fileName(), List.copyOf(parsedChunks));
     }
 
+    /**
+     * 按长度和重叠窗口切分纯文本。
+     *
+     * @param content 原始文本
+     * @param chunkSize 目标 chunk 长度
+     * @param overlap 相邻 chunk 重叠长度
+     * @return 文本块列表
+     */
     static List<String> chunkPlainText(String content, int chunkSize, int overlap) {
         if (content == null || content.isBlank()) {
             return List.of();
@@ -72,6 +91,14 @@ public class StandardTxtStrategy implements DocumentParserStrategy {
         return List.copyOf(chunks);
     }
 
+    /**
+     * 优先在自然断点上截断当前 chunk。
+     *
+     * @param content 规范化后的纯文本
+     * @param start chunk 起始位置
+     * @param maxEnd 最大结束位置
+     * @return 实际结束位置
+     */
     private static int findChunkEnd(String content, int start, int maxEnd) {
         if (maxEnd >= content.length()) {
             return content.length();

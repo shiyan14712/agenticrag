@@ -11,8 +11,8 @@ import org.springframework.transaction.annotation.Transactional;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.yoswell.agenticrag.platform.session.cache.SessionRedisManager;
-import com.yoswell.agenticrag.platform.session.dto.SessionCreateRequest;
-import com.yoswell.agenticrag.platform.session.dto.SessionUpdateRequest;
+import com.yoswell.agenticrag.platform.session.dto.SessionCreateRequestDTO;
+import com.yoswell.agenticrag.platform.session.dto.SessionUpdateRequestDTO;
 import com.yoswell.agenticrag.platform.session.entity.ChatMessage;
 import com.yoswell.agenticrag.platform.session.entity.ChatSession;
 import com.yoswell.agenticrag.platform.session.event.SessionCreatedEvent;
@@ -38,7 +38,7 @@ public class SessionService {
     }
 
     @Transactional
-    public ChatSession createSession(String userId, SessionCreateRequest request) {
+    public ChatSession createSession(String userId, SessionCreateRequestDTO request) {
         ChatSession session = new ChatSession();
         session.setSessionId(UUID.randomUUID().toString());
         session.setUserId(Long.parseLong(userId));
@@ -99,7 +99,7 @@ public class SessionService {
         );
     }
     @Transactional
-    public ChatSession updateSession(String sessionId, String userId, SessionUpdateRequest request) {
+    public ChatSession updateSession(String sessionId, String userId, SessionUpdateRequestDTO request) {
         ChatSession session = getSession(sessionId, userId);
 
         boolean updated = false;

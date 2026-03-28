@@ -2,7 +2,6 @@ package com.yoswell.agenticrag.retrieval.document.service;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,8 +15,10 @@ import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 
 /**
- * 封装 MinIO 阻塞 I/O 操作。
- * 所有方法均为阻塞调用，调用方应在 boundedElastic 调度器上执行。
+ * 对 MinIO 阻塞 I/O 的轻量封装。
+ *
+ * <p>服务层通过它统一完成上传、读取和地址解析，避免上层到处散落
+ * MinIO SDK 细节。</p>
  */
 @Service
 public class MinioStorageService {
@@ -37,13 +38,13 @@ public class MinioStorageService {
     }
 
     /**
-     * 上传文件到 MinIO，返回文件的存储 URL。
-     * 
-     * @param objectName  对象名称（唯一键）
-     * @param inputStream 文件输入流
-     * @param size        文件大小（字节），-1 表示未知
+     * 上传文件到 MinIO 并返回最终存储地址。
+     *
+     * @param objectName 对象名，通常由 documentId 和文件名组成
+     * @param inputStream 文件流
+     * @param size 文件大小，字节数
      * @param contentType MIME 类型
-     * @return MinIO 内部 URL（格式: minio://bucket/objectName）
+     * @return 文件在 MinIO 中的访问地址
      */
     public String uploadFile(String objectName, InputStream inputStream, long size, String contentType) {
         try {
@@ -61,13 +62,18 @@ public class MinioStorageService {
             String minioUrl = endpoint + "/" + defaultBucket + "/" + objectName;
             log.info("File uploaded to MinIO: {}", minioUrl);
             return minioUrl;
-
         } catch (Exception e) {
-            log.error("Failed to upload file to MinIO: {}", objectName, e);
+            log.error("[Minio Storage Service] Failed to upload file to MinIO: {}", objectName, e);
             throw new RuntimeException("MinIO upload failed for: " + objectName, e);
         }
     }
 
+    /**
+     * 按地址读取 MinIO 中文件的原始字节。
+     *
+     * @param fileUrl MinIO 地址
+     * @return 文件字节数组
+     */
     public byte[] readFile(String fileUrl) {
         ParsedMinioLocation location = parseLocation(fileUrl);
         try (InputStream inputStream = minioClient.getObject(
@@ -77,15 +83,26 @@ public class MinioStorageService {
                         .build())) {
             return inputStream.readAllBytes();
         } catch (Exception e) {
-            log.error("Failed to read file from MinIO: {}", fileUrl, e);
+            log.error("[Minio Storage Service] Failed to read file from MinIO: {}", fileUrl, e);
             throw new RuntimeException("MinIO read failed for: " + fileUrl, e);
         }
     }
 
+    /**
+     * 以 UTF-8 方式读取文本文件内容。
+     *
+     * @param fileUrl MinIO 地址
+     * @return 文本内容
+     */
     public String readUtf8String(String fileUrl) {
         return new String(readFile(fileUrl), StandardCharsets.UTF_8);
     }
 
+    /**
+     * 确保目标 bucket 存在，不存在时自动创建。
+     *
+     * @param bucket bucket 名称
+     */
     private void ensureBucketExists(String bucket) {
         try {
             boolean exists = minioClient.bucketExists(BucketExistsArgs.builder().bucket(bucket).build());
@@ -99,6 +116,15 @@ public class MinioStorageService {
         }
     }
 
+    /**
+     * 把外部 URL 解析为 MinIO SDK 所需的 bucket 和 objectName。
+     *
+     * <p>既支持 {@code minio://bucket/object} 形式，也支持基于 endpoint
+     * 拼出的 HTTP 地址。</p>
+     *
+     * @param fileUrl 传入的文件地址
+     * @return 解析后的 bucket 与 objectName
+     */
     private ParsedMinioLocation parseLocation(String fileUrl) {
         if (fileUrl == null || fileUrl.isBlank()) {
             throw new IllegalArgumentException("File URL cannot be blank");
@@ -128,6 +154,12 @@ public class MinioStorageService {
         return new ParsedMinioLocation(segments[0], segments[1]);
     }
 
+    /**
+     * MinIO 地址解析结果。
+     *
+     * @param bucket bucket 名称
+     * @param objectName 对象名
+     */
     private record ParsedMinioLocation(String bucket, String objectName) {
     }
 }

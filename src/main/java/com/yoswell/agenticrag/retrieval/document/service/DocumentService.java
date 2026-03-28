@@ -6,12 +6,9 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
+import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.http.codec.multipart.FilePart;
-import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.yoswell.agenticrag.retrieval.document.dto.DocumentParseRequest;
@@ -20,10 +17,14 @@ import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentProcessingStatus;
 import com.yoswell.agenticrag.retrieval.document.mq.DocumentMessageProducer;
 
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
+
 /**
- * 文档业务逻辑层。
- * 负责从前端接收文件 → 存入 MinIO → 写入元数据到 MySQL → 触发 Kafka 管道。
- * 所有方法均为阻塞调用，调用方应在 boundedElastic 调度器上执行。
+ * 文档上传链路的业务编排服务。
+ *
+ * <p>它负责把一次上传请求拆成几个明确步骤：写入 MinIO、写入元数据表、
+ * 再向异步处理队列发出后续任务。</p>
  */
 @Service
 public class DocumentService {
@@ -44,6 +45,13 @@ public class DocumentService {
         this.documentMessageProducer = documentMessageProducer;
     }
 
+    /**
+     * 以 WebFlux 方式接收上传文件，并把阻塞 I/O 转移到 {@code boundedElastic} 线程池。
+     *
+     * @param file 上传文件
+     * @param tenantId 当前租户 ID
+     * @return 落库后的文档元数据
+     */
     public Mono<DocumentMetadata> handleReactiveUpload(FilePart file, String tenantId) {
         return file.content()
                 .map(dataBuffer -> {
@@ -62,7 +70,7 @@ public class DocumentService {
                         offset += chunk.length;
                     }
 
-                    java.io.InputStream inputStream = new java.io.ByteArrayInputStream(allBytes);
+                    InputStream inputStream = new java.io.ByteArrayInputStream(allBytes);
                     String fileName = file.filename();
                     String contentType = file.headers().getContentType() != null
                             ? file.headers().getContentType().toString()
@@ -76,6 +84,16 @@ public class DocumentService {
                 }).subscribeOn(Schedulers.boundedElastic()));
     }
 
+    /**
+     * 执行一次完整的“上传并投递后续任务”事务。
+     *
+     * @param fileName 原始文件名
+     * @param inputStream 文件输入流
+     * @param fileSize 文件大小
+     * @param contentType MIME 类型
+     * @param tenantId 当前租户 ID
+     * @return 已持久化的文档元数据
+     */
     @Transactional
     public DocumentMetadata uploadAndDispatch(String fileName, InputStream inputStream,
                                               long fileSize, String contentType, String tenantId) {
@@ -114,6 +132,13 @@ public class DocumentService {
         return metadata;
     }
 
+    /**
+     * 查询指定文档在当前租户下的完整元数据。
+     *
+     * @param documentId 文档业务 ID
+     * @param tenantId 当前租户 ID
+     * @return 文档元数据
+     */
     public DocumentMetadata getDocumentStatus(String documentId, String tenantId) {
         DocumentMetadata metadata = documentMetadataMapper.selectOne(
                 new QueryWrapper<DocumentMetadata>()
@@ -129,6 +154,13 @@ public class DocumentService {
         return metadata;
     }
 
+    /**
+     * 返回给前端展示用的轻量状态摘要。
+     *
+     * @param documentId 文档业务 ID
+     * @param tenantId 当前租户 ID
+     * @return 只包含关键状态字段的 map
+     */
     public java.util.Map<String, String> getDocumentStatusDetails(String documentId, String tenantId) {
         DocumentMetadata metadata = getDocumentStatus(documentId, tenantId);
         return java.util.Map.of(
@@ -138,6 +170,12 @@ public class DocumentService {
         );
     }
 
+    /**
+     * 从文件名提取扩展名，未识别时回退为 {@code unknown}。
+     *
+     * @param fileName 原始文件名
+     * @return 归一化后的扩展名
+     */
     private String extractExtension(String fileName) {
         if (fileName == null || !fileName.contains(".")) {
             return "unknown";

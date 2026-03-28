@@ -21,6 +21,12 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
+/**
+ * 负责知识块在 Elasticsearch 中的索引写入与检索。
+ *
+ * <p>这里直接使用底层 REST Client 拼装请求，目的是让索引结构和查询 DSL
+ * 尽量保持显式可控。</p>
+ */
 @Service
 public class KnowledgeChunkIndexService {
 
@@ -39,6 +45,11 @@ public class KnowledgeChunkIndexService {
         this.indexName = indexName;
     }
 
+    /**
+     * 批量写入知识块到 Elasticsearch。
+     *
+     * @param chunks 需要写入的知识块集合
+     */
     public void indexChunks(List<KnowledgeChunkDocument> chunks) {
         if (chunks == null || chunks.isEmpty()) {
             return;
@@ -56,6 +67,15 @@ public class KnowledgeChunkIndexService {
         }
     }
 
+    /**
+     * 通过关键词执行 BM25 检索。
+     *
+     * @param query 查询文本
+     * @param tenantId 当前租户
+     * @param allowedRoles 调用方允许访问的角色
+     * @param size 返回数量
+     * @return 检索结果
+     */
     public List<RetrievedChunk> searchByKeyword(String query, String tenantId, List<String> allowedRoles, int size) {
         try {
             Request request = new Request("POST", "/" + indexName + "/_search");
@@ -67,6 +87,15 @@ public class KnowledgeChunkIndexService {
         }
     }
 
+    /**
+     * 通过向量执行 kNN 检索。
+     *
+     * @param queryVector 查询向量
+     * @param tenantId 当前租户
+     * @param allowedRoles 调用方允许访问的角色
+     * @param size 返回数量
+     * @return 检索结果
+     */
     public List<RetrievedChunk> searchByVector(List<Float> queryVector, String tenantId, List<String> allowedRoles, int size) {
         if (queryVector == null || queryVector.isEmpty()) {
             return List.of();
@@ -83,6 +112,11 @@ public class KnowledgeChunkIndexService {
         }
     }
 
+    /**
+     * 确保索引存在，并在首次写入前按向量维度创建索引。
+     *
+     * @param vectorDimensions 向量维度
+     */
     private void ensureIndexExists(int vectorDimensions) {
         if (indexReady.get()) {
             return;
@@ -103,6 +137,11 @@ public class KnowledgeChunkIndexService {
         }
     }
 
+    /**
+     * 检查目标索引是否已经存在。
+     *
+     * @return true 表示索引存在
+     */
     private boolean indexExists() {
         try {
             Request request = new Request("HEAD", "/" + indexName);
@@ -115,6 +154,11 @@ public class KnowledgeChunkIndexService {
         }
     }
 
+    /**
+     * 创建用于知识块检索的索引结构。
+     *
+     * @param vectorDimensions 向量维度
+     */
     private void createIndex(int vectorDimensions) {
         try {
             Request request = new Request("PUT", "/" + indexName);
@@ -131,10 +175,23 @@ public class KnowledgeChunkIndexService {
         }
     }
 
+    /**
+     * 执行请求并把响应解析为 JSON 树。
+     *
+     * @param request REST 请求
+     * @return JSON 响应
+     * @throws IOException 当底层 HTTP 失败时抛出
+     */
     private JsonNode executeForJson(Request request) throws IOException {
         return objectMapper.readTree(EntityUtils.toString(restClient.performRequest(request).getEntity()));
     }
 
+    /**
+     * 把 Elasticsearch 返回的 hits 数组转换为内部检索结果。
+     *
+     * @param response Elasticsearch 查询响应
+     * @return 标准化后的检索结果
+     */
     private List<RetrievedChunk> parseSearchHits(JsonNode response) {
         JsonNode hits = response.path("hits").path("hits");
         if (!hits.isArray() || hits.isEmpty()) {
@@ -165,6 +222,16 @@ public class KnowledgeChunkIndexService {
         return List.copyOf(chunks);
     }
 
+    /**
+     * 构造关键词检索请求体。
+     *
+     * @param query 查询文本
+     * @param tenantId 当前租户
+     * @param allowedRoles 当前允许访问的角色
+     * @param size 返回数量
+     * @return JSON 请求体
+     * @throws IOException 当序列化失败时抛出
+     */
     private String buildKeywordSearchPayload(String query, String tenantId, List<String> allowedRoles, int size) throws IOException {
         ObjectNode root = objectMapper.createObjectNode();
         root.put("size", size);
@@ -180,6 +247,16 @@ public class KnowledgeChunkIndexService {
         return objectMapper.writeValueAsString(root);
     }
 
+    /**
+     * 构造向量检索请求体。
+     *
+     * @param queryVector 查询向量
+     * @param tenantId 当前租户
+     * @param allowedRoles 当前允许访问的角色
+     * @param size 返回数量
+     * @return JSON 请求体
+     * @throws IOException 当序列化失败时抛出
+     */
     private String buildVectorSearchPayload(List<Float> queryVector, String tenantId, List<String> allowedRoles, int size) throws IOException {
         ObjectNode root = objectMapper.createObjectNode();
         root.put("size", size);
@@ -194,6 +271,13 @@ public class KnowledgeChunkIndexService {
         return objectMapper.writeValueAsString(root);
     }
 
+    /**
+     * 构造索引 mappings，请求中显式声明文本字段、权限字段和 dense_vector 字段。
+     *
+     * @param vectorDimensions 向量维度
+     * @return JSON 请求体
+     * @throws IOException 当序列化失败时抛出
+     */
     private String buildCreateIndexPayload(int vectorDimensions) throws IOException {
         ObjectNode root = objectMapper.createObjectNode();
         ObjectNode properties = root.putObject("mappings").putObject("properties");
@@ -213,6 +297,11 @@ public class KnowledgeChunkIndexService {
         return objectMapper.writeValueAsString(root);
     }
 
+    /**
+     * 定义查询结果中需要回传的字段，避免加载整个源文档。
+     *
+     * @return source 字段数组
+     */
     private ArrayNode sourceFields() {
         ArrayNode source = objectMapper.createArrayNode();
         source.add("chunkId");
@@ -226,6 +315,13 @@ public class KnowledgeChunkIndexService {
         return source;
     }
 
+    /**
+     * 构造租户和角色维度的安全过滤条件。
+     *
+     * @param tenantId 当前租户
+     * @param allowedRoles 当前允许访问的角色
+     * @return ES filter 数组
+     */
     private ArrayNode buildSecurityFilters(String tenantId, List<String> allowedRoles) {
         ArrayNode filters = objectMapper.createArrayNode();
         filters.addObject()

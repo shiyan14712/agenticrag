@@ -16,8 +16,8 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.yoswell.agenticrag.platform.session.dto.SessionCreateRequest;
-import com.yoswell.agenticrag.platform.session.dto.SessionUpdateRequest;
+import com.yoswell.agenticrag.platform.session.dto.SessionCreateRequestDTO;
+import com.yoswell.agenticrag.platform.session.dto.SessionUpdateRequestDTO;
 import com.yoswell.agenticrag.platform.session.entity.ChatSession;
 import com.yoswell.agenticrag.platform.session.service.SessionContextSwitcher;
 import com.yoswell.agenticrag.platform.session.service.SessionService;
@@ -54,7 +54,7 @@ public class SessionController {
      */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public Mono<ChatSession> createSession(@RequestBody(required = false) SessionCreateRequest request) {
+    public Mono<ChatSession> createSession(@RequestBody(required = false) SessionCreateRequestDTO request) {
         return Mono.fromCallable(() -> sessionService.createSession(SecurityUtils.getCurrentUserId(), request))
                 .subscribeOn(Schedulers.boundedElastic());
     }
@@ -125,7 +125,7 @@ public class SessionController {
     @PatchMapping("/{sessionId}")
     public Mono<ChatSession> updateSession(
             @PathVariable String sessionId,
-            @RequestBody SessionUpdateRequest request) {
+            @RequestBody SessionUpdateRequestDTO request) {
         return Mono.fromCallable(() -> sessionService.updateSession(sessionId, SecurityUtils.getCurrentUserId(), request))
                 .subscribeOn(Schedulers.boundedElastic());
     }

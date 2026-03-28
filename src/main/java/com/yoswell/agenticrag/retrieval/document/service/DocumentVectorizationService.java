@@ -24,6 +24,12 @@ import com.yoswell.agenticrag.retrieval.document.parser.model.ParsedDocument;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 
+/**
+ * 负责把文档从“可读取文本”推进到“可检索知识块”。
+ *
+ * <p>它串联了元数据校验、文件读取、策略解析、切块 embedding 以及
+ * Elasticsearch 写入，是检索预处理链路的核心编排服务。</p>
+ */
 @Service
 public class DocumentVectorizationService {
 
@@ -47,6 +53,11 @@ public class DocumentVectorizationService {
         this.knowledgeChunkIndexService = knowledgeChunkIndexService;
     }
 
+    /**
+     * 执行一次完整的文档向量化流程。
+     *
+     * @param request 向量化阶段的上下文消息
+     */
     @Transactional
     public void vectorize(DocumentVectorizeRequest request) {
         DocumentMetadata metadata = requireMetadata(request.documentId());
@@ -91,11 +102,22 @@ public class DocumentVectorizationService {
         }
     }
 
+    /**
+     * 在补偿或死信场景下把文档直接标记为失败。
+     *
+     * @param documentId 文档业务 ID
+     */
     @Transactional
     public void markFailed(String documentId) {
         updateStatus(requireMetadata(documentId), DocumentProcessingStatus.FAILED);
     }
 
+    /**
+     * 读取文档元数据，不存在时直接抛错终止链路。
+     *
+     * @param documentId 文档业务 ID
+     * @return 对应元数据
+     */
     private DocumentMetadata requireMetadata(String documentId) {
         DocumentMetadata metadata = documentMetadataMapper.selectOne(
                 new QueryWrapper<DocumentMetadata>().eq("document_id", documentId)
@@ -106,11 +128,23 @@ public class DocumentVectorizationService {
         return metadata;
     }
 
+    /**
+     * 更新文档处理状态并回写数据库。
+     *
+     * @param metadata 文档元数据
+     * @param status 目标状态
+     */
     private void updateStatus(DocumentMetadata metadata, DocumentProcessingStatus status) {
         metadata.setStatus(status.value());
         documentMetadataMapper.updateById(metadata);
     }
 
+    /**
+     * 把数据库里逗号分隔的角色串还原成列表。
+     *
+     * @param allowedRoles 持久化后的角色字段
+     * @return 角色列表
+     */
     private List<String> splitRoles(String allowedRoles) {
         if (!StringUtils.hasText(allowedRoles)) {
             return List.of("ROLE_USER");
@@ -121,6 +155,13 @@ public class DocumentVectorizationService {
                 .toList();
     }
 
+    /**
+     * 返回第一个非空白字符串，用于在消息体和数据库字段之间做兜底合并。
+     *
+     * @param preferred 优先值
+     * @param fallback 回退值
+     * @return 最终使用的值
+     */
     private String firstNonBlank(String preferred, String fallback) {
         return StringUtils.hasText(preferred) ? preferred : fallback;
     }

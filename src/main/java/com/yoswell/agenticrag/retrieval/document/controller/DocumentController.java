@@ -19,10 +19,10 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 /**
- * 知识库文档资源管理控制器
+ * 文档上传与状态查询入口。
  *
- * 专门处理外部文档注入到 RAG 系统的文件网关层。负责接收用户的多模态文件上传与请求映射，
- * 并驱动后台通过 MQ 等管道机制实施对这些文件的脱敏、存储、深度拆解甚至向量化工作。
+ * <p>控制器本身只负责接收请求、获取租户上下文并把工作转交给服务层，
+ * 不在这里执行耗时的存储、解析和向量化逻辑。</p>
  */
 @RestController
 @RequestMapping("/api/v1/documents")
@@ -37,14 +37,12 @@ public class DocumentController {
     }
 
     /**
-     * 上传企业文档进入知识库解析管道
+     * 接收文档上传请求并启动异步处理链路。
      *
-     * 场景：用户需在界面长传如 PDF / Word 等不规则文档到系统知识库中。
-     * 由于后端采取 Python 深度学习框架 (例如 MinerU) 剥离分析版面，耗时巨大。
-     * 因此本接口仅响应上传接受状态，不做同步转换等待。
+     * <p>接口返回时只表示“上传已受理并成功建单”，不表示文档已经解析或向量化完成。</p>
      *
-     * @param file 由 Spring WebFlux 构建支持的异步数据流包装 (FilePart)
-     * @return 包含 documentId 唯一追踪编号，及其后续轮询追踪状态的任务票据
+     * @param file WebFlux 提供的上传文件片段
+     * @return 包含 documentId、当前状态和对象存储地址的响应
      */
     @PostMapping(value = "/upload", consumes = "multipart/form-data")
     public Mono<Map<String, String>> uploadDocument(@RequestPart("file") FilePart file) {
@@ -58,13 +56,10 @@ public class DocumentController {
     }
 
     /**
-     * 查询指定外部企业文档的解析预处理状态
+     * 查询文档当前处理状态。
      *
-     * 场景：前端在呈现文档列表时，显示这篇文件是仍被压在消息队列 ("UPLOADED_PENDING_PARSING") 
-     * 或是正在解析执行化中，又或最后已经被切割存下在 ES 里处于可命中状态。
-     *
-     * @param documentId 文件票据 ID (由上传接口初始化回传)
-     * @return 文件的最新的内部元数据对象表示（脱水版）
+     * @param documentId 文档业务 ID
+     * @return 文档状态摘要
      */
     @GetMapping("/{documentId}/status")
     public Mono<Map<String, String>> getDocumentStatus(@PathVariable String documentId) {
