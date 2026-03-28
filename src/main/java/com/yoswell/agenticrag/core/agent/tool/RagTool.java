@@ -63,7 +63,7 @@ public class RagTool {
             List<String> topChunks = crossAttentionRerank(new ArrayList<>(rrfScores.keySet()), query)
                     .stream()
                     .limit(rerankTopN)
-                    .toList();
+                    .toList(); 
             
             log.info("Rag search completed, returning top {} chunks.", topChunks.size());
             
@@ -81,6 +81,8 @@ public class RagTool {
         }
     }
     
+
+    // TODO: actual BM25 and KNN search against Elasticsearch, this is just a mock implementation to demonstrate the RRF fusion and reranking logic
     private Map<String, Double> calculateMockRrfFusion() {
         Map<String, Double> rrfMap = new HashMap<>();
         int RRF_K = 60;
@@ -99,6 +101,7 @@ public class RagTool {
                         Map.Entry::getKey, Map.Entry::getValue, (e1, e2) -> e1, LinkedHashMap::new));
     }
     
+    // TODO: actual cross-attention based reranking via reranker endpoint, this is just a mock implementation to demonstrate the concept
     private List<String> crossAttentionRerank(List<String> rrfSortedDocs, String query) {
         log.debug("Reranking {} documents against query...", rrfSortedDocs.size());
         return rrfSortedDocs.stream()
