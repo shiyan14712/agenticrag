@@ -3,20 +3,20 @@ package com.yoswell.agenticrag.controller;
 import java.util.Map;
 import java.util.UUID;
 
+import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.multipart.MultipartFile;
 
 import com.yoswell.agenticrag.service.mq.DocumentMessageProducer;
 
 import reactor.core.publisher.Mono;
 
 @RestController
-@RequestMapping("/api/v1/agent/document")
+@RequestMapping("/api/v1/documents")
 public class DocumentController {
 
     private final DocumentMessageProducer documentMessageProducer;
@@ -32,10 +32,10 @@ public class DocumentController {
      * 3. 返回 documentId 供前端追踪 MinerU 消费与提取进度
      */
     @PostMapping(value = "/upload", consumes = "multipart/form-data")
-    public Mono<Map<String, String>> uploadDocument(@RequestPart("file") MultipartFile file) {
+    public Mono<Map<String, String>> uploadDocument(@RequestPart("file") FilePart file) {
         String documentId = "doc-" + UUID.randomUUID().toString();
         // 伪代码: String minioUrl = minioService.upload(file);
-        String mockMinioUrl = "minio://agenticrag/" + file.getOriginalFilename();
+        String mockMinioUrl = "minio://agenticrag/" + file.filename();
         
         // 触发通过Kafka与Python端MinerU进行管道交互
         documentMessageProducer.sendDocParseRequest(documentId, mockMinioUrl, "pdf");

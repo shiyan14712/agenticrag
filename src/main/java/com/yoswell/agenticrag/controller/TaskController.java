@@ -17,7 +17,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 @RestController
-@RequestMapping("/api/v1/agent/task")
+@RequestMapping("/api/v1/tasks")
 public class TaskController {
 
     // 实际应注入 TaskService 或 PlanAndExecuteOrchestrator
