@@ -26,6 +26,8 @@ import reactor.core.scheduler.Schedulers;
 @RequestMapping("/api/v1/tasks")
 public class TaskController {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(TaskController.class);
+
     private final TaskService taskService;
 
     public TaskController(TaskService taskService) {
@@ -33,12 +35,17 @@ public class TaskController {
     }
 
     @PostMapping
+    @org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.ACCEPTED)
     public Mono<Map<String, String>> submitTask(@RequestBody TaskSubmitRequest request) {
-        return Mono.fromCallable(() -> {
-            String taskId = UUID.randomUUID().toString();
-            String userId = getCurrentUserId();
+        if (request == null || request.getObjective() == null || request.getObjective().trim().isEmpty()) {
+            return Mono.error(new IllegalArgumentException("Task objective cannot be empty"));
+        }
 
-            TaskContext context = taskService.submitTask(taskId, request.getObjective(), userId);
+        // Extract user context before entering the reactive pipeline's worker thread to prevent SecurityContext loss
+        String userId = getCurrentUserId();
+
+        return Mono.fromCallable(() -> {
+            TaskContext context = taskService.submitTask(request.getObjective(), userId);
 
             return Map.of(
                 "taskId", context.getTaskId(),

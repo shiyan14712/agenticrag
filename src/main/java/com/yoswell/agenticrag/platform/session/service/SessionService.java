@@ -82,7 +82,22 @@ public class SessionService {
                 .eq("session_id", sessionId)
                 .orderByAsc("created_at"));
     }
+    public void verifySessionAccess(String sessionId, String userId) {
+        if ("default_session".equals(sessionId)) {
+            return;
+        }
+        // This will naturally throw an exception if the session doesn't belong to the user or doesn't exist
+        getSession(sessionId, userId);
+    }
 
+    public java.util.Map<String, Object> getSessionDetails(String sessionId, String userId, int page, int size) {
+        ChatSession session = getSession(sessionId, userId);
+        Page<ChatMessage> messages = getSessionMessages(sessionId, userId, page, size);
+        return java.util.Map.of(
+            "session", session,
+            "messages", messages
+        );
+    }
     @Transactional
     public ChatSession updateSession(String sessionId, String userId, SessionUpdateRequest request) {
         ChatSession session = getSession(sessionId, userId);

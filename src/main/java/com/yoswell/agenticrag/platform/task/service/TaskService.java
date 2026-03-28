@@ -41,11 +41,13 @@ public class TaskService {
         this.objectMapper = objectMapper;
     }
 
-    public TaskContext submitTask(String taskId, String objective, String userId) {
+    public TaskContext submitTask(String objective, String userId) {
+        String taskId = java.util.UUID.randomUUID().toString();
         TaskContext context = new TaskContext(taskId, objective, userId);
         taskRegistry.put(taskId, context);
 
-        log.info("Task submitted: taskId={}, objective={}", taskId, objective);
+        log.info("Submitting new Plan-and-Execute task: taskId={}, userId={}, objective='{}'", 
+                 taskId, userId, objective);
 
         Thread.startVirtualThread(() -> executeTask(context));
 

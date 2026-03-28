@@ -24,6 +24,7 @@ import com.yoswell.agenticrag.platform.session.entity.ChatMessage;
 import com.yoswell.agenticrag.platform.session.entity.ChatSession;
 import com.yoswell.agenticrag.platform.session.service.SessionContextSwitcher;
 import com.yoswell.agenticrag.platform.session.service.SessionService;
+import com.yoswell.agenticrag.web.security.util.SecurityUtils;
 
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -69,14 +70,9 @@ public class SessionController {
             @PathVariable String sessionId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
-        return Mono.fromCallable(() -> {
-            ChatSession session = sessionService.getSession(sessionId, getCurrentUserId());
-            Page<ChatMessage> messages = sessionService.getSessionMessages(sessionId, getCurrentUserId(), page, size);
-            return Map.of(
-                "session", session,
-                "messages", messages
-            );
-        }).subscribeOn(Schedulers.boundedElastic());
+        String userId = getCurrentUserId();
+        return Mono.fromCallable(() -> sessionService.getSessionDetails(sessionId, userId, page, size))
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
     @PutMapping("/{sessionId}/activate")
