@@ -6,9 +6,10 @@ import java.util.function.Supplier;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yoswell.agenticrag.platform.session.entity.ChatSession;
+
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 @Component
 public class SessionRedisManager {
@@ -37,7 +38,7 @@ public class SessionRedisManager {
         String key = getSessionMetaKey(session.getSessionId());
         try {
             redisTemplate.opsForValue().set(key, objectMapper.writeValueAsString(session), Duration.ofHours(24));
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             e.printStackTrace();
         }
     }
@@ -49,7 +50,7 @@ public class SessionRedisManager {
             try {
                 redisTemplate.expire(key, Duration.ofHours(24));
                 return objectMapper.readValue(value, ChatSession.class);
-            } catch (JsonProcessingException e) {
+            } catch (JacksonException e) {
                 e.printStackTrace();
             }
         }
