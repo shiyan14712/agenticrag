@@ -47,31 +47,19 @@
   - ✨实现 `SessionTitleGenerator` 利用轻量 LLM 异步生成会话摘要标题。
   - ✨将 `ChatMessageService` 巧妙嵌入到原有 `ChatOrchestrator` 的双模式 SSE 流中，实现基于 Agent 输出全生命周期的无感日志拦截与消息入库统计机制。
 
-- **WebFlux 响应式链路全面补全 (Reactive Pipeline Completion)**：
-  - ✨**响应式调度器统一规约**：所有 Controller 中的 `Mono.fromCallable()` 和 `Mono.fromRunnable()` 均统一追加 `.subscribeOn(Schedulers.boundedElastic())`，将 MyBatis-Plus 阻塞型数据库调用正确卸载到弹性线程池，避免阻塞 Netty/Servlet 主线程。
-    > 技术决策：由于项目使用 MyBatis-Plus 3.5.16（阻塞型 ORM），引入 R2DBC 不可行。正确做法是 `boundedElastic` 调度器卸载阻塞操作，SSE 流式端点则通过 `Flux.create()` + `Thread.startVirtualThread()` 实现完全非阻塞。
-  - ✨**TaskController 伪实现消除**：三个端点（`POST /tasks`、`GET /tasks/{id}/stream`、`GET /tasks/{id}/todos`）全部接通真实的 `TaskService`，不再返回硬编码 Mock 数据。
-    - `TaskService` 内部使用 `ConcurrentHashMap<String, TaskContext>` 管理活跃任务注册表。
-    - `TaskContext` 持有 Reactor `Sinks.Many<SSE>.replay().all()` 广播通道，支持断线重连后获取全部历史事件。
-    - 任务执行通过 JDK Virtual Thread 异步运行 Plan → Execute → Synthesize 三阶段流程。
-    - `PlanStep` DTO 新增 `status` 字段（PENDING / IN_PROGRESS / DONE / FAILED），支撑前端 Todos 状态机渲染。
-  - ✨**DocumentController 伪实现消除**：`POST /documents/upload` 和 `GET /documents/{id}/status` 全部接通真实业务逻辑。
-    - 新增 `MinioConfig`：将 `application.yaml` 中 `minio.*` 参数注入为 `MinioClient` Bean。
-    - 新增 `MinioService`：封装 MinIO SDK 阻塞操作（上传文件、桶自动创建），含完整的异常处理和日志追踪。
-    - 新增 `DocumentService`：编排文档上传全链路管道（MinIO 存储 → MySQL 元数据持久化 → Kafka 消息触发），标注 `@Transactional` 事务边界。
-    - `DocumentMetadata` 实体增加 `minioUrl` 和 `fileExtension` 字段，支撑从上传到向量化的全生命周期追踪。
-    - `FilePart` 响应式流通过 `DataBuffer` 聚合 → `ByteArrayInputStream` 转换后交给阻塞 MinioService，正确处理了 `DataBufferUtils.release()` 防止内存泄漏。
-  - ✨**SessionController 响应式修正**：所有 6 个端点的 `Mono.fromCallable()` / `Mono.fromRunnable()` 统一追加 `Schedulers.boundedElastic()` 调度器。
-  - ✨**AgentController 一致性修正**：统一 `Schedulers` 导入风格，消除行内全限定名引用。
-  - ✨**PlanAndExecuteOrchestrator 状态追踪**：在线执行模式下，每个 `PlanStep` 执行前后自动回写 `status` 状态（PENDING → IN_PROGRESS → DONE），与 TaskService 离线模式保持一致。
-
 
 ## 尚未实现或待完善 (Not yet implemented / Mocked)
+- ⚠️ **WebFlux 响应式链路“伪实现” (Fake Reactive) 警告**：当前虽然 Controllers 层暴露了 `Mono`/`Flux` 接口，但底层并未真正实现全链路非阻塞。
+  1. 数据库接入目前使用的是阻塞型的 `MyBatis-Plus`/`JDBC`，代码中大量通过 `Mono.fromCallable()` 强行包装阻塞调用（未指定标准调度器或未使用 R2DBC）。
+  2. `TaskController` 和 `DocumentController` 的业务逻辑目前使用 `Mono.just()` 直接返回硬编码的 Mock 数据（例如假的 MinIO URL、未接通的异步任务机等）。真正的非阻塞 I/O 管道和真实业务调度仍待补全！
 - 探索更多关于 Elasticsearch 的实体索引与 LangChain4j 的 `Document` 类映射细节，建立真实的 Elasticsearch Mapping 和真实 Vector Ingestion。
 - 搭建真实的 Python MinerU 消费 Worker，当前仅实现了 Java 侧的双向队列通信 (Producer & Consumer)。
 - 基于 Docker Compose 构建 `db/redis/es/minio` 的基础设施本地测试环境。
-- `RedisConfig` 中 `GenericJackson2JsonRedisSerializer` 在 Spring Boot 4.x 中已标记过时 (deprecated)，后续需替换为推荐的序列化方案。
 
 ---
 *Date:* 2026-03-28
 *Framework:* Spring Boot 4.0.5 | JDK 25
+
+- **全局架构重构 (Domain-Driven Directory Restructuring)**：
+  - ✨执行了系统级的包结构调整，将原先混杂的按照层及功能混编的目录重构为严谨的 Bounded Context 顶层模块。
+  - ✨按 Clean Architecture 梳理出 core (AI 大脑与编排)、etrieval (RAG 文档解析与向量库)、platform (业务状态、会话与离线任务调度)、web (暴露接口安全网关) 多个独立防腐层，根治了工具链与传统 CRUD 并包的问题。
