@@ -37,7 +37,7 @@ public class TenantAuthenticationFilter extends OncePerRequestFilter {
         this.stringRedisTemplate = stringRedisTemplate;
     }
 
-    private static final String REDIS_TOKEN_PREFIX = "user:token:";
+    private static final String REDIS_TOKEN_PREFIX = "agenticrag:user:token:";
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)

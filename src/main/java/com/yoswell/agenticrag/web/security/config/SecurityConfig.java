@@ -34,7 +34,7 @@ public class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/v1/auth/login").permitAll()
-                .requestMatchers("/api/v1/document/**").authenticated()
+                .requestMatchers("/api/v1/documents/**").authenticated()
                 .anyRequest().permitAll()
             )
             .addFilterBefore(tenantAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);

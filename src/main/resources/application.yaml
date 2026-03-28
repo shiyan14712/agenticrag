@@ -70,7 +70,7 @@ langchain4j:
 
 
 jwt:
-  secret: "4Z9Q8v/T2p+R1xE6wY7uI0oA4dL5sM3bF8G2hJ7vK1c="
+  secret: "YWdlbnRpY3JhZw=="
   expiration: 86400000
 server:
   port: 8000
