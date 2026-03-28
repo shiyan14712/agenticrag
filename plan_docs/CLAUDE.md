@@ -51,7 +51,31 @@
     *   **RRF 融合与重排序**：将双路召回的结果（Top 20）使用倒数秩融合（Reciprocal Rank Fusion）合并，随后统一发送至独立的 Reranker 模型进行 Cross-Attention 交叉打分，截取 Top `rerank-top-n`。
     *   **Context 组装**：将这 Top 5 的 Chunk 组装成带有明确 `[Doc ID]` 标记的文本块，作为 Tool 的返回值（Observation）喂给 Agent。
 
-## 3. 上下文与记忆管理模块 [core]
+## 3. Session 管理[core]
+
+它是 Agent 对话流程的基础设施层——没有 Session，Agent 和 Memory 模块都无法正确工作。
+
+
+## 设计目标
+
+为系统提供完整的**多会话生命周期管理**能力，使用户能够：
+
+1. **创建新会话 (New Session)**，每次开启全新上下文。
+2. **切换会话 (Switch Session)**，在不同话题间自由跳转，上下文互不污染。
+3. **浏览历史对话 (History)**，支持分页加载过往完整对话记录。
+4. **会话归档与删除 (Archive/Delete)**，支持软删除与逻辑归档。
+
+
+### 给 AI 编程助手的补充指令
+
+1. **Session 隔离性是铁律**：任何涉及消息读写的操作，在 Service 层必须校验 `session.userId == currentUserId`。这不是可选的——它是安全模型的一部分.
+2. **消息持久化的事务边界**：用户消息写入 MySQL 和 Redis **必须在 Agent 执行前完成**（防止浏览器关闭后丢消息）。助手回复则在 SSE 流结束后持久化。两者不在同一个事务中。如果因为**网络波动、用户意外关闭连接**导致某个session找不回来，这是系统级别的严重问题。
+3. **会话切换不可阻塞**：`SessionContextSwitcher` 中的旧会话持久化和 L2/L3 压缩必须异步执行（`@Async` 或线程池），切换操作本身应在 200ms 内返回响应。
+4. **Redis 只是加速层**：所有 Redis 操作必须有 MySQL 降级路径。`SessionRedisManager` 的每个读方法都必须接受一个 `Supplier<T> fallback` 参数。
+
+
+
+## 4. 上下文与记忆管理模块 [core]
 
 **目标**：突破 Token 窗口极限，实现上下文的分级压缩，并赋予智能体跨会话的“长期认知”。
 
@@ -66,7 +90,7 @@
     *   **自动提取**：提供 `@Tool("save_user_preference")`。Agent 发现用户偏好（如“我只看核心代码”、“用中文回复”）时自主调用该工具写入 MySQL。
     *   **生命周期**：每次新建 Session，拦截器自动读取该用户的长期记忆表，转化为 System Prompt 注入对话初始上下文中。
 
-## 4. 异构文档处理与消息管道模块
+## 5. 异构文档处理与消息管道模块
 
 **目标**：实现复杂企业文档（PDF/Word/TXT）的高吞吐解析入库，彻底解耦 Web 主干与耗时的解析引擎。
 
@@ -80,7 +104,7 @@
     *   **Strategy Pattern (策略模式)**：定义 `DocumentParserStrategy` 接口，下设 `MinerUMarkdownStrategy` (根据 Markdown 标题层级结合 Overlap 切分) 和 `StandardTxtStrategy`。
     *   **Factory Method (工厂模式)**：`DocumentParserFactory` 根据 MySQL 中的文件后缀动态组装并返回具体的策略执行类。
 
-## 5. 权限控制与安全模块
+## 6. 权限控制与安全模块
 
 **目标**：在数据物理层和逻辑层建立防线，彻底杜绝越权检索与 Prompt Injection 攻击。
 
