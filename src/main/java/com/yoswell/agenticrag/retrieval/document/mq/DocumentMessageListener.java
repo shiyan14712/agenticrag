@@ -13,6 +13,7 @@ public class DocumentMessageListener {
     @KafkaListener(topics = "doc-vectorize-request", groupId = "agenticrag-group")
     public void listenVectorizeRequest(String message) {
         log.info("Received doc-vectorize-request from Kafka: {}", message);
+        // TODO: doc-vectorize-request is currently a fake implementation that only prints logs. Needs real vectorization.
     }
 
     @KafkaListener(topics = "doc-dlq", groupId = "agenticrag-group")

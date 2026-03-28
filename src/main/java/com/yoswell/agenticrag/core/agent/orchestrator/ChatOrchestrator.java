@@ -99,6 +99,7 @@ public class ChatOrchestrator {
         });
     }
 
+    // TODO: replace with actual retrieval and citation generation logic, this is just a mock implementation to demonstrate emitting a citations widget via SSE
     private List<CitationDto> emitMockCitationsWidget(reactor.core.publisher.FluxSink<ServerSentEvent<String>> sink) {
         List<CitationDto> citations = new ArrayList<>();
         try {
@@ -107,6 +108,7 @@ public class ChatOrchestrator {
 
             sink.next(ServerSentEvent.builder(citationsJson).event("citations").build());
         } catch (Exception e) {
+            log.error("Error occurred while emitting mock citations widget", e);
         }
         return citations;
     }

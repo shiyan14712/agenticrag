@@ -69,6 +69,7 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
 
         if (messages.size() > L1_LIMIT) {
             log.info("L1 size exceeded, scheduling async L2 Summarization thread for session: {}", memoryId);
+            // TODO: L2/L3 compression is only mocked (just logging). Needs actual LLM summarization logic implemented.
             List<ChatMessage> recentMessages = new ArrayList<>(messages.subList(messages.size() - L1_LIMIT, messages.size()));
             redisTemplate.opsForValue().set("session:memory:l1:" + memoryId, recentMessages, 12, TimeUnit.HOURS);
 

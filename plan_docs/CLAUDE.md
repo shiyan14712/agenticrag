@@ -58,7 +58,7 @@
 *   **技术栈**: MyBatis-Plus3.5.16, MySQL, Redis
 
 
-## 设计目标
+### 设计目标
 
 为系统提供完整的**多会话生命周期管理**能力，使用户能够：
 
@@ -111,6 +111,12 @@
 **目标**：在数据物理层和逻辑层建立防线，彻底杜绝越权检索与 Prompt Injection 攻击。
 
 *   **技术栈**：Spring Security, MySQL (RBAC), ElasticSearch Filters
+*   **多租户与数据隔离控制域 (Tenant Isolation Scope)**：
+    系统必须在以下四个核心边界上严格执行租户 (`tenant_id`) 及用户 (`user_id`) 隔离：
+    1.  **用户上传的原始文档 (User-uploaded Documents)**：任何针对实体文件的只读外链 (MinIO pre-signed URL) 或下载请求，必须前置校验文件元数据的 `tenant_id`。
+    2.  **解析后分块与向量数据 (Parsed Markdown & Vector Chunks)**：MinerU 解析出的高精度文本一旦切分落入 ElasticSearch，每条 Chunk 必须携带归属标签。大模型 RAG 检索时必须强制带上租户 Filter，严防“数据穿透命中”其他公司财报。
+    3.  **用户会话与聊天记录 (Session & Chat History)**：所有的 Agent 会话与历史消息读写，必须绑定个人 `user_id`。Redis 与 MySQL 中的持久化数据禁止出现未声明鉴权所有者的孤儿对象。
+    4.  **长期记忆与偏好 (Long-Term Memory)**：Agent 提炼并写入 `user_global_memory` 表的数据只属于特定用户，防止不同用户的私人偏好与知识发生交叉污染。
 *   **实现细节与流程**：
     *   **元数据打标**：所有切分后的文本块在写入 ES 时，强制挂载 `tenant_id` (租户)、`kb_id` (知识库 ID) 和 `allowed_roles` (允许访问的角色) 作为独立的 Keyword 字段。
     *   **检索拦截机制**：在 RAG `@Tool` 执行底层 ES 查询时，通过 Spring Security Context 提取当前登录用户的 ID 与 Role。将这些鉴权数据作为不可变的 `Filter` (Terms Query) 拼接在 ES 查询 DSL 中。即使大模型被恶意 Prompt 诱导去查询高管薪资文档，底层的 ES 也会在物理层面上返回 Empty Result。
