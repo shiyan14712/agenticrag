@@ -1,0 +1,131 @@
+package com.yoswell.agenticrag.core.agent.rag;
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
+
+import com.yoswell.agenticrag.core.agent.dto.RetrievedChunk;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
+
+@Component
+public class RerankerClient {
+
+    private static final Logger log = LoggerFactory.getLogger(RerankerClient.class);
+
+    private final ObjectMapper objectMapper;
+    private final HttpClient httpClient;
+    private final String rerankerApiUrl;
+    private final String rerankerApiKey;
+    private final String rerankerModelName;
+
+    public RerankerClient(ObjectMapper objectMapper,
+                          @Value("${langchain4j.reranker.api-url:}") String rerankerApiUrl,
+                          @Value("${langchain4j.reranker.api-key:}") String rerankerApiKey,
+                          @Value("${langchain4j.reranker.model-name:}") String rerankerModelName) {
+        this.objectMapper = objectMapper;
+        this.rerankerApiUrl = rerankerApiUrl;
+        this.rerankerApiKey = rerankerApiKey;
+        this.rerankerModelName = rerankerModelName;
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(15))
+                .build();
+    }
+
+    public List<RetrievedChunk> rerank(String query, List<RetrievedChunk> chunks) {
+        if (chunks == null || chunks.isEmpty() || !StringUtils.hasText(rerankerApiUrl)) {
+            return chunks == null ? List.of() : List.copyOf(chunks);
+        }
+
+        try {
+            HttpRequest request = buildRequest(query, chunks);
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 400) {
+                log.warn("Reranker returned non-success status {}, falling back to fused ordering", response.statusCode());
+                return List.copyOf(chunks);
+            }
+            return mergeRerankerResponse(chunks, response.body());
+        } catch (Exception exception) {
+            log.warn("Reranker request failed, falling back to fused ordering", exception);
+            return List.copyOf(chunks);
+        }
+    }
+
+    private HttpRequest buildRequest(String query, List<RetrievedChunk> chunks) throws IOException {
+        ObjectNode payload = objectMapper.createObjectNode();
+        if (StringUtils.hasText(rerankerModelName)) {
+            payload.put("model", rerankerModelName);
+        }
+        payload.put("query", query);
+        payload.put("top_n", chunks.size());
+        ArrayNode documents = payload.putArray("documents");
+        chunks.forEach(chunk -> documents.add(chunk.content()));
+
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(URI.create(rerankerApiUrl))
+                .timeout(Duration.ofSeconds(30))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)));
+
+        if (StringUtils.hasText(rerankerApiKey)) {
+            builder.header("Authorization", "Bearer " + rerankerApiKey);
+        }
+        return builder.build();
+    }
+
+    private List<RetrievedChunk> mergeRerankerResponse(List<RetrievedChunk> chunks, String body) throws IOException {
+        JsonNode root = objectMapper.readTree(body);
+        JsonNode results = root.path("results");
+        if (!results.isArray() || results.isEmpty()) {
+            return List.copyOf(chunks);
+        }
+
+        Map<Integer, Double> rerankerScores = new LinkedHashMap<>();
+        for (JsonNode result : results) {
+            rerankerScores.put(result.path("index").asInt(), result.path("relevance_score").asDouble());
+        }
+
+        ArrayList<RetrievedChunk> reordered = new ArrayList<>(chunks.size());
+        rerankerScores.entrySet().stream()
+                .sorted(Map.Entry.<Integer, Double>comparingByValue(Comparator.reverseOrder()))
+                .forEach(entry -> {
+                    int index = entry.getKey();
+                    if (index >= 0 && index < chunks.size()) {
+                        RetrievedChunk chunk = chunks.get(index);
+                        reordered.add(new RetrievedChunk(
+                                chunk.chunkId(),
+                                chunk.documentId(),
+                                chunk.documentName(),
+                                chunk.tenantId(),
+                                chunk.kbId(),
+                                chunk.allowedRoles(),
+                                chunk.chunkIndex(),
+                                chunk.content(),
+                                entry.getValue()
+                        ));
+                    }
+                });
+
+        if (reordered.isEmpty()) {
+            return List.copyOf(chunks);
+        }
+        return List.copyOf(reordered);
+    }
+}
