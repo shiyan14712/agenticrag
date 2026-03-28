@@ -1,4 +1,4 @@
-package com.yoswell.agenticrag.service;
+package com.yoswell.agenticrag.service.agent;
 
 import dev.langchain4j.service.MemoryId;
 import dev.langchain4j.service.SystemMessage;

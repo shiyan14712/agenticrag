@@ -8,9 +8,9 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.yoswell.agenticrag.model.RagStructuredResponse;
-import com.yoswell.agenticrag.service.ChatOrchestrator;
-import com.yoswell.agenticrag.service.RagStructuredAgent;
+import com.yoswell.agenticrag.dto.RagStructuredResponse;
+import com.yoswell.agenticrag.service.orchestrator.ChatOrchestrator;
+import com.yoswell.agenticrag.service.agent.RagStructuredAgent;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;

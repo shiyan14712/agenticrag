@@ -1,6 +1,6 @@
-package com.yoswell.agenticrag.service;
+package com.yoswell.agenticrag.service.agent;
 
-import com.yoswell.agenticrag.model.ExecutionPlan;
+import com.yoswell.agenticrag.dto.ExecutionPlan;
 
 import dev.langchain4j.service.SystemMessage;
 import dev.langchain4j.service.V;

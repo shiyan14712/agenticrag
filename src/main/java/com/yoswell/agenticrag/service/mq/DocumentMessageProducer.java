@@ -1,4 +1,4 @@
-package com.yoswell.agenticrag.service;
+package com.yoswell.agenticrag.service.mq;
 
 import java.util.Map;
 

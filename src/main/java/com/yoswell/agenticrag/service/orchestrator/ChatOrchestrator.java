@@ -1,4 +1,6 @@
-package com.yoswell.agenticrag.service;
+package com.yoswell.agenticrag.service.orchestrator;
+import com.yoswell.agenticrag.service.agent.*;
+import com.yoswell.agenticrag.service.mq.*;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -9,8 +11,8 @@ import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.yoswell.agenticrag.model.Citation;
-import com.yoswell.agenticrag.model.IntentDecision;
+import com.yoswell.agenticrag.dto.Citation;
+import com.yoswell.agenticrag.dto.IntentDecision;
 
 import dev.langchain4j.service.TokenStream;
 import reactor.core.publisher.Flux;

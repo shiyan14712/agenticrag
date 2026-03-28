@@ -34,9 +34,9 @@ spring:
 
 # MinIO 配置项预留
 minio:
-  endpoint: http://10.60.31.253:9000
-  access-key: your_access_key
-  secret-key: your_secret_key
+  endpoint: http://10.60.31.253:19000
+  access-key: admin
+  secret-key: PaiSmart2025
   bucket-name: agenticrag
 
 rag:

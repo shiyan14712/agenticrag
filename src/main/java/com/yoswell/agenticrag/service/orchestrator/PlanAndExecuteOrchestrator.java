@@ -1,4 +1,6 @@
-package com.yoswell.agenticrag.service;
+package com.yoswell.agenticrag.service.orchestrator;
+import com.yoswell.agenticrag.service.agent.*;
+import com.yoswell.agenticrag.service.mq.*;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -6,8 +8,8 @@ import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.yoswell.agenticrag.model.ExecutionPlan;
-import com.yoswell.agenticrag.model.PlanStep;
+import com.yoswell.agenticrag.dto.ExecutionPlan;
+import com.yoswell.agenticrag.dto.PlanStep;
 
 import reactor.core.publisher.Flux;
 

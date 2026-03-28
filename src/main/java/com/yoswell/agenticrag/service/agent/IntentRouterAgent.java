@@ -1,6 +1,6 @@
-package com.yoswell.agenticrag.service;
+package com.yoswell.agenticrag.service.agent;
 
-import com.yoswell.agenticrag.model.IntentDecision;
+import com.yoswell.agenticrag.dto.IntentDecision;
 
 import dev.langchain4j.service.SystemMessage;
 import dev.langchain4j.service.UserMessage;

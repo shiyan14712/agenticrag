@@ -1,6 +1,6 @@
-package com.yoswell.agenticrag.service;
+package com.yoswell.agenticrag.service.agent;
 
-import com.yoswell.agenticrag.model.RagStructuredResponse;
+import com.yoswell.agenticrag.dto.RagStructuredResponse;
 
 import dev.langchain4j.service.MemoryId;
 import dev.langchain4j.service.SystemMessage;

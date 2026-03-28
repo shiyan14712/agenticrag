@@ -1,4 +1,4 @@
-package com.yoswell.agenticrag.model;
+package com.yoswell.agenticrag.dto;
 
 public class PlanStep {
     

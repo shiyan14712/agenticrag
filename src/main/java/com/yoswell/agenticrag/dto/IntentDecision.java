@@ -1,4 +1,4 @@
-package com.yoswell.agenticrag.model;
+package com.yoswell.agenticrag.dto;
 
 /**
  * Scene 4A: Routing Decision Entity
