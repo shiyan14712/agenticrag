@@ -55,6 +55,8 @@
 
 它是 Agent 对话流程的基础设施层——没有 Session，Agent 和 Memory 模块都无法正确工作。
 
+*   **技术栈**: MyBatis-Plus3.5.16, MySQL, Redis
+
 
 ## 设计目标
 

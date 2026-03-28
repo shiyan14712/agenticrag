@@ -1,6 +1,7 @@
 # Agentic RAG 项目实现进度
 
 ## 已实现 (Implemented)
+
 - **底层架构**：升级 Maven `pom.xml`，指定 Spring Boot 版本 4.0.5 与 JDK 25 的预设，集成了依赖如 `langchain4j`、`spring-webflux`、`minio`、`elasticsearch-java`。
 - **配置参数**：更新了 `application.yaml` 包含了真实环境中 MySQL 和 Redis 的连接信息（`10.60.31.253`），并为 Kafka、MinIO、Elasticsearch 预留了占位以便后续自行配置，也包含 RAG 检索可调参数。
 - **Agent 编排与对话 (L1)**：创建了 `EnterpriseAgent` AI 代理接口以及暴露出响应式流 (`Flux<ServerSentEvent>`) 的 WebFlux Endpoint - `AgentController.java`。
@@ -37,6 +38,15 @@
   - ✨新增 `TaskController` 保障宏任务 (Plan-and-Execute) 可以跨网络重连：提供 `POST /task` 下发、`GET /task/{taskId}/stream` 挂载执行流、`GET /task/{taskId}/todos` 拉取全量状态机。
   - ✨新增 `SessionController` 下沉管理：提供 `GET /{sessionId}/history` 渲染历史气泡、及 `GET /user/memory` 触控 MySQL `user_global_memory` 偏好提取。
   - ✨新增 `DocumentController` 打通前端文件直传能力：承接物理落盘后，自动挂载并触发 `DocumentMessageProducer` 将分析指引推入系统主脉络。
+
+- **会话管理与对话持久化 (Session Management)**：
+  - ✨根据规范完整实现了 `ChatSession` 与 `ChatMessage` 的 Spring Data JPA 实体映射，并接入 MySQL 存储。
+  - ✨实现 `SessionRedisManager` 缓存活跃会话及状态。
+  - ✨全面重构 `SessionController` 且实现完整的 REST API 契约（包括会话创建、加载历史、会话切换以及软/硬删除）。
+  - ✨实现 `SessionContextSwitcher` 会话切换以及 Spring ApplicationEvent (SessionCreatedEvent / SessionSwitchedEvent) 的无缝解耦。
+  - ✨实现 `SessionTitleGenerator` 利用轻量 LLM 异步生成会话摘要标题。
+  - ✨将 `ChatMessageService` 巧妙嵌入到原有 `ChatOrchestrator` 的双模式 SSE 流中，实现基于 Agent 输出全生命周期的无感日志拦截与消息入库统计机制。
+
 
 ## 尚未实现或待完善 (Not yet implemented / Mocked)
 - 探索更多关于 Elasticsearch 的实体索引与 LangChain4j 的 `Document` 类映射细节，建立真实的 Elasticsearch Mapping 和真实 Vector Ingestion。

@@ -1,57 +1,100 @@
 package com.yoswell.agenticrag.controller;
 
-import java.util.List;
 import java.util.Map;
 
+import org.springframework.data.domain.Page;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+
+import com.yoswell.agenticrag.dto.SessionCreateRequest;
+import com.yoswell.agenticrag.dto.SessionUpdateRequest;
+import com.yoswell.agenticrag.entity.ChatMessage;
+import com.yoswell.agenticrag.entity.ChatSession;
+import com.yoswell.agenticrag.service.session.SessionContextSwitcher;
+import com.yoswell.agenticrag.service.session.SessionService;
+import com.yoswell.agenticrag.security.TenantUser;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import reactor.core.publisher.Mono;
 
 @RestController
-@RequestMapping("/api/v1/agent/session")
+@RequestMapping("/api/v1/sessions")
 public class SessionController {
 
-    /**
-     * 拉取目标 Session 在 Redis 中（或者 MySQL中经过压缩的）历史对话上下文
-     * 作用于：前台刷新浏览器或在左侧列表点击某个历史会话时重绘聊天气泡
-     */
-    @GetMapping("/{sessionId}/history")
-    public Mono<List<Map<String, String>>> getSessionHistory(@PathVariable String sessionId) {
-        // TODO: implement real session management
-        // chatMemoryStore.getMessages(sessionId);
-        return Mono.just(List.of(
-            Map.of("role", "user", "content", "你好，请列出2025架构设计纲要"),
-            Map.of("role", "assistant", "content", "好的，基于您的企业知识库...")
-        ));
+    private final SessionService sessionService;
+    private final SessionContextSwitcher sessionSwitcher;
+
+    public SessionController(SessionService sessionService, SessionContextSwitcher sessionSwitcher) {
+        this.sessionService = sessionService;
+        this.sessionSwitcher = sessionSwitcher;
     }
 
-    /**
-     * 前端用户手动触发清除上下文环境/新建空白 Session
-     */
+    private String getCurrentUserId() {
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (principal instanceof TenantUser) {
+            return ((TenantUser) principal).getUserId();
+        }
+        return SecurityContextHolder.getContext().getAuthentication().getName();
+    }
+
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    public Mono<ChatSession> createSession(@RequestBody(required = false) SessionCreateRequest request) {
+        return Mono.fromCallable(() -> sessionService.createSession(getCurrentUserId(), request));
+    }
+
+    @GetMapping
+    public Mono<Page<ChatSession>> getSessions(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "ACTIVE") String status) {
+        return Mono.fromCallable(() -> sessionService.getSessions(getCurrentUserId(), status, page, size));
+    }
+
+    @GetMapping("/{sessionId}/messages")
+    public Mono<Map<String, Object>> getSessionMessages(
+            @PathVariable String sessionId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        return Mono.fromCallable(() -> {
+            ChatSession session = sessionService.getSession(sessionId, getCurrentUserId());
+            Page<ChatMessage> messages = sessionService.getSessionMessages(sessionId, getCurrentUserId(), page, size);
+            return Map.of(
+                "session", session,
+                "messages", messages
+            );
+        });
+    }
+
+    @PutMapping("/{sessionId}/activate")
+    public Mono<ChatSession> activateSession(@PathVariable String sessionId) {
+        return Mono.fromCallable(() -> sessionSwitcher.activateSession(sessionId, getCurrentUserId()));
+    }
+
+    @PatchMapping("/{sessionId}")
+    public Mono<ChatSession> updateSession(
+            @PathVariable String sessionId,
+            @RequestBody SessionUpdateRequest request) {
+        return Mono.fromCallable(() -> sessionService.updateSession(sessionId, getCurrentUserId(), request));
+    }
+
     @DeleteMapping("/{sessionId}")
-    public Mono<Void> clearSessionMemory(@PathVariable String sessionId) {
-        // TODO: implement real session management
-
-        // chatMemoryStore.deleteMessages(sessionId);
-        return Mono.empty();
-    }
-    
-    /**
-     * 拉取当前登入用户由大模型抽象提取过的“长期偏好记忆”（System Prompt 层记忆）
-     */
-    @GetMapping("/user/memory")
-    public Mono<Map<String, Object>> getUserGlobalMemory() {
-        // TODO: implement real session management
-
-        // String userId = SecurityContextHolder.getContext().getAuthentication().getName();
-        // userGlobalMemoryRepository.findByUserId(userId);
-        return Mono.just(Map.of(
-            "userId", "currentUser",
-            "extractedPreferences", "用户喜欢Python，希望回答携带详细步骤代码。不希望返回过长的文本。"
-        ));
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public Mono<Void> deleteSession(
+            @PathVariable String sessionId,
+            @RequestParam(defaultValue = "archive") String mode) {
+        return Mono.fromRunnable(() -> {
+            sessionService.deleteSession(sessionId, getCurrentUserId(), mode);
+        });
     }
 }
