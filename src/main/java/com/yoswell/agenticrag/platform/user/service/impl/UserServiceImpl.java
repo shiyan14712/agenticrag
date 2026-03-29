@@ -81,7 +81,7 @@ public class UserServiceImpl implements UserService {
 
         int inserted = sysUserMapper.insert(newUser);
         if (inserted != 1) {
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "注册失败，请稍后重试");
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR);
         }
 
         return new UserRegisterRespDTO(
@@ -94,7 +94,7 @@ public class UserServiceImpl implements UserService {
     @Override
     public UserLoginRespDTO login(UserLoginReqDTO reqDTO) {
         if (reqDTO == null || !StringUtils.hasText(reqDTO.getUsername()) || !StringUtils.hasText(reqDTO.getPassword())) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST.getCode(), "用户名和密码不能为空");
+            throw new BusinessException(ErrorCode.INVALID_LOGIN_ARGS.getCode(), "用户名和密码不能为空");
         }
 
         SysUser user = sysUserMapper.selectOne(new LambdaQueryWrapper<SysUser>()
@@ -115,7 +115,7 @@ public class UserServiceImpl implements UserService {
     @Override
     public UserLoginRespDTO refreshToken(String refreshToken) {
         if (!StringUtils.hasText(refreshToken)) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST.getCode(), "Refresh token不能为空");
+            throw new BusinessException(ErrorCode.INVALID_TOKEN.getCode(), "Refresh token不能为空");
         }
 
         Claims claims = parseTokenClaims(refreshToken);
@@ -267,11 +267,11 @@ public class UserServiceImpl implements UserService {
 
     private void validateRegisterRequest(UserRegisterReqDTO reqDTO) {
         if (reqDTO == null) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST.getCode(), "注册请求参数不能为空");
+            throw new BusinessException(ErrorCode.INVALID_LOGIN_ARGS.getCode(), "注册请求参数不能为空");
         }
 
         if (!StringUtils.hasText(reqDTO.getUsername())) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST.getCode(), "用户名不能为空");
+            throw new BusinessException(ErrorCode.INVALID_LOGIN_ARGS.getCode(), "用户名不能为空");
         }
 
         String username = reqDTO.getUsername().trim();
@@ -280,7 +280,7 @@ public class UserServiceImpl implements UserService {
         }
 
         if (!StringUtils.hasText(reqDTO.getPassword()) || !StringUtils.hasText(reqDTO.getConfirmPassword())) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST.getCode(), "密码和确认密码不能为空");
+            throw new BusinessException(ErrorCode.INVALID_LOGIN_ARGS.getCode(), "密码和确认密码不能为空");
         }
 
         if (!reqDTO.getPassword().equals(reqDTO.getConfirmPassword())) {
