@@ -18,13 +18,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.yoswell.agenticrag.common.ApiResponse;
 import com.yoswell.agenticrag.common.constants.AuthTokenCacheConstants;
+import com.yoswell.agenticrag.common.exception.BusinessException;
+import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.platform.user.dto.request.UserLoginReqDTO;
-import com.yoswell.agenticrag.platform.user.dto.response.UserLoginRespDTO;
-import com.yoswell.agenticrag.platform.user.dto.request.UserLogoutReqDTO;
-import com.yoswell.agenticrag.platform.user.dto.request.UserRefreshTokenReqDTO;
 import com.yoswell.agenticrag.platform.user.dto.request.UserRegisterReqDTO;
+import com.yoswell.agenticrag.platform.user.dto.response.UserLoginRespDTO;
 import com.yoswell.agenticrag.platform.user.dto.response.UserRegisterRespDTO;
 import com.yoswell.agenticrag.platform.user.entity.SysUser;
 import com.yoswell.agenticrag.platform.user.mapper.SysUserMapper;
@@ -63,24 +62,6 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    public ApiResponse<UserRegisterRespDTO> registerWithResponse(UserRegisterReqDTO reqDTO) {
-        try {
-            return ApiResponse.success(register(reqDTO));
-        } catch (Exception e) {
-            return ApiResponse.error(400, e.getMessage());
-        }
-    }
-
-    @Override
-    public ApiResponse<UserLoginRespDTO> loginWithResponse(UserLoginReqDTO reqDTO) {
-        try {
-            return ApiResponse.success(login(reqDTO));
-        } catch (Exception e) {
-            return ApiResponse.error(401, e.getMessage());
-        }
-    }
-
-    @Override
     public UserRegisterRespDTO register(UserRegisterReqDTO reqDTO) {
         validateRegisterRequest(reqDTO);
 
@@ -88,7 +69,7 @@ public class UserServiceImpl implements UserService {
         long duplicatedCount = sysUserMapper.selectCount(new LambdaQueryWrapper<SysUser>()
                 .eq(SysUser::getUsername, normalizedUsername));
         if (duplicatedCount > 0) {
-            throw new RuntimeException("Username already exists");
+            throw new BusinessException(ErrorCode.USER_ALREADY_EXIST);
         }
 
         SysUser newUser = new SysUser();
@@ -100,7 +81,7 @@ public class UserServiceImpl implements UserService {
 
         int inserted = sysUserMapper.insert(newUser);
         if (inserted != 1) {
-            throw new RuntimeException("Register failed, please retry");
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "注册失败，请稍后重试");
         }
 
         return new UserRegisterRespDTO(
@@ -111,33 +92,9 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    public ApiResponse<UserLoginRespDTO> refreshWithResponse(UserRefreshTokenReqDTO reqDTO) {
-        try {
-            if (reqDTO == null) {
-                throw new RuntimeException("Refresh token is required");
-            }
-            return ApiResponse.success(refreshToken(reqDTO.getRefreshToken()));
-        } catch (Exception e) {
-            return ApiResponse.error(401, e.getMessage());
-        }
-    }
-
-    @Override
-    public ApiResponse<String> logoutWithResponse(String authorizationHeader, UserLogoutReqDTO reqDTO) {
-        try {
-            String accessToken = extractBearerToken(authorizationHeader);
-            String refreshToken = reqDTO == null ? null : reqDTO.getRefreshToken();
-            logout(accessToken, refreshToken);
-            return ApiResponse.success("Logout success");
-        } catch (Exception e) {
-            return ApiResponse.error(400, e.getMessage());
-        }
-    }
-
-    @Override
     public UserLoginRespDTO login(UserLoginReqDTO reqDTO) {
         if (reqDTO == null || !StringUtils.hasText(reqDTO.getUsername()) || !StringUtils.hasText(reqDTO.getPassword())) {
-            throw new RuntimeException("Username and password are required");
+            throw new BusinessException(ErrorCode.BAD_REQUEST.getCode(), "用户名和密码不能为空");
         }
 
         SysUser user = sysUserMapper.selectOne(new LambdaQueryWrapper<SysUser>()
@@ -145,11 +102,11 @@ public class UserServiceImpl implements UserService {
                 .eq(SysUser::getStatus, "ACTIVE"));
 
         if (user == null) {
-            throw new RuntimeException("Invalid username or password");
+            throw new BusinessException(ErrorCode.INVALID_PASSWORD);
         }
 
         if (!passwordEncoder.matches(reqDTO.getPassword(), user.getPassword())) {
-            throw new RuntimeException("Invalid username or password");
+            throw new BusinessException(ErrorCode.INVALID_PASSWORD);
         }
 
         return issueTokenPair(user);
@@ -158,30 +115,30 @@ public class UserServiceImpl implements UserService {
     @Override
     public UserLoginRespDTO refreshToken(String refreshToken) {
         if (!StringUtils.hasText(refreshToken)) {
-            throw new RuntimeException("Refresh token is required");
+            throw new BusinessException(ErrorCode.BAD_REQUEST.getCode(), "Refresh token不能为空");
         }
 
         Claims claims = parseTokenClaims(refreshToken);
         String tokenType = claims.get(AuthTokenCacheConstants.CLAIM_TOKEN_TYPE, String.class);
         if (!AuthTokenCacheConstants.TOKEN_TYPE_REFRESH.equals(tokenType)) {
-            throw new RuntimeException("Invalid refresh token type");
+            throw new BusinessException(ErrorCode.INVALID_TOKEN);
         }
 
         String userId = claims.getSubject();
         if (!StringUtils.hasText(userId)) {
-            throw new RuntimeException("Invalid refresh token subject");
+            throw new BusinessException(ErrorCode.INVALID_TOKEN);
         }
 
         String refreshTokenHash = hashToken(refreshToken);
         String cachedUserId = stringRedisTemplate.opsForValue()
                 .get(AuthTokenCacheConstants.REFRESH_TOKEN_PREFIX + refreshTokenHash);
         if (!StringUtils.hasText(cachedUserId) || !cachedUserId.equals(userId)) {
-            throw new RuntimeException("Refresh token expired or revoked");
+            throw new BusinessException(ErrorCode.TOKEN_EXPIRED);
         }
 
         SysUser user = loadActiveUserByUserId(userId);
         if (user == null) {
-            throw new RuntimeException("User does not exist or is disabled");
+            throw new BusinessException(ErrorCode.USER_NOT_EXIST);
         }
 
         UserLoginRespDTO refreshed = issueTokenPair(user);
@@ -310,28 +267,28 @@ public class UserServiceImpl implements UserService {
 
     private void validateRegisterRequest(UserRegisterReqDTO reqDTO) {
         if (reqDTO == null) {
-            throw new RuntimeException("Register request is required");
+            throw new BusinessException(ErrorCode.BAD_REQUEST.getCode(), "注册请求参数不能为空");
         }
 
         if (!StringUtils.hasText(reqDTO.getUsername())) {
-            throw new RuntimeException("Username is required");
+            throw new BusinessException(ErrorCode.BAD_REQUEST.getCode(), "用户名不能为空");
         }
 
         String username = reqDTO.getUsername().trim();
         if (!USERNAME_PATTERN.matcher(username).matches()) {
-            throw new RuntimeException("Username must be 4-32 chars and contain only letters, numbers, dot, underscore, or hyphen");
+            throw new BusinessException(ErrorCode.INVALID_REGISTRATION_PARAM.getCode(), "用户名格式错误: 4-32位字母数字或.-_");
         }
 
         if (!StringUtils.hasText(reqDTO.getPassword()) || !StringUtils.hasText(reqDTO.getConfirmPassword())) {
-            throw new RuntimeException("Password and confirmPassword are required");
+            throw new BusinessException(ErrorCode.BAD_REQUEST.getCode(), "密码和确认密码不能为空");
         }
 
         if (!reqDTO.getPassword().equals(reqDTO.getConfirmPassword())) {
-            throw new RuntimeException("Password and confirmPassword do not match");
+            throw new BusinessException(ErrorCode.PASSWORD_MISMATCH);
         }
 
         if (!PASSWORD_PATTERN.matcher(reqDTO.getPassword()).matches()) {
-            throw new RuntimeException("Password must be 8-64 chars with upper/lower case letters, numbers and special characters");
+            throw new BusinessException(ErrorCode.INVALID_REGISTRATION_PARAM.getCode(), "密码格式错误: 8-64位，且包含大小写字母、数字和特殊字符");
         }
     }
 

@@ -8,10 +8,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.yoswell.agenticrag.common.ApiResponse;
 import com.yoswell.agenticrag.platform.user.dto.request.UserLoginReqDTO;
-import com.yoswell.agenticrag.platform.user.dto.response.UserLoginRespDTO;
 import com.yoswell.agenticrag.platform.user.dto.request.UserLogoutReqDTO;
 import com.yoswell.agenticrag.platform.user.dto.request.UserRefreshTokenReqDTO;
 import com.yoswell.agenticrag.platform.user.dto.request.UserRegisterReqDTO;
+import com.yoswell.agenticrag.platform.user.dto.response.UserLoginRespDTO;
 import com.yoswell.agenticrag.platform.user.dto.response.UserRegisterRespDTO;
 import com.yoswell.agenticrag.platform.user.service.UserService;
 
@@ -46,7 +46,7 @@ public class UserController {
      */
     @PostMapping("/register")
     public Mono<ApiResponse<UserRegisterRespDTO>> register(@RequestBody UserRegisterReqDTO reqDTO) {
-        return Mono.fromCallable(() -> userService.registerWithResponse(reqDTO))
+        return Mono.fromCallable(() -> ApiResponse.success(userService.register(reqDTO)))
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
@@ -59,7 +59,7 @@ public class UserController {
      */
     @PostMapping("/login")
     public Mono<ApiResponse<UserLoginRespDTO>> login(@RequestBody UserLoginReqDTO reqDTO) {
-        return Mono.fromCallable(() -> userService.loginWithResponse(reqDTO))
+        return Mono.fromCallable(() -> ApiResponse.success(userService.login(reqDTO)))
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
@@ -71,8 +71,10 @@ public class UserController {
      */
     @PostMapping("/refresh")
     public Mono<ApiResponse<UserLoginRespDTO>> refresh(@RequestBody UserRefreshTokenReqDTO reqDTO) {
-        return Mono.fromCallable(() -> userService.refreshWithResponse(reqDTO))
-                .subscribeOn(Schedulers.boundedElastic());
+        return Mono.fromCallable(() -> {
+            // 参数在调用内部再校验会导致冗余，可以在这先校验或继续让 Service 层校验
+            return ApiResponse.success(userService.refreshToken(reqDTO != null ? reqDTO.getRefreshToken() : null));
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 
     /**
@@ -86,7 +88,10 @@ public class UserController {
     public Mono<ApiResponse<String>> logout(
             @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
             @RequestBody(required = false) UserLogoutReqDTO reqDTO) {
-        return Mono.fromCallable(() -> userService.logoutWithResponse(authorizationHeader, reqDTO))
-                .subscribeOn(Schedulers.boundedElastic());
+        return Mono.fromCallable(() -> {
+            String refreshToken = reqDTO == null ? null : reqDTO.getRefreshToken();
+            userService.logout(authorizationHeader, refreshToken);
+            return ApiResponse.success("Logout success");
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 }

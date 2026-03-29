@@ -9,80 +9,56 @@ import com.yoswell.agenticrag.platform.user.dto.request.UserRegisterReqDTO;
 import com.yoswell.agenticrag.platform.user.dto.response.UserRegisterRespDTO;
 
 /**
- * 用户认证领域服务接口
+ * 鐢ㄦ埛璁よ瘉棰嗗煙鏈嶅姟鎺ュ彛
  */
 public interface UserService {
 
-    /**
-     * 注册接口响应封装
-     *
-     * @param reqDTO 注册请求体
-     * @return 统一响应对象
-     */
-    ApiResponse<UserRegisterRespDTO> registerWithResponse(UserRegisterReqDTO reqDTO);
+
+
+
+
+
+
+
 
     /**
-     * 登录接口响应封装
+     * 鐢ㄦ埛娉ㄥ唽
      *
-     * @param reqDTO 登录请求体
-     * @return 统一响应对象
-     */
-    ApiResponse<UserLoginRespDTO> loginWithResponse(UserLoginReqDTO reqDTO);
-
-    /**
-     * 刷新接口响应封装
-     *
-     * @param reqDTO 刷新请求体
-     * @return 统一响应对象
-     */
-    ApiResponse<UserLoginRespDTO> refreshWithResponse(UserRefreshTokenReqDTO reqDTO);
-
-    /**
-     * 注销接口响应封装
-     *
-     * @param authorizationHeader Authorization 请求头
-     * @param reqDTO 注销请求体
-     * @return 统一响应对象
-     */
-    ApiResponse<String> logoutWithResponse(String authorizationHeader, UserLogoutReqDTO reqDTO);
-
-    /**
-     * 用户注册
-     *
-     * @param reqDTO 注册请求体
-     * @return 注册结果
+     * @param reqDTO 娉ㄥ唽璇锋眰浣?
+     * @return 娉ㄥ唽缁撴灉
      */
     UserRegisterRespDTO register(UserRegisterReqDTO reqDTO);
 
     /**
-     * 用户登录
+     * 鐢ㄦ埛鐧诲綍
      *
-     * @param reqDTO 登录请求体
-     * @return 登录成功后的 token 与用户信息
+     * @param reqDTO 鐧诲綍璇锋眰浣?
+     * @return 鐧诲綍鎴愬姛鍚庣殑 token 涓庣敤鎴蜂俊鎭?
      */
     UserLoginRespDTO login(UserLoginReqDTO reqDTO);
 
     /**
-     * 使用 Refresh Token 换发 Access Token，并执行 Refresh Token 轮换
+     * 浣跨敤 Refresh Token 鎹㈠彂 Access Token锛屽苟鎵ц Refresh Token 杞崲
      *
      * @param refreshToken Refresh Token
-     * @return 新的令牌对与用户信息
+     * @return 鏂扮殑浠ょ墝瀵逛笌鐢ㄦ埛淇℃伅
      */
     UserLoginRespDTO refreshToken(String refreshToken);
 
     /**
-     * 注销当前会话
+     * 娉ㄩ攢褰撳墠浼氳瘽
      *
-     * @param accessToken Access Token（可选）
-     * @param refreshToken Refresh Token（可选）
+     * @param accessToken Access Token锛堝彲閫夛級
+     * @param refreshToken Refresh Token锛堝彲閫夛級
      */
     void logout(String accessToken, String refreshToken);
 
     /**
-     * 校验 Token 是否有效
+     * 鏍￠獙 Token 鏄惁鏈夋晥
      *
      * @param token JWT token
-     * @return true 表示 token 有效
+     * @return true 琛ㄧず token 鏈夋晥
      */
     boolean validateToken(String token);
 }
+
