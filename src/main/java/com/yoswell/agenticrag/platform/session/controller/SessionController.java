@@ -21,16 +21,17 @@ import com.yoswell.agenticrag.platform.session.dto.SessionUpdateRequestDTO;
 import com.yoswell.agenticrag.platform.session.entity.ChatSession;
 import com.yoswell.agenticrag.platform.session.service.SessionContextSwitcher;
 import com.yoswell.agenticrag.platform.session.service.SessionService;
-import com.yoswell.agenticrag.util.SecurityUtils;
+import com.yoswell.agenticrag.web.security.util.SecurityUtils;
 
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 /**
- * 会话(Session)生命周期管理控制器
- * 
- * 负责智能体对话会话的创建、查询、历史记录拉取、切换上下文及归档操作。
- * 严格基于当前登录用户的 UserID 进行多租户级别的资源隔离，避免串号。
+ * 聊天会话管理控制器
+ *
+ * <p>负责对话会话 (Chat Session) 的全生命周期管理，包括创建、查询、激活、更新和删除。
+ * 所有的端点均基于 WebFlux 响应式框架，通过 ReactiveSecurityContext 提取当前用身份，
+ * 采用异步调度模式将数据库持久化等潜在阻塞操作指派到 boundedElastic 线程池运行。</p>
  */
 @RestController
 @RequestMapping("/api/v1/sessions")
@@ -45,107 +46,103 @@ public class SessionController {
     }
 
     /**
-     * 创建全新对话会话 (New Session)
+     * 创建新的聊天会话
      *
-     * 场景：用户点击左侧边栏的“新对话”按钮时调用。创建一个干净、未受上下文污染的独立会话空间。
-     * 
-     * @param request 包含可选的模型参数(例如: modelId)等配置信息
-     * @return 初始化的会话实体对象
+     * @param request 包含会话初始参数的数据传输对象（例如初始提示词、预设标题）可选
+     * @return 已持久化的聊天会话实体对象
      */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public Mono<ChatSession> createSession(@RequestBody(required = false) SessionCreateRequestDTO request) {
-        return Mono.fromCallable(() -> sessionService.createSession(SecurityUtils.getCurrentUserId(), request))
-                .subscribeOn(Schedulers.boundedElastic());
+        return SecurityUtils.getCurrentUserId()
+                .flatMap(userId -> Mono.fromCallable(() -> sessionService.createSession(userId, request))
+                .subscribeOn(Schedulers.boundedElastic()));
     }
 
     /**
-     * 分页查询用户的会话列表
+     * 分页查询当前用户下归属的聊天会话列表
      *
-     * 场景：用户打开页面，渲染左侧边栏此前的历史话题列表，通常按最后活跃时间降序。
-     *
-     * @param page 页码，从 0 开始，默认为 0
-     * @param size 每页拉取数量，默认为 20
-     * @param status 会话状态（如：ACTIVE, ARCHIVED），默认为 ACTIVE
-     * @return 分页装载的 ChatSession 数据对象
+     * @param page   分页页码（默认 0 起始）
+     * @param size   分页大小（默认每页 20 条）
+     * @param status 要查询的会话状态过滤器（默认检索 ACTIVE 状态的会话）
+     * @return 聊天会话分页数据 (MyBatis-Plus 分页模型)
      */
     @GetMapping
     public Mono<Page<ChatSession>> getSessions(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(defaultValue = "ACTIVE") String status) {
-        return Mono.fromCallable(() -> sessionService.getSessions(SecurityUtils.getCurrentUserId(), status, page, size))
-                .subscribeOn(Schedulers.boundedElastic());
+        return SecurityUtils.getCurrentUserId()
+                .flatMap(userId -> Mono.fromCallable(() -> sessionService.getSessions(userId, status, page, size))
+                .subscribeOn(Schedulers.boundedElastic()));
     }
 
     /**
-     * 获取指定会话的历史消息记录
+     * 分页获取指定聊天会话内部的历史消息记录
      *
-     * 场景：用户在左侧边栏点击了过往的某个话题，进入主界面需要展现该该话题完整的聊天记录上下文。
-     * 
-     * @param sessionId 唯一会话 ID
-     * @param page 页码，从 0 开始，默认为 0
-     * @param size 每页载入记录数，为了沉浸式体验这里默认可设置稍大（如 50）
-     * @return 包含当前 Session 基础元数据和历史消息分页数据的聚合 Map
+     * @param sessionId 会话的唯一 ID
+     * @param page      分页页码（默认 0 起始）
+     * @param size      记录每页大小（默认每页 50 条消息）
+     * @return 包含当前会话消息上下文数据的 Map，通常包含关联联接的信息列表
      */
     @GetMapping("/{sessionId}/messages")
     public Mono<Map<String, Object>> getSessionMessages(
             @PathVariable String sessionId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
-        String userId = SecurityUtils.getCurrentUserId();
-        return Mono.fromCallable(() -> sessionService.getSessionDetails(sessionId, userId, page, size))
-                .subscribeOn(Schedulers.boundedElastic());
+        return SecurityUtils.getCurrentUserId()
+                .flatMap(userId -> Mono.fromCallable(() -> sessionService.getSessionDetails(sessionId, userId, page, size))
+                .subscribeOn(Schedulers.boundedElastic()));
     }
 
     /**
-     * 切换/激活目标会话成为当前活跃上下文
+     * 激活并切换至指定会话
      *
-     * 场景：由于Agent可能会将活跃状态维持在 Redis 以优化速度，当用户在不同的话题间频繁跳转时，
-     * 利用此接口将目标会话推入热数据层（预热L1内存）。
+     * <p>恢复或者切入某个特定会话环境时被客户端调用，会验证用户的归属权。</p>
      *
-     * @param sessionId 唯将要激活的目标会话 ID
-     * @return 已经切换状态完成的 ChatSession 对象
+     * @param sessionId 需激活的会话 ID
+     * @return 激活后的最新会话实体对象
      */
     @PutMapping("/{sessionId}/activate")
-    public Mono<ChatSession> activateSession(@PathVariable String sessionId) {
-        return Mono.fromCallable(() -> sessionSwitcher.activateSession(sessionId, SecurityUtils.getCurrentUserId()))
-                .subscribeOn(Schedulers.boundedElastic());
+    public Mono<ChatSession> activateSession(@PathVariable String sessionId) {  
+        return SecurityUtils.getCurrentUserId()
+                .flatMap(userId -> Mono.fromCallable(() -> sessionSwitcher.activateSession(sessionId, userId))
+                .subscribeOn(Schedulers.boundedElastic()));
     }
 
     /**
-     * 更新指定会话属性 
+     * 更新指定会话的信息（如：重命名会话标题等操作）
      *
-     * 场景：LLM 或用户自己重命名了当前的主题名称，或修改了系统设定的偏好参数。
-     *
-     * @param sessionId 指定待更新的会话 ID
-     * @param request 需要更新的字段定义(如 : title 等)
-     * @return 最新的 Session 数据
+     * @param sessionId 会话唯一 ID
+     * @param request   包含增量更新字段的 DTO
+     * @return 更新成功后的会话实体对象
      */
     @PatchMapping("/{sessionId}")
     public Mono<ChatSession> updateSession(
             @PathVariable String sessionId,
             @RequestBody SessionUpdateRequestDTO request) {
-        return Mono.fromCallable(() -> sessionService.updateSession(sessionId, SecurityUtils.getCurrentUserId(), request))
-                .subscribeOn(Schedulers.boundedElastic());
+        return SecurityUtils.getCurrentUserId()
+                .flatMap(userId -> Mono.fromCallable(() -> sessionService.updateSession(sessionId, userId, request))
+                .subscribeOn(Schedulers.boundedElastic()));
     }
 
     /**
-     * 归档或删除会话
+     * 删除指定的聊天会话
      *
-     * 场景：用户不希望这个话题再出现在前端列表。支持逻辑归档而非物理硬删除（按模式调整）。
+     * <p>系统默认行为可能是软删除或归档，可通过 mode 参数变更。</p>
      *
-     * @param sessionId 选择删除的会话 ID
-     * @param mode 操作模式，例如 'archive'（默认）仅标记不删除归档；'hard_delete' 代表级联彻底清除
-     * @return Mono.empty() 代表 204 No Content 执行成功
+     * @param sessionId 欲删除的会话 ID
+     * @param mode      操作模式（默认 archive: 归档; 否则按物理删除或逻辑删除分支）
+     * @return 响应式的 Void 完成信号（HTTP 204）
      */
     @DeleteMapping("/{sessionId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public Mono<Void> deleteSession(
             @PathVariable String sessionId,
             @RequestParam(defaultValue = "archive") String mode) {
-        return Mono.<Void>fromRunnable(() -> {
-            sessionService.deleteSession(sessionId, SecurityUtils.getCurrentUserId(), mode);
-        }).subscribeOn(Schedulers.boundedElastic());
+        return SecurityUtils.getCurrentUserId()
+                .flatMap(userId -> Mono.<Void>fromRunnable(() -> {
+                    sessionService.deleteSession(sessionId, userId, mode);      
+                }).subscribeOn(Schedulers.boundedElastic()));
     }
 }
