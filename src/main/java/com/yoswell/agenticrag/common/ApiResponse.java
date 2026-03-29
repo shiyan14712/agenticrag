@@ -8,7 +8,7 @@ package com.yoswell.agenticrag.common;
 public class ApiResponse<T> {
 
     /** 业务状态码。 */
-    private int code;
+    private String code;
 
     /** 响应描述信息。 */
     private String message;
@@ -26,7 +26,7 @@ public class ApiResponse<T> {
      * @param message 响应描述信息
      * @param data 业务数据
      */
-    public ApiResponse(int code, String message, T data) {
+    public ApiResponse(String code, String message, T data) {
         this.code = code;
         this.message = message;
         this.data = data;
@@ -40,7 +40,7 @@ public class ApiResponse<T> {
      * @param <T> 业务数据类型
      */
     public static <T> ApiResponse<T> success(T data) {
-        return new ApiResponse<>(200, "Success", data);
+        return new ApiResponse<>("200", "Success", data);
     }
 
     /**
@@ -51,15 +51,15 @@ public class ApiResponse<T> {
      * @return 标准失败响应
      * @param <T> 业务数据类型
      */
-    public static <T> ApiResponse<T> error(int code, String message) {
+    public static <T> ApiResponse<T> error(String code, String message) {
         return new ApiResponse<>(code, message, null);
     }
 
-    public int getCode() {
+    public String getCode() {
         return code;
     }
 
-    public void setCode(int code) {
+    public void setCode(String code) {
         this.code = code;
     }
 

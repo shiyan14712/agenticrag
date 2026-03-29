@@ -30,7 +30,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     public ApiResponse<Void> handleIllegalArgumentException(IllegalArgumentException e) {
         log.warn("参数异常: {}", e.getMessage());
-        return ApiResponse.error(ErrorCode.BAD_REQUEST.getCode(), e.getMessage());
+        return ApiResponse.error("BAD_REQUEST", "参数错误, 请检查参数");
     }
 
     /**
@@ -39,7 +39,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(io.jsonwebtoken.JwtException.class)
     public ApiResponse<Void> handleJwtException(io.jsonwebtoken.JwtException e) {
         log.warn("JWT令牌异常: {}", e.getMessage());
-        return ApiResponse.error(ErrorCode.UNAUTHORIZED.getCode(), "令牌无效或已过期");
+        return ApiResponse.error("UNAUTHORIZED", "令牌错误, 请重新登录");
     }
 
     /**
