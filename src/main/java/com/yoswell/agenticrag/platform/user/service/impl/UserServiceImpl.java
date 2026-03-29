@@ -93,10 +93,12 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public UserLoginRespDTO login(UserLoginReqDTO reqDTO) {
+        // 1. 基础参数校验
         if (reqDTO == null || !StringUtils.hasText(reqDTO.getUsername()) || !StringUtils.hasText(reqDTO.getPassword())) {
             throw new BusinessException(ErrorCode.INVALID_LOGIN_ARGS.getCode(), "用户名和密码不能为空");
         }
 
+        // 2. 根据用户名查询正常（ACTIVE）状态的用户记录
         SysUser user = sysUserMapper.selectOne(new LambdaQueryWrapper<SysUser>()
                 .eq(SysUser::getUsername, reqDTO.getUsername())
                 .eq(SysUser::getStatus, "ACTIVE"));
@@ -105,10 +107,12 @@ public class UserServiceImpl implements UserService {
             throw new BusinessException(ErrorCode.INVALID_PASSWORD);
         }
 
+        // 3. 验证前端传输的密码与数据库中采用 BCrypt 算法保存的哈希值是否匹配
         if (!passwordEncoder.matches(reqDTO.getPassword(), user.getPassword())) {
             throw new BusinessException(ErrorCode.INVALID_PASSWORD);
         }
 
+        // 4. 验证通过，构建完整的 Token 对（Access/Refresh），并写入 Redis 缓存实现会话控制
         return issueTokenPair(user);
     }
 
@@ -170,15 +174,25 @@ public class UserServiceImpl implements UserService {
         return Boolean.TRUE.equals(stringRedisTemplate.hasKey(AuthTokenCacheConstants.ACCESS_TOKEN_PREFIX + token));
     }
 
+    /**
+     * 签发全新的会话凭证 (Access Token & Refresh Token)
+     * 同时将它们录入 Redis 缓存区，配合 WebFilter 实现状态校验
+     *
+     * @param user 当前成功认证的用户实体
+     * @return 返回包含全量凭证信息的响应体
+     */
     private UserLoginRespDTO issueTokenPair(SysUser user) {
         long nowMillis = System.currentTimeMillis();
 
+        // 1. 利用 JJWT 生成含有用户基础声明(claims)的 Token 字符串
         String accessToken = generateToken(user, AuthTokenCacheConstants.TOKEN_TYPE_ACCESS, accessTokenExpirationMillis, nowMillis);
         String refreshToken = generateToken(user, AuthTokenCacheConstants.TOKEN_TYPE_REFRESH, refreshTokenExpirationMillis, nowMillis);
 
+        // 2. 将签发出的新 Token 存入 Redis 以便统一管理（支持后续请求拦截器鉴权拦截、支持踢下线）
         cacheAccessToken(accessToken, user.getUserId());
         cacheRefreshToken(refreshToken, user.getUserId());
 
+        // 3. 构建给前端的登录返回包
         return new UserLoginRespDTO(
                 "Bearer",
                 accessToken,
@@ -211,6 +225,12 @@ public class UserServiceImpl implements UserService {
         return builder.compact();
     }
 
+    /**
+     * 将 Access Token 直接存入 Redis，作为短效令牌会话状态存储。
+     * Key: 前缀 + Token本身（或Hash后的Token，依赖 AuthTokenCacheConstants 定义，目前为明文 Token 结合前缀）
+     * Value: 对应的用户标识 userId
+     * 有效期设置: 与生成 Token 时设定的载荷 TTL 严丝合缝匹配，实现缓存与 Token 的自然淘汰
+     */
     private void cacheAccessToken(String accessToken, String userId) {
         stringRedisTemplate.opsForValue().set(
                 AuthTokenCacheConstants.ACCESS_TOKEN_PREFIX + accessToken,
@@ -219,6 +239,12 @@ public class UserServiceImpl implements UserService {
                 TimeUnit.MILLISECONDS);
     }
 
+    /**
+     * 将 Refresh Token 存入 Redis，作为长效令牌会话状态存储。
+     * 核心安全策略：由于 Refresh Token 生存期长且权力过大（能无限续杯 Access Token），绝对不能像缓存 Access Token 那样让它在 Redis 等高速缓存设备里“裸奔”。
+     * 因此在此采用 SHA-256 对原字符执行摘要加密处理得到哈希值，以此 Hash 值作为 Redis Key 存下。
+     * 用户日后做刷新请求（携带未加密令牌明文）时，后端也先对其跑一遍 Hash 函数，再利用此 Hash 值去 Redis 撞库比对。防止拖库造成永久凭证暴漏。
+     */
     private void cacheRefreshToken(String refreshToken, String userId) {
         String refreshTokenHash = hashToken(refreshToken);
         stringRedisTemplate.opsForValue().set(
