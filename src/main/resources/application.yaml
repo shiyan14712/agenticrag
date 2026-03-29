@@ -66,16 +66,16 @@ langchain4j:
     open-ai:
       base-url: "https://ark.cn-beijing.volces.com/api/v3"
       api-key: "87db3f57-9659-4c28-9f18-9a3ce1754fc5"
-      model-name: "doubao-embedding-vision-251215"
+      model-name: "doubao-embedding-text-240715"
       dimensions: 1024
   reranker:
     api-url: "https://api.jina.ai/v1/rerank"
-    api-key: "jina_your_reranker_api_key"
-    model-name: "jina-reranker-v2-base-multilingual"
+    api-key: "jina_1ff6d644760040369f44eba736ca5d37Crdu3unp4kVFHxpUIuouUri0DC4q"
+    model-name: "jina-reranker-v3"
 
 
 jwt:
-  secret: "YWdlbnRpY3JhZw=="
+  secret: "dGhpc19pc19hX3ZlcnlfbG9uZ19zZWNyZXRfa2V5X3RoYXRfaXNfYXRfbGVhc3RfMzJfYnl0ZXNfZm9yX2FnZW50aWNyYWc=" # 必须大于 256 位(32字节)的 Base64 字符串
   expiration: 86400000
   refresh-expiration: 604800000
 server:
