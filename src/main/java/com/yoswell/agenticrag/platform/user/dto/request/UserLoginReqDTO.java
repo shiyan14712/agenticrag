@@ -1,14 +1,14 @@
-package com.yoswell.agenticrag.platform.user.dto;
+package com.yoswell.agenticrag.platform.user.dto.request;
 
 /**
- * 用户登录请求 DTO。
+ * 用户登录请求 DTO
  */
 public class UserLoginReqDTO {
 
-    /** 登录账号名。 */
+    /** 登录账号名 */
     private String username;
 
-    /** 登录明文密码（仅用于入参接收）。 */
+    /** 登录明文密码（仅用于入参接收） */
     private String password;
 
     public String getUsername() {

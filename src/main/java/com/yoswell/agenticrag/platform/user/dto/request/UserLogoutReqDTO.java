@@ -1,13 +1,13 @@
-package com.yoswell.agenticrag.platform.user.dto;
+package com.yoswell.agenticrag.platform.user.dto.request;
 
 /**
- * 用户注销请求 DTO。
+ * 用户注销请求 DTO
  */
 public class UserLogoutReqDTO {
 
     /**
-     * Refresh Token（可选）。
-     * 提供时会删除对应 refresh 记录，阻止后续换发。
+     * Refresh Token（可选）
+     * 提供时会删除对应 refresh 记录，阻止后续换发
      */
     private String refreshToken;
 

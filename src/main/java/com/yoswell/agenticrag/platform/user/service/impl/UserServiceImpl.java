@@ -7,6 +7,7 @@ import java.util.Date;
 import java.util.HexFormat;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 import javax.crypto.SecretKey;
 
@@ -19,10 +20,12 @@ import org.springframework.util.StringUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.yoswell.agenticrag.common.ApiResponse;
 import com.yoswell.agenticrag.common.constants.AuthTokenCacheConstants;
-import com.yoswell.agenticrag.platform.user.dto.UserLoginReqDTO;
-import com.yoswell.agenticrag.platform.user.dto.UserLoginRespDTO;
-import com.yoswell.agenticrag.platform.user.dto.UserLogoutReqDTO;
-import com.yoswell.agenticrag.platform.user.dto.UserRefreshTokenReqDTO;
+import com.yoswell.agenticrag.platform.user.dto.request.UserLoginReqDTO;
+import com.yoswell.agenticrag.platform.user.dto.response.UserLoginRespDTO;
+import com.yoswell.agenticrag.platform.user.dto.request.UserLogoutReqDTO;
+import com.yoswell.agenticrag.platform.user.dto.request.UserRefreshTokenReqDTO;
+import com.yoswell.agenticrag.platform.user.dto.request.UserRegisterReqDTO;
+import com.yoswell.agenticrag.platform.user.dto.response.UserRegisterRespDTO;
 import com.yoswell.agenticrag.platform.user.entity.SysUser;
 import com.yoswell.agenticrag.platform.user.mapper.SysUserMapper;
 import com.yoswell.agenticrag.platform.user.service.UserService;
@@ -34,6 +37,11 @@ import io.jsonwebtoken.security.Keys;
 
 @Service
 public class UserServiceImpl implements UserService {
+
+    private static final String DEFAULT_ROLE = "ROLE_USER";
+    private static final String DEFAULT_STATUS = "ACTIVE";
+    private static final Pattern USERNAME_PATTERN = Pattern.compile("^[a-zA-Z0-9._-]{4,32}$");
+    private static final Pattern PASSWORD_PATTERN = Pattern.compile("^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z\\d]).{8,64}$");
 
     private final SysUserMapper sysUserMapper;
     private final PasswordEncoder passwordEncoder;
@@ -55,12 +63,51 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    public ApiResponse<UserRegisterRespDTO> registerWithResponse(UserRegisterReqDTO reqDTO) {
+        try {
+            return ApiResponse.success(register(reqDTO));
+        } catch (Exception e) {
+            return ApiResponse.error(400, e.getMessage());
+        }
+    }
+
+    @Override
     public ApiResponse<UserLoginRespDTO> loginWithResponse(UserLoginReqDTO reqDTO) {
         try {
             return ApiResponse.success(login(reqDTO));
         } catch (Exception e) {
             return ApiResponse.error(401, e.getMessage());
         }
+    }
+
+    @Override
+    public UserRegisterRespDTO register(UserRegisterReqDTO reqDTO) {
+        validateRegisterRequest(reqDTO);
+
+        String normalizedUsername = reqDTO.getUsername().trim();
+        long duplicatedCount = sysUserMapper.selectCount(new LambdaQueryWrapper<SysUser>()
+                .eq(SysUser::getUsername, normalizedUsername));
+        if (duplicatedCount > 0) {
+            throw new RuntimeException("Username already exists");
+        }
+
+        SysUser newUser = new SysUser();
+        newUser.setUserId(generateUserId());
+        newUser.setUsername(normalizedUsername);
+        newUser.setPassword(passwordEncoder.encode(reqDTO.getPassword()));
+        newUser.setRoles(DEFAULT_ROLE);
+        newUser.setStatus(DEFAULT_STATUS);
+
+        int inserted = sysUserMapper.insert(newUser);
+        if (inserted != 1) {
+            throw new RuntimeException("Register failed, please retry");
+        }
+
+        return new UserRegisterRespDTO(
+                newUser.getUserId(),
+                newUser.getUsername(),
+                newUser.getStatus(),
+                newUser.getRoles());
     }
 
     @Override
@@ -259,5 +306,36 @@ public class UserServiceImpl implements UserService {
         }
 
         return authorizationHeader;
+    }
+
+    private void validateRegisterRequest(UserRegisterReqDTO reqDTO) {
+        if (reqDTO == null) {
+            throw new RuntimeException("Register request is required");
+        }
+
+        if (!StringUtils.hasText(reqDTO.getUsername())) {
+            throw new RuntimeException("Username is required");
+        }
+
+        String username = reqDTO.getUsername().trim();
+        if (!USERNAME_PATTERN.matcher(username).matches()) {
+            throw new RuntimeException("Username must be 4-32 chars and contain only letters, numbers, dot, underscore, or hyphen");
+        }
+
+        if (!StringUtils.hasText(reqDTO.getPassword()) || !StringUtils.hasText(reqDTO.getConfirmPassword())) {
+            throw new RuntimeException("Password and confirmPassword are required");
+        }
+
+        if (!reqDTO.getPassword().equals(reqDTO.getConfirmPassword())) {
+            throw new RuntimeException("Password and confirmPassword do not match");
+        }
+
+        if (!PASSWORD_PATTERN.matcher(reqDTO.getPassword()).matches()) {
+            throw new RuntimeException("Password must be 8-64 chars with upper/lower case letters, numbers and special characters");
+        }
+    }
+
+    private String generateUserId() {
+        return "u_" + UUID.randomUUID().toString().replace("-", "");
     }
 }
