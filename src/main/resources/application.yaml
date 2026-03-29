@@ -58,11 +58,16 @@ langchain4j:
       api-key: "sk-your-llm-api-key"
       model-name: "qwen3.5-122B"
       temperature: 0.7
+      max-tokens: 32768
+      top-p: 0.8
+      presence-penalty: 1.5
+
   embedding:
     open-ai:
-      base-url: "https://api.openai.com/v1"
-      api-key: "sk-your-embedding-api-key"
-      model-name: "text-embedding-3-small"
+      base-url: "https://ark.cn-beijing.volces.com/api/v3"
+      api-key: "87db3f57-9659-4c28-9f18-9a3ce1754fc5"
+      model-name: "doubao-embedding-vision-251215"
+      dimensions: 1024
   reranker:
     api-url: "https://api.jina.ai/v1/rerank"
     api-key: "jina_your_reranker_api_key"

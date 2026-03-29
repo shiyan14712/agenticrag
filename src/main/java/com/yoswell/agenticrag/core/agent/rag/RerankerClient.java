@@ -58,12 +58,12 @@ public class RerankerClient {
             HttpRequest request = buildRequest(query, chunks);
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() >= 400) {
-                log.warn("Reranker returned non-success status {}, falling back to fused ordering", response.statusCode());
+                log.warn("[Reranker Client] Reranker returned non-success status {}, falling back to fused ordering", response.statusCode());
                 return List.copyOf(chunks);
             }
             return mergeRerankerResponse(chunks, response.body());
         } catch (Exception exception) {
-            log.warn("Reranker request failed, falling back to fused ordering", exception);
+            log.warn("[Reranker Client] Reranker request failed, falling back to fused ordering", exception);
             return List.copyOf(chunks);
         }
     }
