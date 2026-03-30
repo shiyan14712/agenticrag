@@ -31,7 +31,7 @@ public class SessionContextSwitcher {
             throw new RuntimeException("Session not found");
         }
 
-        if (!newSession.getUserId().toString().equals(userId)) {
+        if (!userId.equals(newSession.getUserId())) {
         }
 
         String oldSessionId = redisManager.getActiveSession(userId);

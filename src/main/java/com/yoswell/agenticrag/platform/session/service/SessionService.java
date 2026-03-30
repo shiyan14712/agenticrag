@@ -41,7 +41,7 @@ public class SessionService {
     public ChatSession createSession(String userId, SessionCreateRequestDTO request) {
         ChatSession session = new ChatSession();
         session.setSessionId(UUID.randomUUID().toString());
-        session.setUserId(Long.parseLong(userId));
+        session.setUserId(userId);
         if (request != null && request.getModelId() != null) {
             session.setModelId(request.getModelId());
         }
@@ -69,7 +69,7 @@ public class SessionService {
             sessionMapper.selectOne(new QueryWrapper<ChatSession>().eq("session_id", sessionId))
         );
 
-        if (session == null || !session.getUserId().toString().equals(userId)) {
+        if (session == null || !userId.equals(session.getUserId())) {
             throw new RuntimeException("Session not found or forbidden");
         }
         return session;

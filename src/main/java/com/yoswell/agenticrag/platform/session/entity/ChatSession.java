@@ -1,9 +1,14 @@
 package com.yoswell.agenticrag.platform.session.entity;
 
-import com.baomidou.mybatisplus.annotation.*;
-import lombok.Data;
-
 import java.time.LocalDateTime;
+
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+
+import lombok.Data;
 
 /**
  * 聊天会话实体类
@@ -38,7 +43,7 @@ public class ChatSession {
      * 关联用户表，标识会话所属的用户
      */
     @TableField("user_id")
-    private Long userId;
+    private String userId;
 
     /**
      * 会话标题
