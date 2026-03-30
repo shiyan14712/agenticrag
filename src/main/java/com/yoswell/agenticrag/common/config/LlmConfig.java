@@ -3,8 +3,11 @@ package com.yoswell.agenticrag.common.config;
 import java.time.Duration;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
+import com.yoswell.agenticrag.core.agent.llm.DoubaoMultimodalEmbeddingModel;
 
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.chat.StreamingChatLanguageModel;
@@ -79,13 +82,24 @@ public class LlmConfig {
     }
 
     @Bean
-    public EmbeddingModel embeddingModel() {
+    @ConditionalOnProperty(name = "langchain4j.embedding.provider", havingValue = "openai", matchIfMissing = true)
+    public EmbeddingModel openAiEmbeddingModel() {
         return OpenAiEmbeddingModel.builder()
                 .baseUrl(embeddingBaseUrl)
                 .apiKey(embeddingApiKey)
                 .modelName(embeddingModelName)
                 .dimensions(embeddingDimensions)
                 .timeout(Duration.ofSeconds(60))
+                .build();
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "langchain4j.embedding.provider", havingValue = "volcengine")
+    public EmbeddingModel doubaoEmbeddingModel() {
+        return DoubaoMultimodalEmbeddingModel.builder()
+                .baseUrl(embeddingBaseUrl)
+                .apiKey(embeddingApiKey)
+                .modelName(embeddingModelName)
                 .build();
     }
 }

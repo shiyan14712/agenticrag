@@ -95,7 +95,7 @@ public class DocumentVectorizationService {
 
             knowledgeChunkIndexService.indexChunks(indexedChunks);
             updateStatus(metadata, DocumentProcessingStatus.VECTORIZED);
-            log.info("Document vectorization completed: documentId={}, chunks={}", metadata.getDocumentId(), indexedChunks.size());
+            log.info("[Document Vectorization Service] Document vectorization completed: documentId={}, chunks={}", metadata.getDocumentId(), indexedChunks.size());
         } catch (Exception exception) {
             updateStatus(metadata, DocumentProcessingStatus.FAILED);
             throw exception;

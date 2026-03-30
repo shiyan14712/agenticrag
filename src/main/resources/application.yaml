@@ -63,10 +63,11 @@ langchain4j:
       presence-penalty: 1.5
 
   embedding:
+    provider: "volcengine"
     open-ai:
       base-url: "https://ark.cn-beijing.volces.com/api/v3"
       api-key: "87db3f57-9659-4c28-9f18-9a3ce1754fc5"
-      model-name: "doubao-embedding-text-240715"
+      model-name: "doubao-embedding-vision-251215"
       dimensions: 1024
   reranker:
     api-url: "https://api.jina.ai/v1/rerank"
