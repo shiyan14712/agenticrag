@@ -4,6 +4,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import com.yoswell.agenticrag.common.exception.BusinessException;
+import com.yoswell.agenticrag.common.exception.ErrorCode;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -70,7 +72,7 @@ public class SessionService {
         );
 
         if (session == null || !userId.equals(session.getUserId())) {
-            throw new RuntimeException("Session not found or forbidden");
+            throw new BusinessException(ErrorCode.SESSION_NOT_FOUND.getCode(), ErrorCode.SESSION_NOT_FOUND.getMessage() + sessionId);
         }
         return session;
     }
@@ -83,10 +85,10 @@ public class SessionService {
                 .orderByAsc("created_at"));
     }
     public void verifySessionAccess(String sessionId, String userId) {
-        if ("default_session".equals(sessionId)) {
-            return;
+        if (sessionId == null || sessionId.trim().isEmpty()) {
+            throw new BusinessException(ErrorCode.MISSING_SESSION_ID.getCode(), ErrorCode.MISSING_SESSION_ID.getMessage());
         }
-        // This will naturally throw an exception if the session doesn't belong to the user or doesn't exist
+        // 这会自然地在会话不存在或者不属于该用户时抛出异常
         getSession(sessionId, userId);
     }
 

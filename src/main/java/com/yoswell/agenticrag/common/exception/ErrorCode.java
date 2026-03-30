@@ -17,7 +17,10 @@ public enum ErrorCode {
     INVALID_LOGIN_ARGS("L10007", "用户名和密码不能为空"),
     SYSTEM_ERROR("SYS10009", "系统内部异常，请稍后重试"),
     INVALID_TOKEN("T20001", "无效的令牌"),
-    TOKEN_EXPIRED("T20002", "令牌已过期或被撤销");
+    TOKEN_EXPIRED("T20002", "令牌已过期或被撤销"),
+    SESSION_NOT_FOUND("S30001", "会话不存在或无权访问"),
+    INVALID_SESSION_ID("S30002", "无效的会话ID"),
+    MISSING_SESSION_ID("S30003", "缺少会话ID请求头参数");
 
     private final String code;
     private final String message;
