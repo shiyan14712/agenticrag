@@ -15,7 +15,7 @@ import org.springframework.security.web.server.ServerAuthenticationEntryPoint;
 import org.springframework.security.web.server.authorization.ServerAccessDeniedHandler;
 import org.springframework.web.server.ServerWebExchange;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.yoswell.agenticrag.common.ApiResponse;
 import com.yoswell.agenticrag.web.security.filter.TenantAuthenticationFilter;
 
