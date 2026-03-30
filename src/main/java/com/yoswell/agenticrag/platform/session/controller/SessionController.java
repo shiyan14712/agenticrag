@@ -48,7 +48,7 @@ public class SessionController {
     /**
      * 创建新的聊天会话
      *
-     * @param request 包含会话初始参数的数据传输对象（例如初始提示词、预设标题）可选
+     * @param request 包含会话初始参数的数据传输对象
      * @return 已持久化的聊天会话实体对象
      */
     @PostMapping
