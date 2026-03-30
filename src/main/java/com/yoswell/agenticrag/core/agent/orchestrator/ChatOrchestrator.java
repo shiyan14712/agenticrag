@@ -48,14 +48,14 @@ public class ChatOrchestrator {
                 try {
                     chatMessageService.saveUserMessage(sessionId, message);
 
-                    log.info("START: Scene 4A - Intent Routing via strict JSON Schema Constraint");
+                    log.info("[Chat Orchestrator] START: Scene 4A - Intent Routing via strict JSON Schema Constraint");
                     IntentDecisionDTO decision = intentRouterAgent.classify(message);
-                    log.info("ROUTER DECIDED: intent={}, confidence={}", decision.intent(), decision.confidence());
+                    log.info("[Chat Orchestrator] ROUTER DECIDED: intent={}, confidence={}", decision.intent(), decision.confidence());
 
                     sink.next(ServerSentEvent.builder(decision.intent()).event("intent_resolved").build());
 
 
-                        log.info("ROUTED TO: Scene 3 - Natural Language SSE");
+                        log.info("[Chat Orchestrator] ROUTED TO: Scene 3 - Natural Language SSE");
                         StringBuilder fullResponse = new StringBuilder();
                         AutoCloseable retrievalScope = ragRetrievalContextHolder.bindSession(sessionId);
                         TokenStream tokenStream = enterpriseAgent.chat(sessionId, message);
@@ -85,7 +85,7 @@ public class ChatOrchestrator {
                             })
                             .start();
                 } catch (Exception e) {
-                    log.error("Error inside WebFlux Virtual Thread execution", e);
+                    log.error("[Chat Orchestrator] Error inside WebFlux Virtual Thread execution", e);
                     sink.error(e);
                 }
             });
@@ -101,7 +101,7 @@ public class ChatOrchestrator {
             String citationsJson = objectMapper.writeValueAsString(citations);
             sink.next(ServerSentEvent.builder(citationsJson).event("citations").build());
         } catch (Exception e) {
-            log.error("Error occurred while emitting citations widget", e);
+            log.error("[Chat Orchestrator] Error occurred while emitting citations widget", e);
         }
     }
 
@@ -112,7 +112,7 @@ public class ChatOrchestrator {
         try {
             scope.close();
         } catch (Exception e) {
-            log.debug("Failed to close rag retrieval scope cleanly", e);
+            log.debug("[Chat Orchestrator] Failed to close rag retrieval scope cleanly", e);
         }
     }
 }
