@@ -136,7 +136,6 @@ public class SessionController {
      * @return 响应式的 Void 完成信号（HTTP 204）
      */
     @DeleteMapping("/{sessionId}")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
     public Mono<Void> deleteSession(
             @PathVariable String sessionId,
             @RequestParam(defaultValue = "archive") String mode) {

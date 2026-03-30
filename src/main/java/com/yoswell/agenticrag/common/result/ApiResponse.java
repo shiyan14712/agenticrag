@@ -1,4 +1,4 @@
-package com.yoswell.agenticrag.common;
+package com.yoswell.agenticrag.common.result;
 
 /**
  * 通用接口响应 DTO。

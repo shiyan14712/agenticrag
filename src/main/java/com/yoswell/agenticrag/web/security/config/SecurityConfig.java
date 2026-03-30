@@ -16,7 +16,7 @@ import org.springframework.security.web.server.authorization.ServerAccessDeniedH
 import org.springframework.web.server.ServerWebExchange;
 
 import tools.jackson.databind.ObjectMapper;
-import com.yoswell.agenticrag.common.ApiResponse;
+import com.yoswell.agenticrag.common.result.ApiResponse;
 import com.yoswell.agenticrag.web.security.filter.TenantAuthenticationFilter;
 
 import reactor.core.publisher.Mono;

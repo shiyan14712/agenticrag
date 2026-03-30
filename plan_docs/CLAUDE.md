@@ -134,6 +134,16 @@
         1. **业务异常兜底**：`@RestControllerAdvice` (如 `GlobalExceptionHandler`) 仅负责处理路由到 Controller 层后的业务异常 (如 `BusinessException` 等)，不处理任何鉴权相关逻辑。
         2. **安全异常拦截**：所有因为 WebFilter (如 JWT 验证) 或接口权限不足导致的 401/403，必须通过在 `SecurityConfig` 中配置 `ServerAuthenticationEntryPoint` 及 `ServerAccessDeniedHandler` 来拦截。它应负责输出符合全局 JSON Schema 契约（如 `ApiResponse<Void>`）的数据流并附带正确的 HTTP 状态码，保障前端联调时对异常响应反序列化结构的一致性期望。
 
+## 7. API 设计与响应规范 (API Design & Response Specification)
+
+**目标**：在 RESTful 语义与企业级前后端对接效率之间取得最佳平衡点（兼顾路由优雅与异常载体的稳定性）。
+
+*   **核心开发规范**：
+    1.  **坚持 RESTful 动词语义**：API 路由必须严格使用 `@GetMapping`、`@PostMapping`、`@PutMapping`、`@DeleteMapping` 描述对资源的操作，禁止因为“图省事”彻底退化成全 `POST` 的 RPC 风格（如反模式 `POST /delete_session`）。
+    2.  **强制 HTTP 200 OK 承载业务响应**：所有的正常业务流转（包括**成功**以及**各种受控的 BusinessException 业务异常**），必须统一以 HTTP 200 状态码返回 `ApiResponse<T>`，依据内部的自定义 `code` 区分业务结果。
+    3.  **严禁滥用 `@ResponseStatus`**：绝不允许在业务 Controller 上使用如 `@ResponseStatus(HttpStatus.NO_CONTENT)` (HTTP 204) 等状态码。这能防止底层 WebFlux / Netty 高度遵循 HTTP 协议时无情丢弃含错的 `ApiResponse` Body，导致前端接收不到详细的错误溯源。
+    4.  **保留底层硬性拦截状态**：仅在网关层、认证层面的致命拦截（例如：未携带 Token 触发的 401 Unauthorized、越权触发的 403 Forbidden，或系统宕机 500）时，允许返回真实的 HTTP 原生错误码。
+
 ---
 ## 给 AI 编程助手的开发指令：
 1. **严格遵守职责分离**：不要在 Controller 层写业务逻辑；大模型调用和提示词组装必须封装在独立的 Service 或 LangChain4j 的 `AiServices` 接口中。RAG Agent Loop 核心编排不要全部依赖框架和Annotation，自己实现也不难，这是为了体现项目理解深度。

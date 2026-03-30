@@ -13,7 +13,7 @@ import org.springframework.web.bind.support.WebExchangeBindException;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebInputException;
 
-import com.yoswell.agenticrag.common.ApiResponse;
+import com.yoswell.agenticrag.common.result.ApiResponse;
 
 /**
  * 全局统一异常处理器 (WebFlux 响应式环境适用)

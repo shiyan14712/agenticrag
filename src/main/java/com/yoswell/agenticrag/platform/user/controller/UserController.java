@@ -6,7 +6,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.yoswell.agenticrag.common.ApiResponse;
+import com.yoswell.agenticrag.common.result.ApiResponse;
 import com.yoswell.agenticrag.platform.user.dto.request.UserLoginReqDTO;
 import com.yoswell.agenticrag.platform.user.dto.request.UserLogoutReqDTO;
 import com.yoswell.agenticrag.platform.user.dto.request.UserRefreshTokenReqDTO;
