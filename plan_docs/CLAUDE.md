@@ -130,6 +130,9 @@
 *   **实现细节与流程**：
     *   **元数据打标**：所有切分后的文本块在写入 ES 时，强制挂载 `tenant_id` (租户)、`kb_id` (知识库 ID) 和 `allowed_roles` (允许访问的角色) 作为独立的 Keyword 字段。
     *   **检索拦截机制**：在 RAG `@Tool` 执行底层 ES 查询时，通过 Spring Security Context 提取当前登录用户的 ID 与 Role。将这些鉴权数据作为不可变的 `Filter` (Terms Query) 拼接在 ES 查询 DSL 中。即使大模型被恶意 Prompt 诱导去查询高管薪资文档，底层的 ES 也会在物理层面上返回 Empty Result。
+    *   **统一异常与安全响应隔离规范 (Exception Isolation)**：
+        1. **业务异常兜底**：`@RestControllerAdvice` (如 `GlobalExceptionHandler`) 仅负责处理路由到 Controller 层后的业务异常 (如 `BusinessException` 等)，不处理任何鉴权相关逻辑。
+        2. **安全异常拦截**：所有因为 WebFilter (如 JWT 验证) 或接口权限不足导致的 401/403，必须通过在 `SecurityConfig` 中配置 `ServerAuthenticationEntryPoint` 及 `ServerAccessDeniedHandler` 来拦截。它应负责输出符合全局 JSON Schema 契约（如 `ApiResponse<Void>`）的数据流并附带正确的 HTTP 状态码，保障前端联调时对异常响应反序列化结构的一致性期望。
 
 ---
 ## 给 AI 编程助手的开发指令：

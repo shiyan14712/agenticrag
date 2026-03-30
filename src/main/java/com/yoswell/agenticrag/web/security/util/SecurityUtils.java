@@ -9,12 +9,21 @@ import com.yoswell.agenticrag.web.security.model.TenantUser;
 
 import reactor.core.publisher.Mono;
 
+/**
+ * 响应式安全上下文工具类。
+ * 用于在 WebFlux 线程/流的任何环节安全地抽取出用户的身份与租户信息。
+ */
 public final class SecurityUtils {
 
     private SecurityUtils() {
-        // utility class
+        // utility class - 防止实例化
     }
 
+    /**
+     * 响应式地从当前 SecurityContext 中提取当前登录的用户 ID。
+     *
+     * @return 包含用户 ID 的 Mono 流。如果上下文不存在或无认证信息，将抛出无效令牌业务异常。
+     */
     public static Mono<String> getCurrentUserId() {
         return ReactiveSecurityContextHolder.getContext()
                 .map(SecurityContext::getAuthentication)
@@ -28,6 +37,12 @@ public final class SecurityUtils {
                 .switchIfEmpty(Mono.error(new BusinessException(ErrorCode.INVALID_TOKEN)));
     }
 
+    /**
+     * 响应式地从当前 SecurityContext 中提取当前登录的用户所在的租户 ID。
+     * 遵循 CLAUDE.md 中租户强制隔离（Tenant Isolation Scope）的安全原则。
+     *
+     * @return 包含租户 ID 的 Mono 流。如果处于无状态或解析失败，默认 fallback 为 "default" 兜底租户。
+     */
     public static Mono<String> getCurrentTenantId() {
         return ReactiveSecurityContextHolder.getContext()
                 .map(SecurityContext::getAuthentication)
