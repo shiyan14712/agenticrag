@@ -43,99 +43,31 @@
 
 ---
 
-## 🐞 [2026-03-31] Redis 序列化导致的 ClassCastException
+## 🐞 [2026-03-31] LangChain4j 序列化故障引发的 OpenAI `list index out of range` 与注解缺失异常
 
 ### 现象描述 (Symptom)
-用户调用流式聊天接口 `/api/v1/agent/chat/stream` 时，后端日志抛出 `ClassCastException` 异常：
-```
-java.lang.ClassCastException: class java.lang.String cannot be cast to class dev.langchain4j.data.message.ChatMessage
-```
-错误发生在 langchain4j 的 `MessageWindowChatMemory.findSystemMessage()` 方法中，导致整个对话流程中断，前端无法收到响应。
+在重构分层记忆组件并调用 RAG 智能体对话接口（`AgentController`）后，系统连续发生两次拦截报错：
+1. **序列化丢失导致 OpenAI 拒绝请求**：调用大模型生成回复时，底层的 OpenAI SDK 抛出异常 `OpenAiHttpException: {"error":{"message":"list index out of range","type":"BadRequestError","param":null,"code":400}}`。
+2. **AiService 参数配置异常**：修复序列化问题后，系统在代理接口映射时立刻抛出 `dev.langchain4j.exception.IllegalConfigurationException: Parameter 'userMessage' of method 'chat' should be annotated with @V or @UserMessage or @UserName or @MemoryId`。
 
 ### 根因分析 (Root Cause Analysis)
-这是一个典型的**Redis 序列化/反序列化不一致**问题：
+这两个故障都源于框架底层的严格规范与三方组件数据结构的不兼容：
 
-1. **数据流转路径**：
-   - `HierarchicalChatMemoryStore.updateMessages()` 将 `List<ChatMessage>` 存入 Redis L1 缓存
-   - RedisTemplate 使用默认的 JDK 序列化器或 JSON 序列化器将其序列化为字符串
-   - 下次读取时，`getMessages()` 从 Redis 获取到的是 String 类型数据
-   
-2. **强制转换失败点**：
-   - 原代码在第 72 行直接进行 unchecked 强转：`(List<ChatMessage>) redisTemplate.opsForValue().get(...)`
-   - Java 泛型擦除使得运行时无法检查类型，实际返回的是 `String`
-   - 当 langchain4j 遍历这些消息时，尝试将 `String` 当作 `ChatMessage` 处理，抛出异常
-
-3. **框架层触发**：
-   - langchain4j 的 `DefaultAiServices.classify()` 调用 `MessageWindowChatMemory.add()`
-   - `add()` 方法内部调用 `findSystemMessage()` 遍历内存中的消息
-   - Stream API 的 `forEachWithCancel` 遇到类型不匹配的数据直接崩溃
-
-4. **根本原因**：
-   - Redis 存储的 Object 被序列化为什么格式没有统一约定
-   - 读取端假设一定是 `List<ChatMessage>`，缺少类型检查和适配逻辑
+1. **Redis 默认的 Jackson 序列化与 LangChain4j 模型的冲突**：
+    - LangChain4j 的 `ChatMessage` 体系（如 `UserMessage`、`AiMessage` 等对象）并未采用传统的 Java Bean 规范（缺乏无参构造器，也没有以 `get/set` 开头的属性访问器，例如它的取值方法直接叫 `text()`）。
+    - Spring Boot 中采用 `GenericJacksonJsonRedisSerializer` 或标准 `ObjectMapper` 处理这类非标对象时，会因为无法反射找到属性而丢失字段，或者在反序列化时被强转成无具体类型的 `LinkedHashMap`。当代码中试图使用 `objectMapper.readValue(json, ChatMessage.class)` 接口来强行反序列化数据时，直接失效抛错，最终得到一个**空集合** `[]`。
+    - **雪崩效应**：这个空的对话记忆列表被强行塞入了 OpenAI 接口中作为上下文，但 OpenAI 的 Chat Completions API 明确规定 `messages` 数组不能为空，进而引发 HTTP 400 Bad Request 和 `list index out of range` 的错误。
+2. **@AiService 反射与参数绑定严格校验**：
+    - LangChain4j 框架利用动态代理构建 `@AiService` 实现时，必须**精准识别每个参数的作用**。
+    - 当代理接口（如 `EnterpriseAgent`）方法中存在多个参数（如 `(@MemoryId String sessionId, String userMessage)`）时，如果不显式声明 `@UserMessage`，在开启了 Java 编译参数丢弃或其他反射特性后，代理处理器就无法安全推断剩下的参数谁才是 Prompt，从而出于安全防护阻断了应用运行。
 
 ### 解决方案 (Resolution)
-修改 [`HierarchicalChatMemoryStore.java`](file://D:\Projects\Java\agenticrag\src\main\java\com\yoswell\agenticrag\core\memory\store\HierarchicalChatMemoryStore.java) 实现智能反序列化：
+1. **替换原生序列化工具，跳过 Spring 原生 Jackson**：
+    - 修改 `HierarchicalChatMemoryStore.java` 中 L1 Redis 缓存的存取逻辑。
+    - **写入时**：利用 LangChain4j 官方支持的工具箱将其转换成字符串 `dev.langchain4j.data.message.ChatMessageSerializer.messagesToJson(recentMessages)`，再使用 RedisTemplate 存入字符串。
+    - **读取时**：利用 `dev.langchain4j.data.message.ChatMessageDeserializer.messagesFromJson(jsonString)` 直接将字符串安全解析回准确的 `List<ChatMessage>` 集合，彻底打破 Jackson 对于底层组件序列化的兼容性限制。
+2. **补全声明式的语义注解**：
+    - 为所有使用 `@AiService` 的接口统统补充明确的参数注解修饰。确保其符合 Langchain4j Service 的强校验要求。
+    - 包括 `EnterpriseAgent`、`IntentRouterAgent` 和 `RagStructuredAgent`，统一将类似的传参 `String userMessage` 明确加上 `@UserMessage` 注解：`(@MemoryId String sessionId, @UserMessage String userMessage)`。
 
-1. **引入 ObjectMapper 依赖**（第 16-17 行、第 42 行、第 60 行）：
-   ```java
-   import com.fasterxml.jackson.core.JsonProcessingException;
-   import com.fasterxml.jackson.databind.ObjectMapper;
-   
-   // 构造函数中初始化
-   this.objectMapper = new ObjectMapper();
-   ```
-
-2. **重构 `getMessages()` 方法**（第 77-83 行）：
-   - 移除不安全的强制类型转换
-   - 先获取原始 Object 数据
-   - 委托给专门的反序列化方法处理
-
-3. **新增 `deserializeChatMessages()` 方法**（第 233-254 行）：
-   ```java
-   @SuppressWarnings("unchecked")
-   private List<ChatMessage> deserializeChatMessages(Object data) {
-       if (data instanceof List<?> list) {
-           // 如果已经是 ChatMessage 列表，直接返回
-           if (!list.isEmpty() && list.get(0) instanceof ChatMessage) {
-               return (List<ChatMessage>) list;
-           }
-           // 如果是其他类型的列表，尝试转换
-           return list.stream()
-                   .map(this::convertToChatMessage)
-                   .filter(msg -> msg != null)
-                   .collect(Collectors.toList());
-       } else if (data instanceof String jsonString) {
-           // 如果是 JSON 字符串，尝试反序列化
-           try {
-               return objectMapper.readValue(jsonString, 
-                   objectMapper.getTypeFactory().constructCollectionType(List.class, ChatMessage.class));
-           } catch (JsonProcessingException e) {
-               log.warn("Failed to deserialize ChatMessage list from JSON: {}", jsonString, e);
-               return new ArrayList<>();
-           }
-       } else {
-           log.warn("Unexpected data type for ChatMessage list: {}", data.getClass().getName());
-           return new ArrayList<>();
-       }
-   }
-   ```
-
-4. **新增 `convertToChatMessage()` 辅助方法**（第 256-279 行）：
-   - 处理 `String` 类型 → 包装为 `UserMessage.from(text)`
-   - 处理 `Map` 类型 → 通过 Jackson 转换为 `ChatMessage`
-   - 处理已知的 `ChatMessage` 子类 → 直接返回
-   - 提供完善的错误处理和警告日志
-
-5. **添加必要的导入**（第 5 行、第 15-16 行）：
-   ```java
-   import java.util.Map;
-   import com.fasterxml.jackson.core.JsonProcessingException;
-   import com.fasterxml.jackson.databind.ObjectMapper;
-   ```
-
-**修复效果**：
-- ✅ 支持多种数据格式的自动识别和转换
-- ✅ 避免 unchecked 强制转换导致的运行时异常
-- ✅ 增强系统健壮性，即使 Redis 数据格式变化也能优雅降级
-- ✅ 提供详细的日志输出，便于后续问题排查
+---
