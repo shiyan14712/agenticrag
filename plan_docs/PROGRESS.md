@@ -94,7 +94,9 @@
 - 本地 Docker Compose 开发环境仍未补齐。
 - Elasticsearch 若启用鉴权，仍需在 `application.yaml` 中补上真实的 `spring.elasticsearch.username/password/api-key`。
 
-### 进一步增强项
+### 待办
+- MinerU 链路接入
+- 把 Workflow 链路改成真正能够自主决策的 ReAct 链路
 - citations 目前回传的是本轮检索结果的聚合视图；如果未来出现多工具、多轮检索交错，需要考虑更稳定的会话级检索上下文传播机制。
 - 当前记忆摘要为“生成式摘要”实现，后续可继续补 token 预算、摘要版本管理和更加细粒度的 L2/L3 触发条件。
 

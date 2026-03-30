@@ -20,9 +20,8 @@ spring:
 
   elasticsearch:
     uris: http://10.60.31.253:9200
-    username: ""
-    password: ""
-    api-key: ""
+    username: elastic
+    password: L4f*Pmmcm3GspDlPASq+
 
 mybatis-plus:
   mapper-locations: classpath*:/mapper/**/*.xml
