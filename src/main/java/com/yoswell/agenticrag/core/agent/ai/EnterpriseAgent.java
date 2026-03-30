@@ -3,7 +3,6 @@ package com.yoswell.agenticrag.core.agent.ai;
 import dev.langchain4j.service.MemoryId;
 import dev.langchain4j.service.SystemMessage;
 import dev.langchain4j.service.TokenStream;
-import dev.langchain4j.service.UserMessage;
 import dev.langchain4j.service.spring.AiService;
 
 @AiService
@@ -15,5 +14,5 @@ public interface EnterpriseAgent {
         "Use tools sequentially if needed. Maintain a professional tone.",
         "Reason step by step before calling a tool."
     })
-    TokenStream chat(@MemoryId String sessionId, @UserMessage String userMessage);
+    TokenStream chat(@MemoryId String sessionId, String userMessage);
 }
