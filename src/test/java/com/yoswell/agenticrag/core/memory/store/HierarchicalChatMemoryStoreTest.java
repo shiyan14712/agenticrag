@@ -70,7 +70,7 @@ class HierarchicalChatMemoryStoreTest {
     void getMessagesLoadsUserPreferencesUsingSessionLookup() {
         ChatSession session = new ChatSession();
         session.setSessionId("session-1");
-        session.setUserId(123L);
+        session.setUserId("usrIdTest");
         when(chatSessionMapper.selectOne(any())).thenReturn(session);
 
         UserGlobalMemory memory = new UserGlobalMemory();
@@ -102,7 +102,7 @@ class HierarchicalChatMemoryStoreTest {
         ChatSession session = new ChatSession();
         session.setId(10L);
         session.setSessionId("session-1");
-        session.setUserId(123L);
+        session.setUserId("usrIdTest");
         when(chatSessionMapper.selectOne(any())).thenReturn(session);
 
         hierarchicalChatMemoryStore.updateMessages("session-1", List.of(
