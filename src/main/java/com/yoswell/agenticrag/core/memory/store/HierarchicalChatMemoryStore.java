@@ -212,8 +212,22 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
 
         List<ChatMessage> snapshot = limitToRecent(messages);
         List<ChatMessage> recentMessages = new ArrayList<>(snapshot.subList(Math.max(0, snapshot.size() - l1Limit), snapshot.size()));
+        
+        // 关键修复：确保至少保存一条消息，避免空列表导致 OpenAI API 错误
+        if (recentMessages.isEmpty() && !messages.isEmpty()) {
+            log.warn("Messages list is empty after limiting (limit={}, snapshot={}), saving original messages instead", l1Limit, snapshot.size());
+            recentMessages = new ArrayList<>(messages);
+        }
+        
+        log.debug("Saving {} messages to Redis L1 cache", recentMessages.size());
         // 将最新 L1_LIMIT 条消息存入 Redis，设置 12 小时过期时间
-        redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L1 + sessionId, recentMessages, MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
+        try {
+            String l1Json = dev.langchain4j.data.message.ChatMessageSerializer.messagesToJson(recentMessages);
+            redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L1 + sessionId, l1Json, MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
+        } catch (Exception e) {
+            log.warn("Failed to serialize recent messages to JSON: ", e);
+            redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L1 + sessionId, recentMessages, MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
+        }
 
         if (snapshot.size() > l1Limit) {
             Thread.startVirtualThread(() -> refreshSummaries(sessionId, snapshot));
@@ -492,7 +506,16 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
             return new ArrayList<>();
         }
         
-        if (data instanceof List<?> list) {
+        if (data instanceof String jsonString) {
+            // 如果是 JSON 字符串，使用 Langchain4j 反序列化
+            try {
+                log.debug("Deserializing JSON string to List<ChatMessage>");
+                return dev.langchain4j.data.message.ChatMessageDeserializer.messagesFromJson(jsonString);
+            } catch (Exception e) {
+                log.warn("Failed to deserialize ChatMessage list from JSON: {}", jsonString, e);
+                return new ArrayList<>();
+            }
+        } else if (data instanceof List<?> list) {
             // 如果是空列表，直接返回
             if (list.isEmpty()) {
                 log.debug("Received empty list from Redis, returning empty ChatMessage list");
@@ -511,16 +534,6 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
                     .map(this::convertToChatMessage)
                     .filter(msg -> msg != null)
                     .collect(Collectors.toList());
-        } else if (data instanceof String jsonString) {
-            // 如果是 JSON 字符串，使用 ObjectMapper 反序列化
-            try {
-                log.debug("Deserializing JSON string to List<ChatMessage>");
-                return objectMapper.readValue(jsonString, 
-                    objectMapper.getTypeFactory().constructCollectionType(List.class, ChatMessage.class));
-            } catch (JsonProcessingException e) {
-                log.warn("Failed to deserialize ChatMessage list from JSON: {}", jsonString, e);
-                return new ArrayList<>();
-            }
         } else {
             log.warn("Unexpected data type for ChatMessage list: {} (class: {})", 
                 data, data.getClass().getName());
@@ -578,8 +591,8 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
             try {
                 String json = objectMapper.writeValueAsString(map);
                 log.debug("Converting Map to ChatMessage: {}", json.substring(0, Math.min(100, json.length())));
-                return objectMapper.readValue(json, ChatMessage.class);
-            } catch (JsonProcessingException e) {
+                return dev.langchain4j.data.message.ChatMessageDeserializer.messageFromJson(json);
+            } catch (Exception e) {
                 log.warn("Failed to convert Map to ChatMessage: {}", map, e);
                 return null;
             }
