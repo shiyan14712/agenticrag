@@ -80,6 +80,13 @@
 - 完成分层记忆摘要生成、Redis/MySQL 双落点和 `ChatMemoryProvider` 挂接。
 - 清理并对齐了配置、元数据 schema 与消息契约，补上了之前阻塞真实实现的公共底座。
 
+## 本轮新增 (2026-03-31)
+
+- **Agent 重构 (ReAct 模式升级)**：
+  - 彻底移除了原先充当硬编码路由守卫的 `IntentRouterAgent` 及关联意图对象 `IntentDecisionDTO`。
+  - 将 `ChatOrchestrator` 的核心链路改造为依托 LangChain4j `@AiService` 的纯 ReAct 模式。不再通过代码 `if/else` 判断是否调用 RAG 检索，而是将所有的 `@Tool`（如 `RagTool`、`PreferenceTool`）代理给大模型自主判断。
+  - 完善了 `ChatOrchestrator` 的虚拟线程上下文拦截，在 Agent 触发隐式 Tool Calling 时优雅地提取 Citations 引用，并推送到前端 SSE 事件。
+
 ## 尚未完成 / 待完善 (Not Yet Implemented)
 
 ### 响应式链路
@@ -96,7 +103,6 @@
 
 ### 待办
 - MinerU 链路接入
-- 把 Workflow 链路改成真正能够自主决策的 ReAct 链路
 - citations 目前回传的是本轮检索结果的聚合视图；如果未来出现多工具、多轮检索交错，需要考虑更稳定的会话级检索上下文传播机制。
 - 当前记忆摘要为“生成式摘要”实现，后续可继续补 token 预算、摘要版本管理和更加细粒度的 L2/L3 触发条件。
 

@@ -55,7 +55,7 @@ public class RagTool {
 
     @Tool("search_enterprise_knowledge")
     public String searchEnterpriseKnowledge(String query) {
-        log.info("Executing RagTool with query: {}", query);
+        log.info("[RAG TOOL] Executing RagTool with query: {}", query);
         try {
             String tenantId = "default";
             String role = "ROLE_USER";
@@ -67,7 +67,7 @@ public class RagTool {
 
             Embedding queryVector = embeddingModel.embed(query).content();
             List<String> allowedRoles = List.of(role);
-            log.debug("Building hybrid retrieval request for tenant={}, roles={}", tenantId, allowedRoles);
+            log.debug("[RAG TOOL] Building hybrid retrieval request for tenant={}, roles={}", tenantId, allowedRoles);
 
             List<RetrievedChunkDTO> bm25Hits = knowledgeChunkIndexService.searchByKeyword(query, tenantId, allowedRoles, bm25TopK);
             List<RetrievedChunkDTO> knnHits = knowledgeChunkIndexService.searchByVector(queryVector.vectorAsList(), tenantId, allowedRoles, knnTopK);
@@ -81,10 +81,10 @@ public class RagTool {
                     buildCitations(topChunks)
             );
             ragRetrievalContextHolder.publish(result);
-            log.info("Rag search completed, returning top {} chunks.", topChunks.size());
+            log.info("[RAG TOOL] Rag search completed, returning top {} chunks.", topChunks.size());
             return result.observation();
         } catch (Exception e) {
-            log.error("Error during enterprise knowledge search", e);
+            log.error("[RAG TOOL] Error during enterprise knowledge search", e);
             throw new RuntimeException("Search failed", e);
         }
     }
@@ -103,7 +103,7 @@ public class RagTool {
     }
 
     List<RetrievedChunkDTO> crossAttentionRerank(List<RetrievedChunkDTO> fusedChunks, String query) {
-        log.debug("Reranking {} documents against query...", fusedChunks.size());
+        log.debug("[RAG TOOL] Reranking {} documents against query...", fusedChunks.size());
         return rerankerClient.rerank(query, fusedChunks);
     }
 

@@ -22,6 +22,10 @@ spring:
     uris: http://10.60.31.253:9200
     username: elastic
     password: L4f*Pmmcm3GspDlPASq+
+    id: V3i5Qp0Bfiev1JTG4NXl
+    name: agenticrag-key
+    api-key: U9tqWs_B494CPGU8r5-cHg
+    encoded: VjNpNVFwMEJmaWV2MUpURzROWGw6VTl0cVdzX0I0OTRDUEdVOHI1LWNIZw==
 
 mybatis-plus:
   mapper-locations: classpath*:/mapper/**/*.xml

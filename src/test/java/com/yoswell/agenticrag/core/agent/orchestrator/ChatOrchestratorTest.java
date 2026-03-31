@@ -1,26 +1,23 @@
 package com.yoswell.agenticrag.core.agent.orchestrator;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.codec.ServerSentEvent;
 
 import com.yoswell.agenticrag.core.agent.ai.EnterpriseAgent;
-import com.yoswell.agenticrag.core.agent.ai.IntentRouterAgent;
 import com.yoswell.agenticrag.core.agent.context.RagRetrievalContextHolder;
 import com.yoswell.agenticrag.core.agent.dto.CitationDTO;
-import com.yoswell.agenticrag.core.agent.dto.IntentDecisionDTO;
 import com.yoswell.agenticrag.core.agent.dto.RagSearchResultDTO;
 import com.yoswell.agenticrag.platform.session.service.ChatMessageService;
 
@@ -33,9 +30,6 @@ import tools.jackson.databind.json.JsonMapper;
 class ChatOrchestratorTest {
 
     @Mock
-    private IntentRouterAgent intentRouterAgent;
-
-    @Mock
     private EnterpriseAgent enterpriseAgent;
 
     @Mock
@@ -46,7 +40,6 @@ class ChatOrchestratorTest {
 
     @Test
     void dispatchDynamicStreamEmitsCitationsAfterMessageTokens() {
-        when(intentRouterAgent.classify("查一下财报")).thenReturn(new IntentDecisionDTO("rag_search", 0.95));
         when(ragRetrievalContextHolder.bindSession("session-1")).thenReturn(() -> {
         });
         when(ragRetrievalContextHolder.consume("session-1")).thenReturn(Optional.of(new RagSearchResultDTO(
@@ -57,7 +50,6 @@ class ChatOrchestratorTest {
         when(enterpriseAgent.chat("session-1", "查一下财报")).thenReturn(new FakeTokenStream(List.of("第一段", "第二段")));
 
         ChatOrchestrator orchestrator = new ChatOrchestrator(
-                intentRouterAgent,
                 enterpriseAgent,
                 JsonMapper.builder().findAndAddModules().build(),
                 chatMessageService,
@@ -70,7 +62,7 @@ class ChatOrchestratorTest {
 
         assertThat(events).isNotNull();
         assertThat(events).extracting(ServerSentEvent::event)
-                .containsExactly("intent_resolved", "message", "message", "citations");
+                .containsExactly("message", "message", "citations");
         verify(chatMessageService).saveAssistantMessage("session-1", "第一段第二段", List.of(new CitationDTO("doc-1", "财报.pdf", "chk-1", 0.93)));
     }
 

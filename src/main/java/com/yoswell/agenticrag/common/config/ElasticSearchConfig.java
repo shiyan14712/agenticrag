@@ -3,6 +3,7 @@ package com.yoswell.agenticrag.common.config;
 import java.net.URI;
 import java.util.Arrays;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.http.Header;
 import org.apache.http.HttpHost;
 import org.apache.http.auth.AuthScope;
@@ -21,6 +22,7 @@ import co.elastic.clients.json.jackson.JacksonJsonpMapper;
 import co.elastic.clients.transport.ElasticsearchTransport;
 import co.elastic.clients.transport.rest_client.RestClientTransport;
 
+@Slf4j
 @Configuration
 public class ElasticSearchConfig {
 
@@ -38,6 +40,8 @@ public class ElasticSearchConfig {
 
     @Bean(destroyMethod = "close")
     public RestClient restClient() {
+        log.info("正在初始化 Elasticsearch 连接...");
+        
         HttpHost[] hosts = Arrays.stream(elasticsearchUris.split(","))
                 .map(String::trim)
                 .filter(StringUtils::hasText)
@@ -48,16 +52,21 @@ public class ElasticSearchConfig {
         RestClientBuilder builder = RestClient.builder(hosts);
 
         if (StringUtils.hasText(apiKey)) {
+            log.info("使用 API Key 方式认证 Elasticsearch");
             builder.setDefaultHeaders(new Header[]{
                     new BasicHeader("Authorization", "ApiKey " + apiKey)
             });
         } else if (StringUtils.hasText(username) && StringUtils.hasText(password)) {
+            log.info("使用账号密码方式认证 Elasticsearch，用户名：{}", username);
             BasicCredentialsProvider credentialsProvider = new BasicCredentialsProvider();
             credentialsProvider.setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(username, password));
             builder.setHttpClientConfigCallback(httpClientBuilder ->
                     httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider));
+        } else {
+            log.warn("Elasticsearch 未配置任何认证信息，无法连接");
         }
 
+        log.info("Elasticsearch 连接地址：{}", elasticsearchUris);
         return builder.build();
     }
 
