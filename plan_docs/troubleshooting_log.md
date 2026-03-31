@@ -71,3 +71,37 @@
     - 包括 `EnterpriseAgent`、`IntentRouterAgent` 和 `RagStructuredAgent`，统一将类似的传参 `String userMessage` 明确加上 `@UserMessage` 注解：`(@MemoryId String sessionId, @UserMessage String userMessage)`。
 
 ---
+
+## 🐞 [2026-03-31] RAG 检索时 Doubao Embedding 反序列化报错 ClassCastException
+
+### 现象描述 (Symptom)
+在重构了 ReAct 模式后，大模型自主调用 `RagTool` 执行知识库检索。调用链路执行到向量转化步骤时，后台爆出严重错误，导致检索动作阻断：
+```text
+java.lang.ClassCastException: class java.lang.Integer cannot be cast to class java.lang.Double (java.lang.Integer and java.lang.Double are in module java.base of loader 'bootstrap')
+	at com.yoswell.agenticrag.core.agent.llm.DoubaoMultimodalEmbeddingModel.embedAll(DoubaoMultimodalEmbeddingModel.java:68)
+```
+外部大模型接口会获得 `Search failed` 的工具反馈。
+
+### 根因分析 (Root Cause Analysis)
+该错误发生在自定义外部 API 适配类 `DoubaoMultimodalEmbeddingModel` 的 `RestTempate` 响应反序列化解析阶段（使用 Jackson 等内置器）。
+1. **数据混合类型**：豆包服务端返回的 Embedding（向量）数组是一个浮点数数组，但是在 JSON 字符串传输表现中，如果有某个维度的计算结果恰好是整型或 `0`，JSON 中会直接体现为没有小数点的形式。
+2. **反序列化推断偏差**：Java 中使用泛型擦除的 `Map.class`（或者 `List`）去接盘未知 JSON 时，底层的 Jackson / FastJson Parser 会对集合中的每一项逐一类型推断。如果某个数值是类似 `0.0123` 则解析成了 `java.lang.Double`；如果某个数值是 `0` 则被解析为了 `java.lang.Integer`。
+3. **强转型崩溃**：原代码写法 `List<Double> vectorDouble = (List<Double>) data.get("embedding")` 属于不安全的强行擦除转型。当随后遍历列表调用隐式的内部拆箱位时，遇到了数组当中的 `Integer` 对象，导致在尝试作为 `Double` 处理时抛出 `ClassCastException`。
+
+### 解决方案 (Resolution)
+1. **拓宽泛型至通用父类 `Number`**：
+    将强制接收的泛型从 `List<Double>` 变更为更宽泛的 `List<Number>`。`java.lang.Number` 是 `Double`、`Integer`、`Float` 等数字类型的共同父类，可以完美兼容从 JSON 中动态推断出的所有数值对象。
+2. **安全提取浮点数**：利用多态在拆包时统一执行 `Number.floatValue()` 处理：
+    ```java
+    @SuppressWarnings("unchecked")
+    List<Number> vectorNumbers = (List<Number>) data.get("embedding");
+
+    float[] vector = new float[vectorNumbers.size()];
+    for (int i = 0; i < vectorNumbers.size(); i++) {
+        // 安全提取浮点数，不论此元素当初是 Integer 还是 Double 被反序列化而来
+        vector[i] = vectorNumbers.get(i).floatValue(); 
+    }
+    ```
+通过这一改动，不论底层组件抛出的是整数型还是小数型，都能安全一致地转换为 LangChain4j Embedding 需要的 `float[]` 数组。
+
+---

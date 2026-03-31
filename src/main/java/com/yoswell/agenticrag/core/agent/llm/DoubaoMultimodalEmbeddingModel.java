@@ -61,11 +61,11 @@ public class DoubaoMultimodalEmbeddingModel implements EmbeddingModel {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> data = (Map<String, Object>) responseBody.get("data");
                 @SuppressWarnings("unchecked")
-                List<Double> vectorDouble = (List<Double>) data.get("embedding");
+                List<Number> vectorNumbers = (List<Number>) data.get("embedding");
 
-                float[] vector = new float[vectorDouble.size()];
-                for (int i = 0; i < vectorDouble.size(); i++) {
-                    vector[i] = vectorDouble.get(i).floatValue();
+                float[] vector = new float[vectorNumbers.size()];
+                for (int i = 0; i < vectorNumbers.size(); i++) {
+                    vector[i] = vectorNumbers.get(i).floatValue();
                 }
                 embeddings.add(Embedding.from(vector));
             } else {
