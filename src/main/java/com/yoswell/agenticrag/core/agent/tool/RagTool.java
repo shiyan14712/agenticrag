@@ -55,15 +55,17 @@ public class RagTool {
 
     @Tool("search_enterprise_knowledge")
     public String searchEnterpriseKnowledge(String query) {
+        log.info("[RAG TOOL] ====== BEGIN TO RETRIEVE ======");
         log.info("[RAG TOOL] Executing RagTool with query: {}", query);
         try {
-            String tenantId = "default";
-            String role = "ROLE_USER";
             var authentication = SecurityContextHolder.getContext().getAuthentication();
-            if (authentication != null && authentication.getPrincipal() instanceof TenantUser user) {
-                tenantId = user.getTenantId();
-                role = user.getRole();
+            if (authentication == null || !(authentication.getPrincipal() instanceof TenantUser user)) {
+                throw new IllegalStateException("Authentication missing or invalid. Strict tenant isolation requires a valid user context.");
             }
+            
+            // 按照设计要求：本系统中用户ID即为租户级别的隔离单元
+            String tenantId = user.getUserId();
+            String role = user.getRole();
 
             Embedding queryVector = embeddingModel.embed(query).content();
             List<String> allowedRoles = List.of(role);
@@ -81,6 +83,7 @@ public class RagTool {
                     buildCitations(topChunks)
             );
             ragRetrievalContextHolder.publish(result);
+            log.info("[RAG TOOL] ====== RETRIEVE SUCCESS ======");
             log.info("[RAG TOOL] Rag search completed, returning top {} chunks.", topChunks.size());
             return result.observation();
         } catch (Exception e) {

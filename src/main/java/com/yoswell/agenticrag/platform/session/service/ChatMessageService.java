@@ -22,18 +22,15 @@ public class ChatMessageService {
     private final ChatSessionMapper sessionMapper;
     private final SessionRedisManager redisManager;
     private final ObjectMapper objectMapper;
-    private final SessionTitleGenerator titleGenerator;
 
     public ChatMessageService(ChatMessageMapper messageMapper,
                               ChatSessionMapper sessionMapper,
                               SessionRedisManager redisManager,
-                              ObjectMapper objectMapper,
-                              SessionTitleGenerator titleGenerator) {
+                              ObjectMapper objectMapper) {
         this.messageMapper = messageMapper;
         this.sessionMapper = sessionMapper;
         this.redisManager = redisManager;
         this.objectMapper = objectMapper;
-        this.titleGenerator = titleGenerator;
     }
 
     @Transactional
@@ -63,16 +60,7 @@ public class ChatMessageService {
         }
         messageMapper.insert(msg);
 
-        ChatSession session = incrementSessionMessageCount(sessionId, 1);
-        if (session != null && session.getTitle() == null && session.getMessageCount() >= 2) {
-            ChatMessage latestUserMessage = messageMapper.selectOne(new QueryWrapper<ChatMessage>()
-                    .eq("session_id", sessionId)
-                    .eq("role", "user")
-                    .orderByDesc("created_at")
-                    .last("LIMIT 1"));
-            String userMessage = latestUserMessage != null ? latestUserMessage.getContent() : "";
-            titleGenerator.generateTitleAsync(sessionId, userMessage, content);
-        }
+        incrementSessionMessageCount(sessionId, 1);
     }
 
     private ChatSession incrementSessionMessageCount(String sessionId, int delta) {

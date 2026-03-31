@@ -1,24 +1,24 @@
 package com.yoswell.agenticrag.core.agent.service.orchestrator;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.http.codec.ServerSentEvent;
-import org.springframework.stereotype.Service;
-import org.springframework.data.redis.core.StringRedisTemplate;
-
 import java.time.Duration;
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.stereotype.Service;
+
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.yoswell.agenticrag.common.constants.ChatCacheConstants;
 import com.yoswell.agenticrag.core.agent.ai.EnterpriseAgent;
 import com.yoswell.agenticrag.core.agent.context.RagRetrievalContextHolder;
 import com.yoswell.agenticrag.core.agent.dto.CitationDTO;
 import com.yoswell.agenticrag.core.agent.dto.RagSearchResultDTO;
 import com.yoswell.agenticrag.core.agent.service.ChatService;
-import com.yoswell.agenticrag.common.constants.ChatCacheConstants;
 import com.yoswell.agenticrag.platform.session.entity.ChatSession;
 import com.yoswell.agenticrag.platform.session.mapper.ChatSessionMapper;
 import com.yoswell.agenticrag.platform.session.service.ChatMessageService;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 
 import dev.langchain4j.service.TokenStream;
 import reactor.core.publisher.Flux;
@@ -110,6 +110,7 @@ public class ChatOrchestrator {
                     
                     // 3. 启动 LLM 的 ReAct 流程。此时控制权交接给 LangChain4j 内部机制：
                     // 模型评估是否需要调用 @Tool（比如 `RagTool` 或者 `PreferenceTool`）。
+                    log.info("[Chat Orchestrator] LLM React process and reasoning started for session: {}", sessionId);
                     TokenStream tokenStream = enterpriseAgent.chat(sessionId, message);
                     tokenStream
                         .onNext(token -> {
@@ -128,6 +129,7 @@ public class ChatOrchestrator {
                                 // 6. 以强一致性保存当前 Assistant 的完整回复及引用片段落等信息到 MySQL 数据库中
                                 chatMessageService.saveAssistantMessage(sessionId, fullResponse.toString(), citations);
                                 sink.complete();
+                                log.info("[Chat Orchestrator] Agent process completed successfully for session: {}", sessionId);
                             } finally {
                                 closeQuietly(finalRetrievalScope);
                             }
