@@ -1,17 +1,24 @@
 package com.yoswell.agenticrag.core.agent.service.orchestrator;
 
-import java.util.List;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Service;
+import org.springframework.data.redis.core.StringRedisTemplate;
+
+import java.time.Duration;
+import java.util.List;
 
 import com.yoswell.agenticrag.core.agent.ai.EnterpriseAgent;
 import com.yoswell.agenticrag.core.agent.context.RagRetrievalContextHolder;
 import com.yoswell.agenticrag.core.agent.dto.CitationDTO;
 import com.yoswell.agenticrag.core.agent.dto.RagSearchResultDTO;
+import com.yoswell.agenticrag.core.agent.service.ChatService;
+import com.yoswell.agenticrag.common.constants.ChatCacheConstants;
+import com.yoswell.agenticrag.platform.session.entity.ChatSession;
+import com.yoswell.agenticrag.platform.session.mapper.ChatSessionMapper;
 import com.yoswell.agenticrag.platform.session.service.ChatMessageService;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 
 import dev.langchain4j.service.TokenStream;
 import reactor.core.publisher.Flux;
@@ -20,8 +27,9 @@ import tools.jackson.databind.ObjectMapper;
 /**
  * 核心聊天编排器
  * <p>
- * 负责将基于 WebFlux 的网络请求与 LangChain4j 的底层大模型调用（特别是 ReAct 范式的 Agent）进行桥接。
- * 它负责整个交互生命周期管理、SSE 流式事件下发、以及在 Agent 隐式调用相关 Tool 时进行上下文捕获（例如收集知识库的 Citations 溯源信息）。
+ * 连接底层的 Session 存储设施和高层的 LLM/Agent 设施
+ * 负责将基于 WebFlux 的网络请求与 LangChain4j 的底层大模型调用（特别是 ReAct 范式的 Agent）进行桥接
+ * 它负责整个交互生命周期管理、SSE 流式事件下发、以及在 Agent 隐式调用相关 Tool 时进行上下文捕获（例如收集知识库的 Citations 溯源信息）
  * </p>
  */
 @Service
@@ -33,15 +41,24 @@ public class ChatOrchestrator {
     private final ObjectMapper objectMapper;
     private final ChatMessageService chatMessageService;
     private final RagRetrievalContextHolder ragRetrievalContextHolder;
+    private final ChatService chatService;
+    private final StringRedisTemplate stringRedisTemplate;
+    private final ChatSessionMapper chatSessionMapper;
 
     public ChatOrchestrator(EnterpriseAgent enterpriseAgent,
                             ObjectMapper objectMapper,
                             ChatMessageService chatMessageService,
-                            RagRetrievalContextHolder ragRetrievalContextHolder) {
+                            RagRetrievalContextHolder ragRetrievalContextHolder,
+                            ChatService chatService,
+                            StringRedisTemplate stringRedisTemplate,
+                            ChatSessionMapper chatSessionMapper) {
         this.enterpriseAgent = enterpriseAgent;
         this.objectMapper = objectMapper;
         this.chatMessageService = chatMessageService;
         this.ragRetrievalContextHolder = ragRetrievalContextHolder;
+        this.chatService = chatService;
+        this.stringRedisTemplate = stringRedisTemplate;
+        this.chatSessionMapper = chatSessionMapper;
     }
 
     /**
@@ -60,7 +77,28 @@ public class ChatOrchestrator {
                     // 1. 持久化用户的最新提问内容到数据库（保证上下文刷新）
                     chatMessageService.saveUserMessage(sessionId, message);
 
-                    log.info("[Chat Orchestrator] START: Multi-agent Tool execution (ReAct)");
+                    // ====== 新增支线：异步静默生成标题 ======
+                    // 使用 Redis SETNX 防止同一个 Session 多次生成标题或并发查库
+                    String titleGenKey = ChatCacheConstants.SESSION_TITLE_GEN_PREFIX + sessionId;
+                    Boolean isFirstMessage = stringRedisTemplate.opsForValue().setIfAbsent(titleGenKey, "1", Duration.ofHours(24));
+                    
+                    if (Boolean.TRUE.equals(isFirstMessage)) {
+                        // 拿到缓存锁不代表一定没标题，必须回源 DB 作为 Source of Truth，防范缓存自然过期或被驱逐的场景，所以先查库确认标题确实不存在才触发异步生成
+                        ChatSession session = chatSessionMapper.selectOne(new QueryWrapper<ChatSession>().eq("session_id", sessionId).select("session_id", "title"));
+                        if (session != null && session.getTitle() == null) {
+                            // 虚拟线程能够高效地执行阻塞的 LLM 调用而不占用宝贵的 WebFlux 事件循环线程，确保系统的响应性和吞吐量，同时异步更新标题到数据库中供后续查询使用
+                            Thread.startVirtualThread(() -> {
+                                log.info("[Chat Orchestrator] Triggering async title generation for session: {}", sessionId);
+                                try {
+                                    chatService.generateTitleAndSave(sessionId, message);
+                                } catch (Exception e) {
+                                    log.error("[Chat Orchestrator] Failed to generate title, removing redis key to allow retry next time", e);
+                                    stringRedisTemplate.delete(titleGenKey);
+                                }
+                            });
+                        }
+                    }
+                    // ===================================
 
                     StringBuilder fullResponse = new StringBuilder();
                     

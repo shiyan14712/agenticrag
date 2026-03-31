@@ -10,10 +10,12 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.yoswell.agenticrag.core.agent.ai.RagStructuredAgent;
 import com.yoswell.agenticrag.core.agent.dto.RagStructuredResponseDTO;
-import com.yoswell.agenticrag.core.agent.orchestrator.ChatOrchestrator;
+import com.yoswell.agenticrag.core.agent.service.ChatService;
+import com.yoswell.agenticrag.core.agent.service.orchestrator.ChatOrchestrator;
 import com.yoswell.agenticrag.platform.session.service.SessionService;
 import com.yoswell.agenticrag.web.security.util.SecurityUtils;
 
+import lombok.RequiredArgsConstructor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -21,28 +23,22 @@ import reactor.core.scheduler.Schedulers;
 /**
  * 智能体对话控制器
  *
- * <p>提供与 RAG 智能体交互的 WebFlux 响应式接口。支持两种对话模式：
+ * <p>提供与 RAG 智能体交互的 WebFlux 响应式接口。支持两种对话模式：</p>
  * <ul>
  *     <li>流式问答模式 (SSE, Server-Sent Events)：适用于打字机效果的动态生成响应。</li>
  *     <li>结构化问答模式：一次性返回包含思考过程和最终结果的结构化 JSON。</li>
  * </ul>
- * 采用异步非阻塞架构，调用底层核心的 LLM 生成与知识库检索逻辑。</p>
+ * <p>采用异步非阻塞架构，调用底层核心的 LLM 生成与知识库检索逻辑。</p>
  */
 @RestController
 @RequestMapping("/api/v1/agent")
+@RequiredArgsConstructor
 public class AgentController {
 
     private final ChatOrchestrator chatOrchestrator;
     private final RagStructuredAgent ragStructuredAgent;
     private final SessionService sessionService;
-
-    public AgentController(ChatOrchestrator chatOrchestrator,
-                           RagStructuredAgent ragStructuredAgent,
-                           SessionService sessionService) {
-        this.chatOrchestrator = chatOrchestrator;
-        this.ragStructuredAgent = ragStructuredAgent;
-        this.sessionService = sessionService;
-    }
+    private final ChatService chatService;
 
     /**
      * 发送问题并获取流式对话响应 (Server-Sent Events)
@@ -85,4 +81,17 @@ public class AgentController {
                     return ragStructuredAgent.askStructured(sessionId, message);
                 }).subscribeOn(Schedulers.boundedElastic()));
     }
+
+    /**
+     * 标题生成智能体接口
+     * 根据用户的初始提问内容，生成一个简洁且具有描述性的标题，用于标识整个会话的主题
+     * @param userQuery 用户的初始提问内容
+     * @return 一个简短的标题，捕捉会话的主要主题或目的，便于在会话列表中快速识别
+     */
+    @PostMapping("/title")
+    public Mono<String> getSessionTitle(@RequestBody String userQuery) {
+        return Mono.fromCallable(() -> chatService.generateTitle(userQuery))
+                        .subscribeOn(Schedulers.boundedElastic());
+    }
+    
 }

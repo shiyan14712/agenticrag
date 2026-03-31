@@ -86,6 +86,10 @@
   - 彻底移除了原先充当硬编码路由守卫的 `IntentRouterAgent` 及关联意图对象 `IntentDecisionDTO`。
   - 将 `ChatOrchestrator` 的核心链路改造为依托 LangChain4j `@AiService` 的纯 ReAct 模式。不再通过代码 `if/else` 判断是否调用 RAG 检索，而是将所有的 `@Tool`（如 `RagTool`、`PreferenceTool`）代理给大模型自主判断。
   - 完善了 `ChatOrchestrator` 的虚拟线程上下文拦截，在 Agent 触发隐式 Tool Calling 时优雅地提取 Citations 引用，并推送到前端 SSE 事件。
+- **虚拟线程异步生成会话标题**：
+  - 修复了 LLM 的 Prompt Hijacking 漏洞（对用户输入进行 `{{it}}` 沙箱包裹与规范约束）。
+  - 在 `ChatOrchestrator` 中引入了 `ChatService` 和 `ChatSessionMapper`，并在首条消息时通过 `Thread.startVirtualThread()` 异步非阻塞生成并持久化会话标题。
+  - 完善了 `Mono.flatMap()` 处理嵌套 `Mono<Mono<String>>` 的问题，实现了 WebFlux SSE 接口的调优。
 
 ## 尚未完成 / 待完善 (Not Yet Implemented)
 
