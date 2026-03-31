@@ -171,21 +171,32 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
         String sessionId = memoryId.toString();
         log.info("Retrieving memory for session: {}", sessionId);
 
-        ArrayList<ChatMessage> assembledMessages = new ArrayList<>();
-        injectUserPreferences(sessionId, assembledMessages);
-        injectSummary(sessionId, "session:memory:l3:", "Long-range session summary", assembledMessages);
-        injectSummary(sessionId, "session:memory:l2:", "Medium-range session summary", assembledMessages);
+        // 分离 SystemMessage 和其他消息，确保 SystemMessage 始终在开头
+        ArrayList<ChatMessage> systemMessages = new ArrayList<>();
+        ArrayList<ChatMessage> otherMessages = new ArrayList<>();
+        
+        // 收集所有 SystemMessage（用户偏好、摘要等）
+        injectUserPreferences(sessionId, systemMessages);
+        injectSummary(sessionId, "session:memory:l3:", "Long-range session summary", systemMessages);
+        injectSummary(sessionId, "session:memory:l2:", "Medium-range session summary", systemMessages);
 
         // 从 Redis 获取 L1 原始消息，支持多种数据格式的自动转换
         Object l1Data = redisTemplate.opsForValue().get(MemoryStoreConstants.REDIS_PREFIX_L1 + sessionId);
         if (l1Data != null) {
             List<ChatMessage> l1Messages = deserializeChatMessages(l1Data);
-            if (!l1Messages.isEmpty()) {
-                assembledMessages.addAll(l1Messages);
+            // 将 L1 消息按类型分离：SystemMessage 放到前面，其他消息放到后面
+            for (ChatMessage msg : l1Messages) {
+                if (msg instanceof SystemMessage) {
+                    systemMessages.add(msg);
+                } else {
+                    otherMessages.add(msg);
+                }
             }
         }
 
-        return assembledMessages;
+        // 合并：所有 SystemMessage 在前，其他消息在后
+        systemMessages.addAll(otherMessages);
+        return systemMessages;
     }
 
     /**

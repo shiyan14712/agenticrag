@@ -1,3 +1,5 @@
+
+
 # 故障排查与 Bug 修复记录 (Troubleshooting Log)
 
 本文档用于记录项目开发过程中及长线维护中遇到的典型 Bug、排障排查过程、底层的错误原理以及最终解决方案。
@@ -103,5 +105,130 @@ java.lang.ClassCastException: class java.lang.Integer cannot be cast to class ja
     }
     ```
 通过这一改动，不论底层组件抛出的是整数型还是小数型，都能安全一致地转换为 LangChain4j Embedding 需要的 `float[]` 数组。
+
+---
+
+## 🐞 [2026-03-31] OpenAI API 报错 "System message must be at the beginning" 
+
+### 现象描述 (Symptom)
+在调用结构化对话接口 `/api/v1/agent/chat/structured` 时，底层 OpenAI API 返回以下错误：
+```text
+dev.ai4j.openai4j.OpenAiHttpException: {"error":{"message":"System message must be at the beginning.","type":"BadRequestError","param":null,"code":400}}
+	at dev.ai4j.openai4j.Utils.toException(Utils.java:8)
+	at com.yoswell.agenticrag.core.agent.controller.AgentController.lambda$2(AgentController.java:85)
+```
+该错误导致所有依赖 LangChain4j + OpenAI 协议的大模型调用全部失败，智能体无法生成任何响应。
+
+### 根因分析 (Root Cause Analysis)
+这是一个典型的**消息顺序违规**问题，源于分层记忆系统中 SystemMessage 的位置管理不当：
+
+1. **OpenAI API 的严格要求**：OpenAI Chat Completions API 明确规定，所有 `SystemMessage` 必须出现在 `messages` 数组的**最开头**，不允许在 User/Ai Message 中间或末尾出现。
+
+2. **LangChain4j 记忆组装逻辑缺陷**：
+   - 自定义的 `HierarchicalChatMemoryStore.getMessages()` 方法按以下顺序组装消息：
+     1. 注入用户偏好（SystemMessage）✅ 位置正确
+     2. 注入 L3 摘要（SystemMessage）✅ 位置正确  
+     3. 注入 L2 摘要（SystemMessage）✅ 位置正确
+     4. **从 Redis 读取 L1 历史消息** ❌ 问题源头
+   - 如果用户在历史对话中曾经触发过某些特殊逻辑（如工具调用、系统提示等），Redis 中存储的 L1 消息列表里可能包含 SystemMessage。
+   - 这些历史 SystemMessage 会被直接 `addAll()` 到消息列表的**中间位置**，违反 OpenAI 规范。
+
+3. **雪崩效应**：当这个不合规的消息列表传递给 LangChain4j → OpenAI SDK 时，API 校验失败并立即抛出 `BadRequestError`，导致整个对话链路中断。
+
+4. **为什么之前没发现**：
+   - 在简单对话场景中，L1 历史消息通常只包含 UserMessage 和 AiMessage，不会混入 SystemMessage。
+   - 但当智能体调用 Tool、触发 ReAct 模式、或有其他高级特性时，LangChain4j 可能在对话过程中插入 SystemMessage，导致问题暴露。
+
+### 解决方案 (Resolution)
+修改 `HierarchicalChatMemoryStore.getMessages()` 方法，采用**分类收集 + 合并策略**确保消息顺序合规：
+
+1. **创建两个独立容器**：
+   ```java
+   ArrayList<ChatMessage> systemMessages = new ArrayList<>();
+   ArrayList<ChatMessage> otherMessages = new ArrayList<>();
+   ```
+
+2. **分类收集消息**：
+   - 将所有主动注入的 SystemMessage（用户偏好、L2/L3 摘要）放入 `systemMessages`
+   - 从 Redis 读取 L1 历史消息后，遍历检查每条消息的类型：
+     ```java
+     for (ChatMessage msg : l1Messages) {
+         if (msg instanceof SystemMessage) {
+             systemMessages.add(msg);  // SystemMessage 统一放前面
+         } else {
+             otherMessages.add(msg);   // 其他消息放后面
+         }
+     }
+     ```
+
+3. **合并返回**：
+   ```java
+   systemMessages.addAll(otherMessages);
+   return systemMessages;
+   ```
+
+4. **核心代码变更**（`HierarchicalChatMemoryStore.java` 第 168-200 行）：
+   ```java
+   @Override
+   public List<ChatMessage> getMessages(Object memoryId) {
+       String sessionId = memoryId.toString();
+       log.info("Retrieving memory for session: {}", sessionId);
+
+       // 分离 SystemMessage 和其他消息，确保 SystemMessage 始终在开头
+       ArrayList<ChatMessage> systemMessages = new ArrayList<>();
+       ArrayList<ChatMessage> otherMessages = new ArrayList<>();
+       
+       // 收集所有 SystemMessage（用户偏好、摘要等）
+       injectUserPreferences(sessionId, systemMessages);
+       injectSummary(sessionId, "session:memory:l3:", "Long-range session summary", systemMessages);
+       injectSummary(sessionId, "session:memory:l2:", "Medium-range session summary", systemMessages);
+
+       // 从 Redis 获取 L1 原始消息
+       Object l1Data = redisTemplate.opsForValue().get(MemoryStoreConstants.REDIS_PREFIX_L1 + sessionId);
+       if (l1Data != null) {
+           List<ChatMessage> l1Messages = deserializeChatMessages(l1Data);
+           // 将 L1 消息按类型分离：SystemMessage 放到前面，其他消息放到后面
+           for (ChatMessage msg : l1Messages) {
+               if (msg instanceof SystemMessage) {
+                   systemMessages.add(msg);
+               } else {
+                   otherMessages.add(msg);
+               }
+           }
+       }
+
+       // 合并：所有 SystemMessage 在前，其他消息在后
+       systemMessages.addAll(otherMessages);
+       return systemMessages;
+   }
+   ```
+
+### 经验总结与最佳实践
+1. **OpenAI 消息顺序铁律**：
+   - SystemMessage → UserMessage → AiMessage → UserMessage → AiMessage ...
+   - 绝不允许 SystemMessage 出现在非开头位置
+
+2. **防御性编程建议**：
+   - 在返回消息列表前，可以增加一个校验方法，扫描是否有 SystemMessage 出现在错误位置：
+     ```java
+     private void validateMessageOrder(List<ChatMessage> messages) {
+         boolean foundNonSystem = false;
+         for (ChatMessage msg : messages) {
+             if (!(msg instanceof SystemMessage) && foundNonSystem == false) {
+                 foundNonSystem = true;
+             } else if (msg instanceof SystemMessage && foundNonSystem) {
+                 throw new IllegalStateException("SystemMessage must be at the beginning");
+             }
+         }
+     }
+     ```
+
+3. **通用适配原则**：
+   - 当集成第三方 API（尤其是闭源商业 API）时，必须严格遵守其输入规范，即使某些场景下"看似可以工作"
+   - 对于消息顺序、字段必填性等强约束，要在内部实现中进行防御性校验，提前发现问题而非等到 API 调用失败
+
+4. **与之前问题的联动**：
+   - 这是继序列化问题、Embedding 类型转换问题之后，第三个由于 LangChain4j + OpenAI 生态严格规范引发的底层兼容性问题
+   - 再次验证了：**框架的便利性背后隐藏着严格的契约要求**，开发者必须深入理解这些隐式约定
 
 ---
