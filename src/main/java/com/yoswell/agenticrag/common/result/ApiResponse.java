@@ -1,5 +1,7 @@
 package com.yoswell.agenticrag.common.result;
 
+import com.yoswell.agenticrag.common.exception.ErrorCode;
+
 /**
  * 通用接口响应 DTO。
  *
@@ -44,7 +46,7 @@ public class ApiResponse<T> {
     }
 
     /**
-     * 构建失败响应。
+     * 构建失败响应
      *
      * @param code 业务状态码
      * @param message 错误信息
@@ -53,6 +55,17 @@ public class ApiResponse<T> {
      */
     public static <T> ApiResponse<T> error(String code, String message) {
         return new ApiResponse<>(code, message, null);
+    }
+
+    /**
+     * 构建失败响应
+     *
+     * @param code 错误码枚举
+     * @return 标准失败响应
+     * @param <T> 业务数据类型
+     */
+    public static <T> ApiResponse<T> error(ErrorCode code) {
+        return new ApiResponse<>(code.getCode(), code.getMessage(), null);
     }
 
     public String getCode() {

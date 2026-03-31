@@ -15,11 +15,12 @@ import org.springframework.security.web.server.ServerAuthenticationEntryPoint;
 import org.springframework.security.web.server.authorization.ServerAccessDeniedHandler;
 import org.springframework.web.server.ServerWebExchange;
 
-import tools.jackson.databind.ObjectMapper;
+import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.common.result.ApiResponse;
 import com.yoswell.agenticrag.web.security.filter.TenantAuthenticationFilter;
 
 import reactor.core.publisher.Mono;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 响应式安全核心配置类。
@@ -59,10 +60,9 @@ public class SecurityConfig {
             .csrf(ServerHttpSecurity.CsrfSpec::disable)
             .authorizeExchange(auth -> auth
                 // 开发公共或授权专属端点免鉴权
-                .pathMatchers("/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/logout").permitAll()
-                // 业务功能端点强制鉴权
-                .pathMatchers("/api/v1/documents/**").authenticated()
-                .anyExchange().permitAll()
+                .pathMatchers("/api/v1/auth/**").permitAll()
+                // 所有其他未显式配置的业务端点，默认强制鉴权
+                .anyExchange().authenticated()
             )
             // 注入自定义基于 Redis/JJWT 的多租户认证过滤链
             .addFilterAt(tenantAuthenticationFilter, SecurityWebFiltersOrder.AUTHENTICATION)
@@ -83,7 +83,13 @@ public class SecurityConfig {
         return (exchange, ex) -> {
             exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
             exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
-            ApiResponse<Void> errorResponse = ApiResponse.error("UNAUTHORIZED", "未授权或令牌已失效，请重新登录");
+            
+            // 提取具体的安全异常消息（如 Token过期），兜底使用全局统一消息
+            String errorMessage = (ex != null && ex.getMessage() != null && !ex.getMessage().isEmpty()) 
+                    ? ex.getMessage()
+                    : ErrorCode.UNAUTHORIZED_ERROR.getMessage();
+                    
+            ApiResponse<Void> errorResponse = ApiResponse.error(ErrorCode.UNAUTHORIZED_ERROR.getCode(), errorMessage);
             return writeResponse(exchange, errorResponse);
         };
     }
@@ -96,7 +102,7 @@ public class SecurityConfig {
         return (exchange, denied) -> {
             exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
             exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
-            ApiResponse<Void> errorResponse = ApiResponse.error("FORBIDDEN", "权限不足，拒绝访问");
+            ApiResponse<Void> errorResponse = ApiResponse.error(ErrorCode.ACCESS_DENIED_ERROR);
             return writeResponse(exchange, errorResponse);
         };
     }

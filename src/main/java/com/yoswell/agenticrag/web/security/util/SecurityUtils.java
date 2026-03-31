@@ -1,10 +1,10 @@
 package com.yoswell.agenticrag.web.security.util;
 
+import com.yoswell.agenticrag.common.exception.ErrorCode;
+import org.springframework.security.authentication.AuthenticationCredentialsNotFoundException;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.security.core.context.SecurityContext;
 
-import com.yoswell.agenticrag.common.exception.BusinessException;
-import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.web.security.model.TenantUser;
 
 import reactor.core.publisher.Mono;
@@ -34,7 +34,8 @@ public final class SecurityUtils {
                     }
                     return authentication.getName();
                 })
-                .switchIfEmpty(Mono.error(new BusinessException(ErrorCode.INVALID_TOKEN)));
+                // 够走到这里通常代表通过了鉴权 可能是处于某种内部漏洞/代码漏写导致走入这里
+                .switchIfEmpty(Mono.error(new AuthenticationCredentialsNotFoundException(ErrorCode.UNAUTHORIZED_ERROR.getMessage())));
     }
 
     /**
