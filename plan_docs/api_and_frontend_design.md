@@ -1,4 +1,4 @@
-﻿# Agentic RAG 前端接口文档与设计规范
+# Agentic RAG 前端接口文档与设计规范
 
 本文档基于 `CLAUDE.md` 的架构设计，梳理了后端的可用接口，并给出了与这些接口对接的前端设计原则（特别是大模型的 ReAct 流式问答场景）。
 
@@ -116,6 +116,19 @@
     *   **Request Header**: 同上。
     *   **响应 Data**: `RagStructuredResponseDTO` (包含最终 `answer` 答案文本、`citations` Citations 数组对象，以及 `suggestedQuestions` 推荐的后续发散问题)。
 
+*   **生成会话标题**
+    *   **接口**: `POST /api/v1/agent/title`
+    *   **Content-Type**: `text/plain` 或 `application/json`。
+    *   **请求 Body**: 用户的初始提问内容（纯文本），用于基于此生成简洁且具有描述性的会话标题。
+    *   **响应**: 返回生成的标题字符串。
+    *   **前端处理建议**: 可在用户发起第一轮对话时调用此接口，获取标题后自动调用 `PATCH /api/v1/sessions/{sessionId}` 更新会话标题。
+
+*   **获取已生成的会话标题**
+    *   **接口**: `GET /api/v1/agent/title/{sessionId}`
+    *   **请求参数**: `sessionId` (路径变量)。
+    *   **响应**: 返回该会话已保存的标题字符串。
+    *   **前端处理建议**: 在加载会话列表或切换会话时，可调用此接口快速获取标题，无需加载完整的 Session 对象。
+
 ---
 
 ## 2. 前端设计与集成原则 (Frontend Guidelines)
@@ -143,7 +156,7 @@
 
 2.  **响应展示优先级 (Action & Tool -> Observation -> Markdown)**
     *   **收到 `event: tool_call` 時**: 该事件意味着 ReAct 框架正陷入思考并决定了调用哪一个 RAG/检索工具。前端可以展示类似于 ChatGPT 那样的一个呼吸灯加载条标签，提示：“🔄 `正在检索企业知识库...`”。
-    *   **收到 `event: message` 时**: 这是模型根据 observation 生成出来的总结性回复。前端应当将接收到的 Chunk 增量拼接到消息记录中。应当使用如 `markdown-it` 和 `highlight.js` 实现 Markdown 实时渲染。
+    *   **收到 `event: message` 时**: 这是模型根据 observation 生成出来的总结性回复。前端应当将接收到的 Chunk 增量拼接到消息记录中。应当使用如 `highlight.js` 实现 Markdown 实时渲染。
     *   **收到 `event: citations` 时**: 这是该问题的引用片段和结构数据集合。前端应当将消息框尾部附加一块**“参考资料卡片”**控件，点击该卡片可以定位到具体的源文件与段落。
 
 ### 2-2. Session 会话生命周期与路由规划

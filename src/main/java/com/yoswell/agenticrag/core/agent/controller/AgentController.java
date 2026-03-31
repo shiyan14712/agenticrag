@@ -2,11 +2,7 @@ package com.yoswell.agenticrag.core.agent.controller;
 
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import com.yoswell.agenticrag.core.agent.ai.RagStructuredAgent;
 import com.yoswell.agenticrag.core.agent.dto.RagStructuredResponseDTO;
@@ -93,5 +89,15 @@ public class AgentController {
         return Mono.fromCallable(() -> chatService.generateTitle(userQuery))
                         .subscribeOn(Schedulers.boundedElastic());
     }
-    
+
+    /**
+     * 获取Session已经生成的标题
+     * @param sessionId 会话ID
+     * @return 会话的标题
+     */
+    @GetMapping("/title/{sessionId}")
+    public Mono<String> getGeneratedTitle(@PathVariable String sessionId) {
+        return Mono.fromCallable(() -> chatService.getSessionTitle(sessionId))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
 }
