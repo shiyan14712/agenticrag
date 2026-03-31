@@ -1,13 +1,10 @@
-
-这份文档已经过全面重构与升维。它不仅是一份架构说明，更是整个系统工程的**宪法**。它明确了从宏观架构到微观设计模式、存储分工、以及系统与前端的契约。
-
-请将以下内容直接保存为项目根目录下的 `CLAUDE.md`，然后交给 AI 编程助手（如 Antigravity / Claude Code / Cursor）开始生成代码。
+这份文档不仅是一份架构说明，更是整个系统工程的**宪法**。它明确了从宏观架构到微观设计模式、存储分工、以及系统与前端的契约。
 
 ---
 
 ## 0. 项目概述 (Project Overview)
-本项目是一个基于 Java21 生态（Spring Boot 4.0.5 + LangChain4j）的企业级 Agentic RAG（检索增强生成智能体）系统。
-本系统的核心理念是**“渐进式能力叠加”**。它不仅提供传统的对话问答，更具备单一 Agent 编排（ReAct）、分级上下文压缩、跨会话长期记忆、以及基于 MinerU 的高精度异构文档解析管道。
+本项目是一个基于 Java21 生态（Spring Boot 4.0.5 + LangChain4j + ElasticSearch + Kafka + Redis + MySQL + WebFlux）的企业级 Agentic RAG（检索增强生成智能体）系统。
+本系统的核心理念是**渐进式能力叠加**。它不仅提供传统的对话问答，更具备单一 Agent 编排（ReAct）、分级上下文压缩、跨会话长期记忆、以及基于 MinerU 的高精度异构文档解析管道。
 
 **核心存储规范，分工明确各司其职：**
 *   **MinIO**：负责所有物理文件的存储（原始 PDF/Word、解析后的庞大 Markdown 文件、提取的图片）。
@@ -117,7 +114,7 @@
     *   Java 侧 `doc-vectorize-request` 的真实流程已经确定为：回读 MinIO 内容 -> 根据扩展名选择策略 -> 分块 -> embedding -> 写 ES -> 更新 `document_metadata.status`。
     *   `document_metadata` 的代码模型与 schema 必须始终保持一致，至少包括 `document_id / tenant_id / kb_id / allowed_roles / status / minio_url / file_extension` 这些字段。
 
-## 6. 权限控制与安全模块
+## 6. 权限控制与零信任安全模块
 
 **目标**：在数据物理层和逻辑层建立防线，彻底杜绝越权检索与 Prompt Injection 攻击。
 
