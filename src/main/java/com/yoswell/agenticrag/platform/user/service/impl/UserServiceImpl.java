@@ -13,6 +13,8 @@ import javax.crypto.SecretKey;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.CredentialsExpiredException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -119,30 +121,36 @@ public class UserServiceImpl implements UserService {
     @Override
     public UserLoginRespDTO refreshToken(String refreshToken) {
         if (!StringUtils.hasText(refreshToken)) {
-            throw new BusinessException(ErrorCode.INVALID_TOKEN.getCode(), "Refresh token不能为空");
+            throw new org.springframework.security.authentication.AuthenticationCredentialsNotFoundException("Refresh token不能为空");
         }
 
-        Claims claims = parseTokenClaims(refreshToken);
+        Claims claims;
+        try {
+            claims = parseTokenClaims(refreshToken);
+        } catch (io.jsonwebtoken.JwtException e) {
+            throw new BadCredentialsException(ErrorCode.INVALID_TOKEN_ERROR.getMessage());
+        }
+
         String tokenType = claims.get(AuthTokenCacheConstants.CLAIM_TOKEN_TYPE, String.class);
         if (!AuthTokenCacheConstants.TOKEN_TYPE_REFRESH.equals(tokenType)) {
-            throw new BusinessException(ErrorCode.INVALID_TOKEN);
+            throw new BadCredentialsException(ErrorCode.INVALID_TOKEN_ERROR.getMessage());
         }
 
         String userId = claims.getSubject();
         if (!StringUtils.hasText(userId)) {
-            throw new BusinessException(ErrorCode.INVALID_TOKEN);
+            throw new BadCredentialsException(ErrorCode.INVALID_TOKEN_ERROR.getMessage());
         }
 
         String refreshTokenHash = hashToken(refreshToken);
         String cachedUserId = stringRedisTemplate.opsForValue()
                 .get(AuthTokenCacheConstants.REFRESH_TOKEN_PREFIX + refreshTokenHash);
         if (!StringUtils.hasText(cachedUserId) || !cachedUserId.equals(userId)) {
-            throw new BusinessException(ErrorCode.TOKEN_EXPIRED);
+            throw new CredentialsExpiredException(ErrorCode.TOKEN_EXPIRED_ERROR.getMessage());
         }
 
         SysUser user = loadActiveUserByUserId(userId);
         if (user == null) {
-            throw new BusinessException(ErrorCode.USER_NOT_EXIST);
+            throw new org.springframework.security.authentication.DisabledException(ErrorCode.USER_NOT_EXIST.getMessage());
         }
 
         UserLoginRespDTO refreshed = issueTokenPair(user);
