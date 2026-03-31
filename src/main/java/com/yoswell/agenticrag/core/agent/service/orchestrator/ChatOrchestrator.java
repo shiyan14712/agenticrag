@@ -1,4 +1,4 @@
-package com.yoswell.agenticrag.core.agent.orchestrator;
+package com.yoswell.agenticrag.core.agent.service.orchestrator;
 
 import java.util.List;
 
