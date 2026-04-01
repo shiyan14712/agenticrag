@@ -5,6 +5,8 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.yoswell.agenticrag.common.exception.BusinessException;
+import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.platform.session.cache.SessionRedisManager;
 import com.yoswell.agenticrag.platform.session.entity.ChatSession;
 import com.yoswell.agenticrag.platform.session.event.SessionSwitchedEvent;
@@ -28,10 +30,17 @@ public class SessionContextSwitcher {
     public ChatSession activateSession(String sessionId, String userId) {
         ChatSession newSession = sessionMapper.selectOne(new QueryWrapper<ChatSession>().eq("session_id", sessionId));
         if (newSession == null) {
-            throw new RuntimeException("Session not found");
+            throw new BusinessException(
+                ErrorCode.SESSION_NOT_FOUND.getCode(),
+                ErrorCode.SESSION_NOT_FOUND.getMessage() + sessionId
+            );
         }
 
         if (!userId.equals(newSession.getUserId())) {
+            throw new BusinessException(
+                ErrorCode.SESSION_NOT_FOUND.getCode(),
+                ErrorCode.SESSION_NOT_FOUND.getMessage() + sessionId
+            );
         }
 
         String oldSessionId = redisManager.getActiveSession(userId);

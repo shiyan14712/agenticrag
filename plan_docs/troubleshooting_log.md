@@ -264,3 +264,31 @@ org.springframework.security.authorization.AuthorizationDeniedException: Access 
    ```
 
 ---
+
+## 🐞 [2026-04-01] 二次鉴权缺失导致会话越权与异常职责边界错位
+
+### 现象描述 (Symptom)
+在安全审计中发现两类高风险问题：
+1. **会话切换存在越权窗口**：请求 `PUT /api/v1/sessions/{sessionId}/activate` 时，若传入他人 `sessionId`，旧实现存在进入激活流程的可能。
+2. **标题查询存在水平越权风险**：请求 `GET /api/v1/agent/title/{sessionId}` 时，旧实现仅按 `sessionId` 查标题，缺少会话归属校验。
+
+同时发现两类设计原则偏离：
+- 租户提取存在 `default` 兜底，不符合零信任 fail-closed 原则。
+- 全局异常兜底过宽，安全异常存在被业务异常出口吞掉的风险。
+
+### 根因分析 (Root Cause Analysis)
+1. **二次鉴权分支空实现**：`SessionContextSwitcher.activateSession()` 中虽有 `userId` 与会话归属比对，但不匹配分支未抛异常，导致控制流可继续向下执行。
+2. **对象级权限校验缺失**：标题查询链路中，Controller 未调用 `verifySessionAccess`，Service 仅按 `session_id` 查询，缺少 `user_id` 过滤条件，形成典型 IDOR（Insecure Direct Object Reference）入口。
+3. **租户上下文宽松兜底**：`SecurityUtils.getCurrentTenantId()` 在认证缺失时回落到 `default`，会把“应拒绝”场景误降级为“可继续执行”场景，弱化租户边界。
+4. **安全异常边界不够明确**：若控制器/业务层抛出认证类异常，被 `GlobalExceptionHandler` 通用 `Exception` 处理器接管时，可能返回业务风格错误体，不利于 401/403 语义一致性。
+
+### 解决方案 (Resolution)
+1. **封堵会话切换越权**：在 `SessionContextSwitcher.activateSession()` 中，对“会话不存在”与“归属不匹配”统一抛出 `SESSION_NOT_FOUND` 业务异常，立即中断流程。
+2. **补齐标题查询对象级鉴权**：
+    - Controller 侧在读取标题前先执行 `sessionService.verifySessionAccess(sessionId, userId)`。
+    - Service 侧将标题查询条件升级为 `session_id + user_id` 双条件，防止绕过 Controller 的直接调用。
+3. **收紧租户上下文策略**：`SecurityUtils.getCurrentTenantId()` 改为 fail-closed，认证信息缺失或租户为空时直接抛 `AuthenticationCredentialsNotFoundException`，彻底移除 `default` 兜底。
+4. **明确鉴权异常出口**：在 `GlobalExceptionHandler` 中新增 `AuthenticationException` 与 `AccessDeniedException` 专属处理，分别返回 HTTP 401/403 与统一 `ApiResponse` 结构，避免安全异常被通用业务出口吞掉。
+5. **验证结果**：修复后已通过 `mvnw -DskipTests compile` 编译验证。
+
+---

@@ -44,20 +44,23 @@ public final class SecurityUtils {
      * 从当前 SecurityContext 中提取当前登录用户所在的租户 ID。
      * 遵循 CLAUDE.md 中租户强制隔离（Tenant Isolation Scope）的安全原则。
      *
-     * @return 租户 ID。如果上下文中缺失租户信息，返回 "default" 兜底租户。
+     * @return 租户 ID。
      */
     public static String getCurrentTenantId() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication == null) {
-            return "default";
+        if (authentication == null || !authentication.isAuthenticated()) {
+            throw new AuthenticationCredentialsNotFoundException(ErrorCode.UNAUTHORIZED_ERROR.getMessage());
         }
 
         Object principal = authentication.getPrincipal();
         if (principal instanceof TenantUser tenantUser) {
             String tenantId = tenantUser.getTenantId();
-            return (tenantId == null || tenantId.isBlank()) ? "default" : tenantId;
+            if (tenantId == null || tenantId.isBlank()) {
+                throw new AuthenticationCredentialsNotFoundException(ErrorCode.UNAUTHORIZED_ERROR.getMessage());
+            }
+            return tenantId;
         }
 
-        return "default";
+        throw new AuthenticationCredentialsNotFoundException(ErrorCode.UNAUTHORIZED_ERROR.getMessage());
     }
 }

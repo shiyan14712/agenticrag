@@ -96,6 +96,8 @@ public class AgentController {
      */
     @GetMapping("/title/{sessionId}")
     public ApiResponse<String> getGeneratedTitle(@PathVariable String sessionId) {
-        return ApiResponse.success(chatService.getSessionTitle(sessionId));
+        String userId = SecurityUtils.getCurrentUserId();
+        sessionService.verifySessionAccess(sessionId, userId);
+        return ApiResponse.success(chatService.getSessionTitle(sessionId, userId));
     }
 }

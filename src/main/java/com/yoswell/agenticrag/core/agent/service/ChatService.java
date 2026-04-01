@@ -1,11 +1,11 @@
 package com.yoswell.agenticrag.core.agent.service;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.yoswell.agenticrag.common.exception.BusinessException;
-import com.yoswell.agenticrag.common.exception.ErrorCode;
 import org.springframework.stereotype.Service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+import com.yoswell.agenticrag.common.exception.BusinessException;
+import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.core.agent.ai.SimpleChatAgent;
 import com.yoswell.agenticrag.platform.session.entity.ChatSession;
 import com.yoswell.agenticrag.platform.session.mapper.ChatSessionMapper;
@@ -52,11 +52,13 @@ public class ChatService {
     /**
      * 从数据库中获取会话标题
      * @param sessionId 会话ID
+     * @param userId 用户ID
      * @return 会话标题
      */
-    public String getSessionTitle(String sessionId) {
+    public String getSessionTitle(String sessionId, String userId) {
         LambdaQueryWrapper<ChatSession> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.eq(ChatSession::getSessionId, sessionId)
+                    .eq(ChatSession::getUserId, userId)
                     .select(ChatSession::getTitle);
         ChatSession session = chatSessionMapper.selectOne(queryWrapper);
         if (session == null) {
