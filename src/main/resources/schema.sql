@@ -45,7 +45,7 @@ CREATE TABLE chat_session (
     session_id      VARCHAR(36)     NOT NULL UNIQUE COMMENT 'UUID v7，兼顾唯一性与时间排序',
     user_id         VARCHAR(128)    NOT NULL COMMENT '关联用户表 sys_user.user_id',
     title           VARCHAR(200)    DEFAULT NULL COMMENT '会话标题，首轮对话后由 LLM 自动生成',
-    status          VARCHAR(16)     NOT NULL DEFAULT 'ACTIVE' COMMENT 'ACTIVE / ARCHIVED / DELETED',
+    status          TINYINT         NOT NULL DEFAULT 0 COMMENT '会话状态：0=ACTIVE, 1=ARCHIVED, 2=DELETED',
     model_id        VARCHAR(64)     DEFAULT NULL COMMENT '该会话绑定的模型标识（可选）',
     message_count   INT             NOT NULL DEFAULT 0 COMMENT '消息计数器，用于触发 L2/L3 压缩',
     summary         TEXT            DEFAULT NULL COMMENT '会话级摘要（L3 压缩后的最终产物）',

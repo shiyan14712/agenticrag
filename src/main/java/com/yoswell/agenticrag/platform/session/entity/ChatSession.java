@@ -52,12 +52,12 @@ public class ChatSession {
     @TableField("title")
     private String title;
 
-    /**
-     * 会话状态
-     * 状态枚举：ACTIVE（活跃）/ ARCHIVED（已归档）/ DELETED（已删除）
-     */
+     /**
+      * 会话状态
+      * 状态值：0=ACTIVE（活跃）/ 1=ARCHIVED（已归档）/ 2=DELETED（已删除）
+      */
     @TableField("status")
-    private String status;
+    private Integer status;
 
     /**
      * 模型 ID

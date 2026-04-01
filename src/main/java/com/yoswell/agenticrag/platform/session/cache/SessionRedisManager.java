@@ -1,11 +1,11 @@
 package com.yoswell.agenticrag.platform.session.cache;
 
-import java.time.Duration;
 import java.util.function.Supplier;
 
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
+import com.yoswell.agenticrag.common.constants.SessionCacheConstants;
 import com.yoswell.agenticrag.platform.session.entity.ChatSession;
 
 import tools.jackson.core.JacksonException;
@@ -23,21 +23,21 @@ public class SessionRedisManager {
     }
 
     private String getSessionMetaKey(String sessionId) {
-        return "session:meta:" + sessionId;
+        return SessionCacheConstants.SESSION_META_PREFIX + sessionId;
     }
 
     private String getSessionMessagesKey(String sessionId) {
-        return "session:messages:" + sessionId;
+        return SessionCacheConstants.SESSION_MESSAGES_PREFIX + sessionId;
     }
 
     private String getUserActiveSessionKey(String userId) {
-        return "user:active_session:" + userId;
+        return SessionCacheConstants.USER_ACTIVE_SESSION_PREFIX + userId;
     }
 
     public void cacheSessionMeta(ChatSession session) {
         String key = getSessionMetaKey(session.getSessionId());
         try {
-            redisTemplate.opsForValue().set(key, objectMapper.writeValueAsString(session), Duration.ofHours(24));
+            redisTemplate.opsForValue().set(key, objectMapper.writeValueAsString(session), SessionCacheConstants.SESSION_CACHE_TTL);
         } catch (JacksonException e) {
             e.printStackTrace();
         }
@@ -48,7 +48,7 @@ public class SessionRedisManager {
         String value = redisTemplate.opsForValue().get(key);
         if (value != null) {
             try {
-                redisTemplate.expire(key, Duration.ofHours(24));
+                redisTemplate.expire(key, SessionCacheConstants.SESSION_CACHE_TTL);
                 return objectMapper.readValue(value, ChatSession.class);
             } catch (JacksonException e) {
                 e.printStackTrace();
@@ -63,7 +63,12 @@ public class SessionRedisManager {
     }
 
     public void setActiveSession(String userId, String sessionId) {
-        redisTemplate.opsForValue().set(getUserActiveSessionKey(userId), sessionId, Duration.ofHours(24));
+        String key = getUserActiveSessionKey(userId);
+        if (sessionId == null || sessionId.isBlank()) {
+            redisTemplate.delete(key);
+            return;
+        }
+        redisTemplate.opsForValue().set(key, sessionId, SessionCacheConstants.SESSION_CACHE_TTL);
     }
 
     public String getActiveSession(String userId) {

@@ -2,21 +2,20 @@ package com.yoswell.agenticrag.platform.session.controller;
 
 import java.util.Map;
 
+import com.yoswell.agenticrag.platform.session.dto.request.*;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.yoswell.agenticrag.common.result.ApiResponse;
-import com.yoswell.agenticrag.platform.session.dto.SessionCreateRequestDTO;
-import com.yoswell.agenticrag.platform.session.dto.SessionUpdateRequestDTO;     
 import com.yoswell.agenticrag.platform.session.entity.ChatSession;
 import com.yoswell.agenticrag.platform.session.service.SessionContextSwitcher;  
 import com.yoswell.agenticrag.platform.session.service.SessionService;
@@ -63,35 +62,36 @@ public class SessionController {
     /**
      * 分页查询当前用户会话列表
      *
-     * @param page 页码（从 0 开始）
-     * @param size 每页大小
-     * @param status 会话状态过滤条件
+     * @param request 查询参数（page/size/status）
      * @return 包含会话分页结果的统一响应
      */
     @GetMapping
-    public ApiResponse<Page<ChatSession>> getSessions(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
-            @RequestParam(defaultValue = "ACTIVE") String status) {
+    public ApiResponse<Page<ChatSession>> getSessions(@ModelAttribute SessionListQueryRequestDTO request) {
         String userId = SecurityUtils.getCurrentUserId();
-        return ApiResponse.success(sessionService.getSessions(userId, status, page, size));
+        return ApiResponse.success(sessionService.getSessions(
+                userId,
+                request.resolveStatus(),
+                request.resolvePage(),
+                request.resolveSize()));
     }
 
     /**
      * 查询指定会话消息详情
      *
      * @param sessionId 会话 ID
-     * @param page 页码（从 0 开始）
-     * @param size 每页大小
+     * @param request 查询参数（page/size）
      * @return 包含会话详情与消息分页信息的统一响应
      */
     @GetMapping("/{sessionId}/messages")
     public ApiResponse<Map<String, Object>> getSessionMessages(
             @PathVariable String sessionId,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size) {
+            @ModelAttribute SessionMessageQueryRequestDTO request) {
         String userId = SecurityUtils.getCurrentUserId();
-        return ApiResponse.success(sessionService.getSessionDetails(sessionId, userId, page, size));
+        return ApiResponse.success(sessionService.getSessionDetails(
+                sessionId,
+                userId,
+                request.resolvePage(),
+                request.resolveSize()));
     }
 
     /**
@@ -125,15 +125,15 @@ public class SessionController {
      * 删除或归档会话
      *
      * @param sessionId 会话 ID
-     * @param mode 删除模式（如 archive / hard-delete 等）
+     * @param request 查询参数（mode）
      * @return 统一响应（data 为 null）
      */
     @DeleteMapping("/{sessionId}")
     public ApiResponse<Void> deleteSession(
             @PathVariable String sessionId,
-            @RequestParam(defaultValue = "archive") String mode) {
+            @ModelAttribute DeleteSessionRequestDTO request) {
         String userId = SecurityUtils.getCurrentUserId();
-        sessionService.deleteSession(sessionId, userId, mode);
+        sessionService.deleteSession(sessionId, userId, request.resolveMode());
         return ApiResponse.success(null);
     }
 }

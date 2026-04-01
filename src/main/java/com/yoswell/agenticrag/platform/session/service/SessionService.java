@@ -4,17 +4,18 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
-import com.yoswell.agenticrag.common.exception.BusinessException;
-import com.yoswell.agenticrag.common.exception.ErrorCode;
+import com.yoswell.agenticrag.platform.session.dto.request.SessionCreateRequestDTO;
+import com.yoswell.agenticrag.platform.session.dto.request.SessionUpdateRequestDTO;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.yoswell.agenticrag.common.exception.BusinessException;
+import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.platform.session.cache.SessionRedisManager;
-import com.yoswell.agenticrag.platform.session.dto.SessionCreateRequestDTO;
-import com.yoswell.agenticrag.platform.session.dto.SessionUpdateRequestDTO;
+import com.yoswell.agenticrag.platform.session.constants.SessionStatusConstants;
 import com.yoswell.agenticrag.platform.session.entity.ChatMessage;
 import com.yoswell.agenticrag.platform.session.entity.ChatSession;
 import com.yoswell.agenticrag.platform.session.event.SessionCreatedEvent;
@@ -44,6 +45,7 @@ public class SessionService {
         ChatSession session = new ChatSession();
         session.setSessionId(UUID.randomUUID().toString());
         session.setUserId(userId);
+        session.setStatus(SessionStatusConstants.ACTIVE);
         if (request != null && request.getModelId() != null) {
             session.setModelId(request.getModelId());
         }
@@ -58,11 +60,15 @@ public class SessionService {
         return session;
     }
 
-    public Page<ChatSession> getSessions(String userId, String status, int page, int size) {
+    public Page<ChatSession> getSessions(String userId, Integer status, int page, int size) {
+        int targetStatus = SessionStatusConstants.ACTIVE;
+        if (SessionStatusConstants.isValidStatus(status)) {
+            targetStatus = status;
+        }
         Page<ChatSession> p = new Page<>(page, size);
         return sessionMapper.selectPage(p, new QueryWrapper<ChatSession>()
                 .eq("user_id", userId)
-                .eq("status", status)
+                .eq("status", targetStatus)
                 .orderByDesc("updated_at", "pinned"));
     }
 
@@ -123,17 +129,16 @@ public class SessionService {
     }
 
     @Transactional
-    public void deleteSession(String sessionId, String userId, String mode) {
+    public void deleteSession(String sessionId, String userId, Integer mode) {
         ChatSession session = getSession(sessionId, userId);
 
-        if ("permanent".equalsIgnoreCase(mode)) {
-            sessionMapper.deleteById(session.getId());
-            messageMapper.delete(new QueryWrapper<ChatMessage>().eq("session_id", sessionId));
-        } else {
-            session.setStatus("ARCHIVED");
-            session.setArchivedAt(LocalDateTime.now());
-            sessionMapper.updateById(session);
+        int targetMode = SessionStatusConstants.ARCHIVED;
+        if (SessionStatusConstants.isValidDeleteMode(mode)) {
+            targetMode = mode;
         }
+        session.setStatus(targetMode);
+        session.setArchivedAt(LocalDateTime.now());
+        sessionMapper.updateById(session);
 
         redisManager.clearSessionCache(sessionId);
 
@@ -141,11 +146,11 @@ public class SessionService {
             List<ChatSession> activeSessions = sessionMapper.selectList(
                 new QueryWrapper<ChatSession>()
                     .eq("user_id", userId)
-                    .eq("status", "ACTIVE")
+                    .eq("status", SessionStatusConstants.ACTIVE)
                     .orderByDesc("updated_at")
             );
             if (!activeSessions.isEmpty()) {
-                redisManager.setActiveSession(userId, activeSessions.get(0).getSessionId());
+                redisManager.setActiveSession(userId, activeSessions.getFirst().getSessionId());
             } else {
                 redisManager.setActiveSession(userId, null);
             }

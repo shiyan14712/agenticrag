@@ -1,4 +1,4 @@
-package com.yoswell.agenticrag.platform.session.dto;
+package com.yoswell.agenticrag.platform.session.dto.request;
 
 import lombok.Data;
 
