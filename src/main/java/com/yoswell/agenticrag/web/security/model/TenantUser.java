@@ -4,7 +4,7 @@ import java.security.Principal;
 
 /**
  * 租户用户身份实体领域模型
- * 在 WebFlux 响应式安全上下文中代表当前被认证的用户主体 (Principal)。
+ * 在 Spring Security 的线程安全上下文中代表当前被认证的用户主体 (Principal)。
  * 包含了系统业务强依赖的核心字段：用户 ID、租户 ID 以及对应的角色信息。
  */
 public class TenantUser implements Principal {

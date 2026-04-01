@@ -31,7 +31,7 @@ public enum ErrorCode {
     // 【HTTP 401/403】 鉴权与安全拦截错误码 (Security & Authentication)
     // =========================================================================
     // 由未带凭证、Token失效或越权访问触发的底层安全异常。
-    // 将被 SecurityConfig 中的 ServerAuthenticationEntryPoint 等专用拦截器捕捉，
+    // 将被 SecurityConfig 中的 AuthenticationEntryPoint / AccessDeniedHandler 捕捉，
     // 外层强行返回真实的 HTTP 401 或 403 状态码（触发前端网关路由拦截），
     // 并且向外下发的 ApiResponse 中的 JSON code 会使用以下枚举。
 

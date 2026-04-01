@@ -93,9 +93,9 @@
 
 ## 尚未完成 / 待完善 (Not Yet Implemented)
 
-### 响应式链路
-- 当前控制器层虽已使用 `Mono` / `Flux`，但数据库、MinIO、Elasticsearch、LangChain4j 主链仍然是阻塞式依赖包裹，并非真正的全链路非阻塞实现。
-- 若后续要严格兑现 WebFlux 的响应式价值，需要评估 R2DBC、异步 ES Client、消息消费线程模型与 LangChain4j 流式回调的调度方式。
+### I/O 线程模型优化
+- 当前已切换到 WebMVC + Virtual Threads，数据库、MinIO、Elasticsearch、LangChain4j 仍属于阻塞 I/O 依赖，需要持续评估连接池与线程并发上限配置。
+- 对于长时间 SSE 会话，需要进一步完善心跳、超时回收与断连恢复策略，降低高并发下的资源占用风险。
 
 ### Python MinerU Worker
 - Java 侧的 `doc-parse-request` / `doc-vectorize-request` 契约已经明确，但 Python Worker 本身仍未在本仓库内实现。
@@ -114,3 +114,22 @@
 
 *Date:* 2026-03-28  
 *Framework:* Spring Boot 4.0.5 | LangChain4j | MyBatis-Plus | Kafka | MinIO | Elasticsearch
+
+## 本轮新增 (2026-04-01)
+
+- **WebMVC 与虚拟线程重构**：
+  - 在 `application.yaml` 启用 `spring.threads.virtual.enabled=true`。
+  - 彻底移除了 WebFlux 的 Reactor (Mono/Flux) 外壳包装，全面转向传统的同步方法和普通对象返回。
+  - 对于大模型的流式返回，改用 WebMVC 下的 `SseEmitter` 配合虚拟线程执行，避免了之前繁琐的 `flatMap` 嵌套。
+  - 将 `TenantAuthenticationFilter.java` 和 `SecurityConfig.java` 从 `WebFilter` 体系恢复到了经典的基于 `OncePerRequestFilter` 以及 `SecurityContextHolder.getContext()` 的线程级鉴权方式。
+
+## 本轮新增 (2026-04-01, 第二轮)
+
+- **架构一致性收口**：
+  - 清理了代码中的残留响应式术语描述（`TenantUser`、`UserServiceImpl` 注释）。
+  - 对齐了 `CLAUDE.md` 与 `zero_trust_tenant_isolation.md` 中的安全链路描述，统一为 Servlet 安全过滤链与无状态 JWT 模型。
+  - 重写 `webflux_security_migration.md`，明确记录 WebFlux -> WebMVC 的回迁原因与改造项。
+- **JWT 稳定性补强**：
+  - `SecurityConfig` 明确配置 `SessionCreationPolicy.STATELESS`。
+  - 修复登出场景 Bearer Token 解析，确保 Redis 中 Access Token 正确失效。
+

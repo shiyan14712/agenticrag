@@ -6,9 +6,9 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.yoswell.agenticrag.retrieval.document.dto.DocumentDTO;
@@ -18,9 +18,6 @@ import com.yoswell.agenticrag.retrieval.document.entity.DocumentMetadata;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentProcessingStatus;
 import com.yoswell.agenticrag.retrieval.document.mq.DocumentMessageProducer;
-
-import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 /**
  * 文档上传链路的业务编排服务。
@@ -51,42 +48,30 @@ public class DocumentService {
     }
 
     /**
-     * 以 WebFlux 方式接收上传文件，并把阻塞 I/O 转移到 {@code boundedElastic} 线程池。
+     * 同步接收上传文件并执行上传编排。
      *
      * @param file 上传文件
      * @param tenantId 当前租户 ID
      * @return 落库后的文档元数据
      */
-    public Mono<DocumentMetadata> handleReactiveUpload(FilePart file, String tenantId) {
-        return file.content()
-                .map(dataBuffer -> {
-                    byte[] bytes = new byte[dataBuffer.readableByteCount()];
-                    dataBuffer.read(bytes);
-                    org.springframework.core.io.buffer.DataBufferUtils.release(dataBuffer);
-                    return bytes;
-                })
-                .collectList()
-                .flatMap(byteArrayList -> Mono.fromCallable(() -> {
-                    int totalSize = byteArrayList.stream().mapToInt(b -> b.length).sum();
-                    byte[] allBytes = new byte[totalSize];
-                    int offset = 0;
-                    for (byte[] chunk : byteArrayList) {
-                        System.arraycopy(chunk, 0, allBytes, offset, chunk.length);
-                        offset += chunk.length;
-                    }
+    public DocumentMetadata handleUpload(MultipartFile file, String tenantId) {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("Uploaded file cannot be empty");
+        }
 
-                    InputStream inputStream = new java.io.ByteArrayInputStream(allBytes);
-                    String fileName = file.filename();
-                    String contentType = file.headers().getContentType() != null
-                            ? file.headers().getContentType().toString()
-                            : "application/octet-stream";
+        String fileName = file.getOriginalFilename();
+        if (fileName == null || fileName.isBlank()) {
+            fileName = "unknown";
+        }
+        String contentType = file.getContentType() != null ? file.getContentType() : "application/octet-stream";
 
-                    DocumentMetadata metadata = uploadAndDispatch(
-                            fileName, inputStream, totalSize, contentType, tenantId);
-
-                    log.info("Document upload pipeline completed via reactive endpoint: documentId={}", metadata.getDocumentId());
-                    return metadata;
-                }).subscribeOn(Schedulers.boundedElastic()));
+        try (InputStream inputStream = file.getInputStream()) {
+            DocumentMetadata metadata = uploadAndDispatch(fileName, inputStream, file.getSize(), contentType, tenantId);
+            log.info("Document upload pipeline completed: documentId={}", metadata.getDocumentId());
+            return metadata;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to process document upload", e);
+        }
     }
 
     /**

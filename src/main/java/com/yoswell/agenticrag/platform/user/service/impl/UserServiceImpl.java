@@ -163,8 +163,9 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public void logout(String accessToken, String refreshToken) {
-        if (StringUtils.hasText(accessToken)) {
-            stringRedisTemplate.delete(AuthTokenCacheConstants.ACCESS_TOKEN_PREFIX + accessToken.trim());
+        String extractedAccessToken = extractBearerToken(accessToken);
+        if (StringUtils.hasText(extractedAccessToken)) {
+            stringRedisTemplate.delete(AuthTokenCacheConstants.ACCESS_TOKEN_PREFIX + extractedAccessToken.trim());
         }
 
         if (StringUtils.hasText(refreshToken)) {
@@ -184,7 +185,7 @@ public class UserServiceImpl implements UserService {
 
     /**
      * 签发全新的会话凭证 (Access Token & Refresh Token)
-     * 同时将它们录入 Redis 缓存区，配合 WebFilter 实现状态校验
+     * 同时将它们录入 Redis 缓存区，配合认证过滤器实现状态校验
      *
      * @param user 当前成功认证的用户实体
      * @return 返回包含全量凭证信息的响应体

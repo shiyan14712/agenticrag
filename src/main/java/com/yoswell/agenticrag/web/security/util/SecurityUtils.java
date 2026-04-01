@@ -1,17 +1,15 @@
 package com.yoswell.agenticrag.web.security.util;
 
-import com.yoswell.agenticrag.common.exception.ErrorCode;
 import org.springframework.security.authentication.AuthenticationCredentialsNotFoundException;
-import org.springframework.security.core.context.ReactiveSecurityContextHolder;
-import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 
+import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.web.security.model.TenantUser;
 
-import reactor.core.publisher.Mono;
-
 /**
- * 响应式安全上下文工具类。
- * 用于在 WebFlux 线程/流的任何环节安全地抽取出用户的身份与租户信息。
+ * 安全上下文工具类。
+ * 用于在 MVC 线程模型下抽取当前认证用户的身份与租户信息。
  */
 public final class SecurityUtils {
 
@@ -20,40 +18,46 @@ public final class SecurityUtils {
     }
 
     /**
-     * 响应式地从当前 SecurityContext 中提取当前登录的用户 ID。
+     * 从当前 SecurityContext 中提取当前登录的用户 ID。
      *
-     * @return 包含用户 ID 的 Mono 流。如果上下文不存在或无认证信息，将抛出无效令牌业务异常。
+     * @return 当前用户 ID
      */
-    public static Mono<String> getCurrentUserId() {
-        return ReactiveSecurityContextHolder.getContext()
-                .map(SecurityContext::getAuthentication)
-                .map(authentication -> {
-                    Object principal = authentication.getPrincipal();
-                    if (principal instanceof TenantUser tenantUser) {
-                        return tenantUser.getUserId();
-                    }
-                    return authentication.getName();
-                })
-                // 够走到这里通常代表通过了鉴权 可能是处于某种内部漏洞/代码漏写导致走入这里
-                .switchIfEmpty(Mono.error(new AuthenticationCredentialsNotFoundException(ErrorCode.UNAUTHORIZED_ERROR.getMessage())));
+    public static String getCurrentUserId() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            throw new AuthenticationCredentialsNotFoundException(ErrorCode.UNAUTHORIZED_ERROR.getMessage());
+        }
+
+        Object principal = authentication.getPrincipal();
+        if (principal instanceof TenantUser tenantUser) {
+            return tenantUser.getUserId();
+        }
+
+        String name = authentication.getName();
+        if (name == null || name.isBlank() || "anonymousUser".equals(name)) {
+            throw new AuthenticationCredentialsNotFoundException(ErrorCode.UNAUTHORIZED_ERROR.getMessage());
+        }
+        return name;
     }
 
     /**
-     * 响应式地从当前 SecurityContext 中提取当前登录的用户所在的租户 ID。
+     * 从当前 SecurityContext 中提取当前登录用户所在的租户 ID。
      * 遵循 CLAUDE.md 中租户强制隔离（Tenant Isolation Scope）的安全原则。
      *
-     * @return 包含租户 ID 的 Mono 流。如果处于无状态或解析失败，默认 fallback 为 "default" 兜底租户。
+     * @return 租户 ID。如果上下文中缺失租户信息，返回 "default" 兜底租户。
      */
-    public static Mono<String> getCurrentTenantId() {
-        return ReactiveSecurityContextHolder.getContext()
-                .map(SecurityContext::getAuthentication)
-                .map(authentication -> {
-                    Object principal = authentication.getPrincipal();
-                    if (principal instanceof TenantUser tenantUser) {
-                        return tenantUser.getTenantId();
-                    }
-                    return "default";
-                })
-                .switchIfEmpty(Mono.just("default"));
+    public static String getCurrentTenantId() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null) {
+            return "default";
+        }
+
+        Object principal = authentication.getPrincipal();
+        if (principal instanceof TenantUser tenantUser) {
+            String tenantId = tenantUser.getTenantId();
+            return (tenantId == null || tenantId.isBlank()) ? "default" : tenantId;
+        }
+
+        return "default";
     }
 }

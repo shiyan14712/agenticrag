@@ -15,7 +15,7 @@
 ## 2. 系统四大隔离防线
 
 ### 2.1 网关与 JWT 身份认证层 (Authentication)
-* **实现载体**：`SecurityConfig.java` 与 WebFlux 安全过滤链。
+* **实现载体**：`SecurityConfig.java` 与 Spring Security Servlet 过滤链。
 * **机制**：
   * 所有前端请求必须携带合法的 JWT。内部强制禁用 CSRF 转为纯无状态通信。
   * 通过 `TenantAuthenticationFilter` 从 Token 中萃取出 `userId` 和 `role`，并生成 `TenantUser` 注入 `SecurityContextHolder` 中。
@@ -48,5 +48,5 @@
 ## 3. 开发者安全红线规约
 
 1. **获取鉴权上下文必须处理异常**：在任何需要区分数据归属的地方，获取 `SecurityContextHolder` 出现 null 或者类型不匹配时，**不要默默消化，直接抛出业务异常阻断流程**。
-2. **警惕异步线程导致的上下文丢失**：WebFlux 以及虚拟线程 (`Thread.startVirtualThread`) 会跨越线程边界，导致默认的 `ThreadLocal` SecurityContext 丢失。必须做好**上下文传递（Context Propagation）**，才能在子线程调用的 `@Tool` 中拿到合法的凭证。
+2. **警惕异步线程导致的上下文丢失**：虚拟线程与异步任务 (`Thread.startVirtualThread`) 会跨越线程边界，导致默认的 `ThreadLocal` `SecurityContext` 丢失。必须做好**上下文传递（Context Propagation）**，才能在子线程调用的 `@Tool` 中拿到合法的凭证。
 3. **隔离字段不容妥协**：任何持久化层（Mapper/ElasticSearch Client）的 `SELECT` 和 `UPDATE` 操作，在含有 `user_id` / `tenant_id` 字段的业务表中，务必顺手补上鉴权过滤校验。

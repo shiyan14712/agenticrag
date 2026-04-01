@@ -3,7 +3,7 @@
 ---
 
 ## 0. 项目概述 (Project Overview)
-本项目是一个基于 Java21 生态（Spring Boot 4.0.5 + LangChain4j + ElasticSearch + Kafka + Redis + MySQL + WebFlux）的企业级 Agentic RAG（检索增强生成智能体）系统。
+本项目是一个基于 Java21 生态（Spring Boot 4.0.5 + LangChain4j + ElasticSearch + Kafka + Redis + MySQL + WebMVC + Virtual Threads）的企业级 Agentic RAG（检索增强生成智能体）系统。
 本系统的核心理念是**渐进式能力叠加**。它不仅提供传统的对话问答，更具备单一 Agent 编排（ReAct）、分级上下文压缩、跨会话长期记忆、以及基于 MinerU 的高精度异构文档解析管道。
 
 **核心存储规范，分工明确各司其职：**
@@ -18,11 +18,11 @@
 
 **目标**：Agent 是系统的“大脑”，负责意图路由、步骤编排并与前端进行富媒体交互。本模块严格遵循“非确定性内容输出自然语言，确定性流程输出 JSON Schema”的原则。
 
-*   **技术栈**：Spring Boot WebFlux (SSE), LangChain4j, JSON Schema (Jackson)
+*   **技术栈**：Spring Boot WebMVC (Virtual Threads, SseEmitter), LangChain4j, JSON Schema (Jackson)
 *   **单一 Agent 编排机制**：
     * **ReAct 模式 (常规问答)**：基于 LangChain4j `AiServices`。大模型根据当前上下文，按照 `Thought -> Action (调用 Tool) -> Observation` 循环自主执行。
 *   **前端接口预留与 SSE 契约 (Rich UI Rendering)**：
-    系统提供统一的 WebFlux SSE 接口 `/api/v1/agent/chat/stream`。后端会向前端推送不同类型的 Event，前端据此渲染不同的 UI 组件：
+    系统提供统一的 WebMVC (Servlet) SSE 接口 `/api/v1/agent/chat/stream`，配合虚拟线程使用 `SseEmitter` 异步推流。后端会向前端推送不同类型的 Event，前端据此渲染不同的 UI 组件：
     *   `event: tool_call` -> 推送工具执行状态（如“正在检索知识库：2025财报”），前端渲染为加载动画。
     *   `event: message` -> 推送 Markdown 文本流，前端渲染为打字机对话。
     *   `event: citations` -> 推送 JSON 格式的溯源数组（包含 `doc_id`, `chunk_id`），前端渲染为**富文本引用卡片**。
@@ -72,7 +72,7 @@
 2. **消息持久化的事务边界**：用户消息写入 MySQL 和 Redis **必须在 Agent 执行前完成**（防止浏览器关闭后丢消息）。助手回复则在 SSE 流结束后持久化。两者不在同一个事务中。如果因为**网络波动、用户意外关闭连接**导致某个session找不回来，这是系统级别的严重问题。
 3. **会话切换不可阻塞**：`SessionContextSwitcher` 中的旧会话持久化和 L2/L3 压缩必须异步执行（`@Async` 或线程池），切换操作本身应在 200ms 内返回响应。
 4. **Redis 只是加速层**：所有 Redis 操作必须有 MySQL 降级路径。`SessionRedisManager` 的每个读方法都必须接受一个 `Supplier<T> fallback` 参数。
-5. **异步任务防重复最佳实践 (如标题生成)**：会话标题等只需触发一次的增强特性，不要通过每次前端发来流式消息时轮询 DB (`getTitle() == null`) 判断。必须统一利用 Redis 的 `SETNX` (搭配合理的生命周期边界，如 24h) 作为状态位锁互斥，并在虚拟线程中异步操作。这能极大减轻 WebFlux 实时流下发的阻塞可能性与 DB 压力。
+5. **异步任务防重复最佳实践 (如标题生成)**：会话标题等只需触发一次的增强特性，不要通过每次前端发来流式消息时轮询 DB (`getTitle() == null`) 判断。必须统一利用 Redis 的 `SETNX` (搭配合理的生命周期边界，如 24h) 作为状态位锁互斥，并在虚拟线程中异步操作。这能极大减轻长连接下发的阻塞可能性与 DB 压力。
 
 
 
@@ -130,7 +130,7 @@
     *   **检索拦截机制**：在 RAG `@Tool` 执行底层 ES 查询时，通过 Spring Security Context 提取当前登录用户的 ID 与 Role。将这些鉴权数据作为不可变的 `Filter` (Terms Query) 拼接在 ES 查询 DSL 中。即使大模型被恶意 Prompt 诱导去查询高管薪资文档，底层的 ES 也会在物理层面上返回 Empty Result。
     *   **统一异常与安全响应隔离规范 (Exception Isolation)**：
         1. **业务异常兜底**：`@RestControllerAdvice` (如 `GlobalExceptionHandler`) 仅负责处理路由到 Controller 层后的业务异常 (如 `BusinessException` 等)，不处理任何鉴权相关逻辑。
-        2. **安全异常拦截**：所有因为 WebFilter (如 JWT 验证) 或接口权限不足导致的 401/403，必须通过在 `SecurityConfig` 中配置 `ServerAuthenticationEntryPoint` 及 `ServerAccessDeniedHandler` 来拦截。它应负责输出符合全局 JSON Schema 契约（如 `ApiResponse<Void>`）的数据流并附带正确的 HTTP 状态码，保障前端联调时对异常响应反序列化结构的一致性期望。
+        2. **安全异常拦截**：所有因为过滤器链（如 JWT 验证）或接口权限不足导致的 401/403，必须通过在 `SecurityConfig` 中配置 `AuthenticationEntryPoint` 及 `AccessDeniedHandler` 来拦截。它应负责输出符合全局 JSON Schema 契约（如 `ApiResponse<Void>`）的数据并附带正确的 HTTP 状态码，保障前端联调时对异常响应反序列化结构的一致性期望。
 
 ## 7. API 设计与响应规范 (API Design & Response Specification)
 
@@ -139,7 +139,7 @@
 *   **核心开发规范**：
     1.  **坚持 RESTful 动词语义**：API 路由必须严格使用 `@GetMapping`、`@PostMapping`、`@PutMapping`、`@DeleteMapping` 描述对资源的操作，禁止因为“图省事”彻底退化成全 `POST` 的 RPC 风格（如反模式 `POST /delete_session`）。
     2.  **强制 HTTP 200 OK 承载业务响应**：所有的正常业务流转（包括**成功**以及**各种受控的 BusinessException 业务异常**），必须统一以 HTTP 200 状态码返回 `ApiResponse<T>`，依据内部的自定义 `code` 区分业务结果。
-    3.  **严禁滥用 `@ResponseStatus`**：绝不允许在业务 Controller 上使用如 `@ResponseStatus(HttpStatus.NO_CONTENT)` (HTTP 204) 等状态码。这能防止底层 WebFlux / Netty 高度遵循 HTTP 协议时无情丢弃含错的 `ApiResponse` Body，导致前端接收不到详细的错误溯源。
+    3.  **严禁滥用 `@ResponseStatus`**：绝不允许在业务 Controller 上使用如 `@ResponseStatus(HttpStatus.NO_CONTENT)` (HTTP 204) 等状态码。这能防止底层 Servlet 容器遵循 HTTP 协议时丢弃 `ApiResponse` Body，导致前端接收不到详细的错误溯源。
     4.  **保留底层硬性拦截状态**：仅在网关层、认证层面的致命拦截（例如：未携带 Token 触发的 401 Unauthorized、越权触发的 403 Forbidden，或系统宕机 500）时，允许返回真实的 HTTP 原生错误码。
 
 ---

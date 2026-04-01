@@ -232,3 +232,35 @@ dev.ai4j.openai4j.OpenAiHttpException: {"error":{"message":"System message must 
    - 再次验证了：**框架的便利性背后隐藏着严格的契约要求**，开发者必须深入理解这些隐式约定
 
 ---
+
+## 🐞 [2026-04-01] `/api/v1/agent/chat/stream` 流式响应完成后触发 AccessDenied
+
+### 现象描述 (Symptom)
+调用流式对话接口 `/api/v1/agent/chat/stream` 时，前端可以先收到部分流式内容，后端也能看到会话落库与流结束日志；但请求尾部会抛出权限异常：
+```text
+org.springframework.security.authorization.AuthorizationDeniedException: Access Denied
+```
+外在表现为接口最终以鉴权失败收尾，影响流式会话稳定性。
+
+### 根因分析 (Root Cause Analysis)
+该问题由 Servlet 异步分派阶段未重新执行 JWT 认证过滤导致：
+
+1. **流式接口采用 `SseEmitter`**：在 WebMVC 中，`SseEmitter` 会触发 Servlet Async Dispatch（异步再次分派）。
+2. **过滤器默认行为导致漏鉴权**：`TenantAuthenticationFilter` 继承 `OncePerRequestFilter`，若不显式覆盖，异步/错误分派阶段默认可能跳过当前过滤器。
+3. **安全上下文在后续分派缺失**：异步分派阶段未重新完成 JWT 解析与 `SecurityContext` 建立，`AuthorizationFilter` 在后续鉴权判断时拿不到有效认证信息，最终抛出 `AccessDenied`。
+
+### 解决方案 (Resolution)
+**修复认证过滤器分派策略**：在 `TenantAuthenticationFilter` 中显式覆盖以下方法，确保异步与错误分派仍执行 JWT 认证链路：
+   ```java
+   @Override
+   protected boolean shouldNotFilterAsyncDispatch() {
+       return false;
+   }
+
+   @Override
+   protected boolean shouldNotFilterErrorDispatch() {
+       return false;
+   }
+   ```
+
+---
