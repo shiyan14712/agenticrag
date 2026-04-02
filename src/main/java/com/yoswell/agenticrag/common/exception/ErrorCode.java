@@ -26,6 +26,9 @@ public enum ErrorCode {
     SESSION_NOT_FOUND("S30001", "会话不存在或无权访问"),
     INVALID_SESSION_ID("S30002", "无效的会话ID"),
     MISSING_SESSION_ID("S30003", "缺少会话ID请求头参数"),
+    SESSION_ALREADY_IN_TARGET_STATUS("S30004", "会话已处于目标状态，请勿重复操作"),
+    ARCHIVED_OR_DELETED_SESSION_CANNOT_BE_ACTIVATED("S30005", "已归档或已删除的会话不能被激活"),
+    INVALID_SESSION_STATUS_TRANSITION("S30006", "会话状态向上转型（如从 ARCHIVED 转换到 ACTIVE）是不允许的"),
 
     // =========================================================================
     // 【HTTP 401/403】 鉴权与安全拦截错误码 (Security & Authentication)

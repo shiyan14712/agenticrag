@@ -3,6 +3,8 @@ package com.yoswell.agenticrag.platform.session.controller;
 import java.util.Map;
 
 import com.yoswell.agenticrag.platform.session.dto.request.*;
+import com.yoswell.agenticrag.platform.session.dto.response.SessionDetailsRespDTO;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
@@ -31,21 +33,11 @@ import com.yoswell.agenticrag.web.security.util.SecurityUtils;
  */
 @RestController
 @RequestMapping("/api/v1/sessions")
+@RequiredArgsConstructor
 public class SessionController {
 
     private final SessionService sessionService;
     private final SessionContextSwitcher sessionSwitcher;
-
-    /**
-     * 构造函数注入会话相关服务
-     *
-     * @param sessionService 会话管理服务
-     * @param sessionSwitcher 会话上下文切换服务
-     */
-    public SessionController(SessionService sessionService, SessionContextSwitcher sessionSwitcher) {
-        this.sessionService = sessionService;
-        this.sessionSwitcher = sessionSwitcher;
-    }
 
     /**
      * 创建会话
@@ -62,17 +54,17 @@ public class SessionController {
     /**
      * 分页查询当前用户会话列表
      *
-     * @param request 查询参数（page/size/status）
+     * @param reqDTO 查询参数（page/size/status）
      * @return 包含会话分页结果的统一响应
      */
     @GetMapping
-    public ApiResponse<Page<ChatSession>> getSessions(@ModelAttribute SessionListQueryRequestDTO request) {
+    public ApiResponse<Page<ChatSession>> getSessions(@ModelAttribute SessionListQueryRequestDTO reqDTO) {
         String userId = SecurityUtils.getCurrentUserId();
         return ApiResponse.success(sessionService.getSessions(
                 userId,
-                request.resolveStatus(),
-                request.resolvePage(),
-                request.resolveSize()));
+                reqDTO.getStatus(),
+                reqDTO.getPage(),
+                reqDTO.getSize()));
     }
 
     /**
@@ -83,15 +75,15 @@ public class SessionController {
      * @return 包含会话详情与消息分页信息的统一响应
      */
     @GetMapping("/{sessionId}/messages")
-    public ApiResponse<Map<String, Object>> getSessionMessages(
+    public ApiResponse<SessionDetailsRespDTO> getSessionMessages(
             @PathVariable String sessionId,
             @ModelAttribute SessionMessageQueryRequestDTO request) {
         String userId = SecurityUtils.getCurrentUserId();
         return ApiResponse.success(sessionService.getSessionDetails(
                 sessionId,
                 userId,
-                request.resolvePage(),
-                request.resolveSize()));
+                request.getPage(),
+                request.getSize()));
     }
 
     /**
@@ -131,10 +123,9 @@ public class SessionController {
     @DeleteMapping("/{sessionId}")
     public ApiResponse<Void> deleteSession(
             @PathVariable String sessionId,
-            @ModelAttribute DeleteSessionRequestDTO request) {
-        // TODO: 删除逻辑并没有完善 且没有完善的拦截和报错
+            @ModelAttribute DeleteSessionRequestDTO reqDTO) {
         String userId = SecurityUtils.getCurrentUserId();
-        sessionService.deleteSession(sessionId, userId, request.resolveMode());
+        sessionService.deleteSession(sessionId, userId, reqDTO.getStatus());
         return ApiResponse.success(null);
     }
 }

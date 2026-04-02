@@ -16,24 +16,10 @@ public class SessionListQueryRequestDTO {
     /** 每页大小。 */
     private Integer size = 20;
 
-    /** 会话状态（兼容 0/1/2 与 ACTIVE/ARCHIVED/DELETED）。 */
-    private String status = SessionStatusConstants.ACTIVE_VALUE;
-
-    public int resolvePage() {
-        if (page == null || page < 0) {
-            return 0;
-        }
-        return page;
-    }
-
-    public int resolveSize() {
-        if (size == null || size <= 0) {
-            return 20;
-        }
-        return size;
-    }
-
-    public Integer resolveStatus() {
-        return SessionStatusConstants.parseStatus(status, SessionStatusConstants.ACTIVE);
-    }
+    /**
+     * 会话状态（支持多种格式）
+     * <p>数字格式：0/1/2</p>
+     * <p>字符串格式：ACTIVE/ARCHIVED/DELETED（不区分大小写）</p>
+     */
+    private SessionStatusConstants status;
 }

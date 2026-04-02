@@ -13,18 +13,4 @@ public class SessionMessageQueryRequestDTO {
 
     /** 每页大小。 */
     private Integer size = 50;
-
-    public int resolvePage() {
-        if (page == null || page < 0) {
-            return 0;
-        }
-        return page;
-    }
-
-    public int resolveSize() {
-        if (size == null || size <= 0) {
-            return 50;
-        }
-        return size;
-    }
 }
