@@ -1,10 +1,5 @@
 package com.yoswell.agenticrag.platform.session.controller;
 
-import java.util.Map;
-
-import com.yoswell.agenticrag.platform.session.dto.request.*;
-import com.yoswell.agenticrag.platform.session.dto.response.SessionDetailsRespDTO;
-import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
@@ -18,10 +13,18 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.yoswell.agenticrag.common.result.ApiResponse;
+import com.yoswell.agenticrag.platform.session.dto.request.DeleteSessionRequestDTO;
+import com.yoswell.agenticrag.platform.session.dto.request.SessionCreateRequestDTO;
+import com.yoswell.agenticrag.platform.session.dto.request.SessionListQueryRequestDTO;
+import com.yoswell.agenticrag.platform.session.dto.request.SessionMessageQueryRequestDTO;
+import com.yoswell.agenticrag.platform.session.dto.request.SessionUpdateRequestDTO;
+import com.yoswell.agenticrag.platform.session.dto.response.SessionDetailsRespDTO;
 import com.yoswell.agenticrag.platform.session.entity.ChatSession;
 import com.yoswell.agenticrag.platform.session.service.SessionContextSwitcher;  
 import com.yoswell.agenticrag.platform.session.service.SessionService;
 import com.yoswell.agenticrag.web.security.util.SecurityUtils;
+
+import lombok.RequiredArgsConstructor;
 
 /**
  * 会话生命周期控制器
@@ -95,7 +98,7 @@ public class SessionController {
     @PutMapping("/{sessionId}/activate")
     public ApiResponse<ChatSession> activateSession(@PathVariable String sessionId) {
         String userId = SecurityUtils.getCurrentUserId();
-        return ApiResponse.success(sessionSwitcher.activateSession(sessionId, userId));
+        return ApiResponse.success(sessionSwitcher.activateSessionInRedis(sessionId, userId));
     }
 
     /**

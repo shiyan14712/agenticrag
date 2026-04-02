@@ -36,6 +36,12 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
 
+/**
+ * 用户认证服务实现。
+ *
+ * <p>提供注册、登录、令牌刷新、注销和令牌有效性校验能力，
+ * 通过 Redis 管理 Access/Refresh Token 状态。</p>
+ */
 @Service
 public class UserServiceImpl implements UserService {
 
@@ -63,6 +69,12 @@ public class UserServiceImpl implements UserService {
         this.stringRedisTemplate = stringRedisTemplate;
     }
 
+    /**
+     * 注册用户。
+     *
+     * @param reqDTO 注册参数
+     * @return 注册结果
+     */
     @Override
     public UserRegisterRespDTO register(UserRegisterReqDTO reqDTO) {
         validateRegisterRequest(reqDTO);
@@ -93,6 +105,12 @@ public class UserServiceImpl implements UserService {
                 newUser.getRoles());
     }
 
+    /**
+     * 用户登录并签发令牌。
+     *
+     * @param reqDTO 登录参数
+     * @return 登录结果（令牌对 + 用户信息）
+     */
     @Override
     public UserLoginRespDTO login(UserLoginReqDTO reqDTO) {
         // 1. 基础参数校验
@@ -118,6 +136,12 @@ public class UserServiceImpl implements UserService {
         return issueTokenPair(user);
     }
 
+    /**
+     * 刷新令牌并执行 Refresh Token 轮换。
+     *
+     * @param refreshToken Refresh Token
+     * @return 新的令牌对
+     */
     @Override
     public UserLoginRespDTO refreshToken(String refreshToken) {
         if (!StringUtils.hasText(refreshToken)) {
@@ -161,6 +185,12 @@ public class UserServiceImpl implements UserService {
         return refreshed;
     }
 
+    /**
+     * 注销用户会话。
+     *
+     * @param accessToken Access Token
+     * @param refreshToken Refresh Token
+     */
     @Override
     public void logout(String accessToken, String refreshToken) {
         String extractedAccessToken = extractBearerToken(accessToken);
@@ -174,6 +204,12 @@ public class UserServiceImpl implements UserService {
         }
     }
 
+    /**
+     * 校验 Access Token 是否仍然有效。
+     *
+     * @param token Access Token
+     * @return true 表示有效
+     */
     @Override
     public boolean validateToken(String token) {
         if (!StringUtils.hasText(token)) {
@@ -184,11 +220,10 @@ public class UserServiceImpl implements UserService {
     }
 
     /**
-     * 签发全新的会话凭证 (Access Token & Refresh Token)
-     * 同时将它们录入 Redis 缓存区，配合认证过滤器实现状态校验
+     * 签发新的 Access Token 与 Refresh Token。
      *
-     * @param user 当前成功认证的用户实体
-     * @return 返回包含全量凭证信息的响应体
+     * @param user 已认证用户
+     * @return 登录响应
      */
     private UserLoginRespDTO issueTokenPair(SysUser user) {
         long nowMillis = System.currentTimeMillis();
@@ -235,10 +270,7 @@ public class UserServiceImpl implements UserService {
     }
 
     /**
-     * 将 Access Token 直接存入 Redis，作为短效令牌会话状态存储。
-     * Key: 前缀 + Token本身（或Hash后的Token，依赖 AuthTokenCacheConstants 定义，目前为明文 Token 结合前缀）
-     * Value: 对应的用户标识 userId
-     * 有效期设置: 与生成 Token 时设定的载荷 TTL 严丝合缝匹配，实现缓存与 Token 的自然淘汰
+     * 缓存 Access Token。
      */
     private void cacheAccessToken(String accessToken, String userId) {
         stringRedisTemplate.opsForValue().set(
@@ -249,10 +281,7 @@ public class UserServiceImpl implements UserService {
     }
 
     /**
-     * 将 Refresh Token 存入 Redis，作为长效令牌会话状态存储。
-     * 核心安全策略：由于 Refresh Token 生存期长且权力过大（能无限续杯 Access Token），绝对不能像缓存 Access Token 那样让它在 Redis 等高速缓存设备里“裸奔”。
-     * 因此在此采用 SHA-256 对原字符执行摘要加密处理得到哈希值，以此 Hash 值作为 Redis Key 存下。
-     * 用户日后做刷新请求（携带未加密令牌明文）时，后端也先对其跑一遍 Hash 函数，再利用此 Hash 值去 Redis 撞库比对。防止拖库造成永久凭证暴漏。
+     * 缓存 Refresh Token（以哈希值作为 key）。
      */
     private void cacheRefreshToken(String refreshToken, String userId) {
         String refreshTokenHash = hashToken(refreshToken);
@@ -284,7 +313,7 @@ public class UserServiceImpl implements UserService {
             byte[] hashBytes = digest.digest(token.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(hashBytes);
         } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 algorithm is not available", e);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "令牌哈希计算失败，请稍后重试");
         }
     }
 

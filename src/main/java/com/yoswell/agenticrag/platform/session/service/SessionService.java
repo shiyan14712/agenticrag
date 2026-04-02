@@ -26,6 +26,11 @@ import com.yoswell.agenticrag.platform.session.mapper.ChatSessionMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
+/**
+ * 会话生命周期管理服务
+ *
+ * <p>负责会话创建、查询、更新与状态流转，并维护 Redis 会话元数据缓存一致性</p>
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -36,6 +41,15 @@ public class SessionService {
     private final SessionRedisManager redisManager;
     private final ApplicationEventPublisher eventPublisher;
 
+    /**
+     * 创建新会话
+     *
+     * <p>创建后会写入会话元数据缓存，并将该会话设置为当前用户的活跃会话</p>
+     *
+     * @param userId 操作用户 ID
+     * @param request 创建参数
+     * @return 新建后的会话实体
+     */
     @Transactional
     public ChatSession createSession(String userId, SessionCreateRequestDTO request) {
         ChatSession session = new ChatSession();
@@ -56,6 +70,17 @@ public class SessionService {
         return session;
     }
 
+    /**
+     * 分页查询当前用户会话
+     *
+     * <p>当未指定状态时默认查询 ACTIVE 会话，按更新时间和置顶标记倒序排序</p>
+     *
+     * @param userId 用户 ID
+     * @param status 状态筛选
+     * @param page 页码
+     * @param size 每页大小
+     * @return 会话分页结果
+     */
     public Page<ChatSession> getSessions(String userId, SessionStatusConstants status, int page, int size) {
         int targetStatusCode = SessionStatusConstants.ACTIVE.getCode();
         if (status != null) {
@@ -68,6 +93,16 @@ public class SessionService {
                 .orderByDesc(ChatSession::getUpdatedAt, ChatSession::getPinned));
     }
 
+    /**
+     * 查询并校验会话归属
+     *
+     * <p>优先读取缓存，缓存未命中时回源数据库；若会话不存在或不属于当前用户则抛出异常</p>
+     *
+     * @param sessionId 会话 ID
+     * @param userId 当前用户 ID
+     * @return 会话实体
+     * @throws BusinessException 会话不存在或无权访问
+     */
     public ChatSession getSessionBySessionId(String sessionId, String userId) {
         ChatSession session = redisManager.getSessionMetaOrFallback(sessionId, () ->
             sessionMapper.selectOne(new LambdaQueryWrapper<ChatSession>().eq(ChatSession::getSessionId, sessionId))
@@ -79,6 +114,17 @@ public class SessionService {
         return session;
     }
 
+    /**
+     * 分页查询会话消息
+     *
+     * <p>调用前会先做会话归属校验</p>
+     *
+     * @param sessionId 会话 ID
+     * @param userId 当前用户 ID
+     * @param page 页码
+     * @param size 每页大小
+     * @return 消息分页结果
+     */
     public Page<ChatMessage> getSessionMessages(String sessionId, String userId, int page, int size) {
         getSessionBySessionId(sessionId, userId);
         Page<ChatMessage> p = new Page<>(page, size);
@@ -86,6 +132,15 @@ public class SessionService {
                 .eq(ChatMessage::getSessionId, sessionId)
                 .orderByAsc(ChatMessage::getCreatedAt));
     }
+
+    /**
+     * 校验会话访问权限
+     *
+     * <p>当 sessionId 为空或会话不属于当前用户时抛出业务异常</p>
+     *
+     * @param sessionId 会话 ID
+     * @param userId 当前用户 ID
+     */
     public void verifySessionAccess(String sessionId, String userId) {
         if (sessionId == null || sessionId.trim().isEmpty()) {
             throw new BusinessException(ErrorCode.MISSING_SESSION_ID.getCode(), ErrorCode.MISSING_SESSION_ID.getMessage());
@@ -94,11 +149,31 @@ public class SessionService {
         getSessionBySessionId(sessionId, userId);
     }
 
+    /**
+     * 查询会话详情（会话信息 + 消息分页）
+     *
+     * @param sessionId 会话 ID
+     * @param userId 当前用户 ID
+     * @param page 消息页码
+     * @param size 每页大小
+     * @return 详情聚合响应
+     */
     public SessionDetailsRespDTO getSessionDetails(String sessionId, String userId, int page, int size) {
         ChatSession session = getSessionBySessionId(sessionId, userId);
         Page<ChatMessage> messages = getSessionMessages(sessionId, userId, page, size);
         return new SessionDetailsRespDTO(session, messages);
     }
+
+    /**
+     * 更新会话元信息
+     *
+     * <p>当前支持标题与置顶标记更新；仅当字段发生变化时才写库并刷新缓存</p>
+     *
+     * @param sessionId 会话 ID
+     * @param userId 当前用户 ID
+     * @param request 更新参数
+     * @return 更新后的会话实体
+     */
     @Transactional
     public ChatSession updateSession(String sessionId, String userId, SessionUpdateRequestDTO request) {
         ChatSession session = getSessionBySessionId(sessionId, userId);
@@ -121,6 +196,15 @@ public class SessionService {
         return session;
     }
 
+    /**
+     * 删除或归档会话（状态流转）
+     *
+     * <p>仅允许状态向后流转状态变更后会清理会话缓存，并在必要时重置用户活跃会话指针</p>
+     *
+     * @param sessionId 会话 ID
+     * @param userId 当前用户 ID
+     * @param targetStatus 目标状态
+     */
     @Transactional
     public void deleteSession(String sessionId, String userId, SessionStatusConstants targetStatus) {
         ChatSession session = getSessionBySessionId(sessionId, userId);
