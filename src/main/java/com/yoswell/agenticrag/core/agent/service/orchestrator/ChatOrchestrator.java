@@ -9,7 +9,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.yoswell.agenticrag.common.constants.ChatCacheConstants;
 import com.yoswell.agenticrag.core.agent.ai.EnterpriseAgent;
 import com.yoswell.agenticrag.core.agent.context.RagRetrievalContextHolder;
@@ -64,7 +64,11 @@ public class ChatOrchestrator {
                 Boolean isFirstMessage = stringRedisTemplate.opsForValue().setIfAbsent(titleGenKey, "1", Duration.ofHours(24));
                 
                 if (Boolean.TRUE.equals(isFirstMessage)) {
-                    ChatSession session = chatSessionMapper.selectOne(new QueryWrapper<ChatSession>().eq("session_id", sessionId).select("session_id", "title"));
+                    // ChatSession session = chatSessionMapper.selectOne(new QueryWrapper<ChatSession>().eq("session_id", sessionId).select("session_id", "title"));
+                    ChatSession session = chatSessionMapper.selectOne(new LambdaQueryWrapper<ChatSession>()
+                        .eq(ChatSession::getSessionId, sessionId)
+                        .select(ChatSession::getSessionId, ChatSession::getTitle)
+                    );
                     if (session != null && session.getTitle() == null) {
                         Thread.startVirtualThread(() -> {
                             log.info("[Chat Orchestrator] Triggering async title generation for session: {}", sessionId);
