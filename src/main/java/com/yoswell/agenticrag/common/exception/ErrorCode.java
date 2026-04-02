@@ -30,6 +30,10 @@ public enum ErrorCode {
     ARCHIVED_OR_DELETED_SESSION_CANNOT_BE_ACTIVATED("S30005", "已归档或已删除的会话不能被激活"),
     INVALID_SESSION_STATUS_TRANSITION("S30006", "会话状态向上转型（如从 ARCHIVED 转换到 ACTIVE）是不允许的"),
 
+    // 上传与 multipart 处理错误
+    UPLOAD_SIZE_EXCEEDED("D40001", "上传文件超过大小限制"),
+    BAD_MULTIPART_REQUEST("D40002", "文件上传请求格式错误或文件内容不可解析"),
+
     // =========================================================================
     // 【HTTP 401/403】 鉴权与安全拦截错误码 (Security & Authentication)
     // =========================================================================

@@ -14,6 +14,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.yoswell.agenticrag.common.result.ApiResponse;
@@ -89,6 +91,26 @@ public class GlobalExceptionHandler {
                 ErrorCode.ACCESS_DENIED_ERROR.getMessage()
         );
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(body);
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMaxUploadSizeExceededException(MaxUploadSizeExceededException e) {
+        log.warn("[Global Exception] 上传文件超过大小限制: {}", e.getMessage());
+        ApiResponse<Void> body = ApiResponse.error(
+                ErrorCode.UPLOAD_SIZE_EXCEEDED.getCode(),
+                ErrorCode.UPLOAD_SIZE_EXCEEDED.getMessage()
+        );
+        return ResponseEntity.status(413).body(body);
+    }
+
+    @ExceptionHandler(MultipartException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMultipartException(MultipartException e) {
+        log.warn("[Global Exception] multipart 请求解析异常: {}", e.getMessage());
+        ApiResponse<Void> body = ApiResponse.error(
+                ErrorCode.BAD_MULTIPART_REQUEST.getCode(),
+                ErrorCode.BAD_MULTIPART_REQUEST.getMessage()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
     }
 
     @ExceptionHandler(Exception.class)
