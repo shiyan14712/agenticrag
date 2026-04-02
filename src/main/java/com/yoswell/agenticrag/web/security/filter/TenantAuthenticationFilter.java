@@ -71,6 +71,7 @@ public class TenantAuthenticationFilter extends OncePerRequestFilter {
 
             Boolean hasKey = stringRedisTemplate.hasKey(AuthTokenCacheConstants.ACCESS_TOKEN_PREFIX + token);
             if (Boolean.TRUE.equals(hasKey)) {
+                log.info("[TenantAuthenticationFilter] JWT Token 命中 Redis 缓存，继续解析认证信息");
                 try {
                     SecretKey key = Keys.hmacShaKeyFor(Decoders.BASE64.decode(jwtSecret));
                     
@@ -84,6 +85,7 @@ public class TenantAuthenticationFilter extends OncePerRequestFilter {
                     if (!AuthTokenCacheConstants.TOKEN_TYPE_ACCESS.equals(tokenType)) {
                         log.warn("[TenantAuthenticationFilter] Reject non-access token on Authorization header.");
                     } else {
+                        log.info("[TenantAuthenticationFilter] JWT Token 解析成功，提取用户信息构建 Authentication");
                         String userId = claims.getSubject();
                         String tenantId = claims.get("tenantId", String.class);
                         String roleClaim = claims.get("role", String.class);
@@ -97,6 +99,7 @@ public class TenantAuthenticationFilter extends OncePerRequestFilter {
                                     principal, null, authorities);
 
                             SecurityContextHolder.getContext().setAuthentication(authentication);
+                            log.info("[TenantAuthenticationFilter] Authentication 设置成功: userId={}, tenantId={}, role={}", userId, tenantId, role);
                         }
                     }
                 } catch (Exception e) {
