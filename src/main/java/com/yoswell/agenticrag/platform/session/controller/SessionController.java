@@ -132,6 +132,7 @@ public class SessionController {
     public ApiResponse<Void> deleteSession(
             @PathVariable String sessionId,
             @ModelAttribute DeleteSessionRequestDTO request) {
+        // TODO: 删除逻辑并没有完善 且没有完善的拦截和报错
         String userId = SecurityUtils.getCurrentUserId();
         sessionService.deleteSession(sessionId, userId, request.resolveMode());
         return ApiResponse.success(null);
