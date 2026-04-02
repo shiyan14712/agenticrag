@@ -18,7 +18,7 @@ import lombok.Data;
  */
 @Data
 @TableName("document_metadata")
-public class DocumentMetadata {
+public class DocumentDO {
 
     /**
      * 数据库自增主键，仅供内部关联使用。
