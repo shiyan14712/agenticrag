@@ -109,6 +109,14 @@
 - MinerU 链路接入
 - citations 目前回传的是本轮检索结果的聚合视图；如果未来出现多工具、多轮检索交错，需要考虑更稳定的会话级检索上下文传播机制。
 - 当前记忆摘要为“生成式摘要”实现，后续可继续补 token 预算、摘要版本管理和更加细粒度的 L2/L3 触发条件。
+- 会话消息缓存闭环（`session:messages:*`）尚未落地：当前仅定义 key 并在清理时删除，读取路径仍直连数据库。
+
+### 下一步执行（会话消息缓存）
+- 在 `SessionRedisManager` 增加消息缓存专用接口：`getSessionMessagesOrFallback(...)`、`cacheSessionMessages(...)`、`invalidateSessionMessagesCache(...)`。
+- 在 `SessionService#getSessionMessages` 实现 Redis-first 读取策略：先查缓存，未命中回源 DB，命中后回填并设置 TTL。
+- 在 `ChatMessageService` 的消息写入路径增加缓存失效：用户消息/助手消息入库后按 `sessionId` 失效对应消息缓存。
+- 规范 key 设计：将 `sessionId + page + size` 纳入 key，避免分页串读。
+- 增加测试：覆盖缓存命中、未命中回源、写后失效、分页 key 隔离四类场景。
 
 ---
 

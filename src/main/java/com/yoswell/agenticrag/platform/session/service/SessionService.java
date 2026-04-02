@@ -127,6 +127,8 @@ public class SessionService {
      */
     public Page<ChatMessage> getSessionMessages(String sessionId, String userId, int page, int size) {
         getSessionBySessionId(sessionId, userId);
+        // TODO(session-messages-cache): 接入 Redis 读缓存（先查缓存，未命中回源 DB，再回填缓存）。
+        // TODO(session-messages-cache): 缓存 key 需包含 sessionId + page + size，避免分页数据串读。
         Page<ChatMessage> p = new Page<>(page, size);
         return messageMapper.selectPage(p, new LambdaQueryWrapper<ChatMessage>()
                 .eq(ChatMessage::getSessionId, sessionId)
@@ -142,10 +144,10 @@ public class SessionService {
      * @param userId 当前用户 ID
      */
     public void verifySessionAccess(String sessionId, String userId) {
+        // 在会话不存在或者不属于该用户时抛出异常
         if (sessionId == null || sessionId.trim().isEmpty()) {
             throw new BusinessException(ErrorCode.MISSING_SESSION_ID.getCode(), ErrorCode.MISSING_SESSION_ID.getMessage());
         }
-        // 这会自然地在会话不存在或者不属于该用户时抛出异常
         getSessionBySessionId(sessionId, userId);
     }
 

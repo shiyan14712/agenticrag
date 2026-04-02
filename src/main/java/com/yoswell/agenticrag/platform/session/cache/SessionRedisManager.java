@@ -2,7 +2,6 @@ package com.yoswell.agenticrag.platform.session.cache;
 
 import java.util.function.Supplier;
 
-import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -11,6 +10,7 @@ import com.yoswell.agenticrag.common.exception.BusinessException;
 import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.platform.session.entity.ChatSession;
 
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
@@ -33,6 +33,8 @@ public class SessionRedisManager {
     }
 
     private String getSessionMessagesKey(String sessionId) {
+        // TODO(session-messages-cache): 当前仅定义了 key，尚未实现消息分页缓存的读写接口。
+        // 下一步：补充 getSessionMessagesOrFallback / cacheSessionMessages / invalidateSessionMessagesCache。
         return SessionCacheConstants.SESSION_MESSAGES_PREFIX + sessionId;
     }
 
@@ -118,6 +120,7 @@ public class SessionRedisManager {
      * @param sessionId 会话 ID
      */
     public void clearSessionCache(String sessionId) {
+        // TODO(session-messages-cache): 待消息缓存落地后，按分页粒度失效，而不是仅按单 key 粗粒度清理。
         redisTemplate.delete(getSessionMetaKey(sessionId));
         redisTemplate.delete(getSessionMessagesKey(sessionId));
     }

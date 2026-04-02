@@ -102,6 +102,8 @@ public class ChatMessageService {
         int currentCount = messageCount == null ? 0 : messageCount;
         session.setMessageCount(currentCount + delta);
         sessionMapper.updateById(session);
+        // TODO(session-messages-cache): 消息写入后应失效/刷新 session:messages:* 缓存，避免历史分页数据脏读。
+        // TODO(session-messages-cache): 建议新增 redisManager.invalidateSessionMessagesCache(sessionId)。
         redisManager.cacheSessionMeta(session);
     }
 }
