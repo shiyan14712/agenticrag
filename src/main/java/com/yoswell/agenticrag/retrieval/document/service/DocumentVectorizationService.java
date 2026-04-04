@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -12,7 +13,7 @@ import org.springframework.util.StringUtils;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentVectorizeRequestDTO;
-import com.yoswell.agenticrag.retrieval.document.entity.DocumentMetadata;
+import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
 import com.yoswell.agenticrag.retrieval.document.index.KnowledgeChunkDocument;
 import com.yoswell.agenticrag.retrieval.document.index.KnowledgeChunkIndexService;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
@@ -20,6 +21,7 @@ import com.yoswell.agenticrag.retrieval.document.model.DocumentProcessingStatus;
 import com.yoswell.agenticrag.retrieval.document.parser.DocumentParserFactory;
 import com.yoswell.agenticrag.retrieval.document.parser.model.DocumentParseSource;
 import com.yoswell.agenticrag.retrieval.document.parser.model.ParsedDocument;
+import com.yoswell.agenticrag.retrieval.document.parser.strategy.DocumentParserStrategy;
 
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.model.embedding.EmbeddingModel;
@@ -60,8 +62,18 @@ public class DocumentVectorizationService {
      */
     @Transactional
     public void vectorize(DocumentVectorizeRequestDTO request) {
-        DocumentMetadata metadata = requireMetadata(request.documentId());
+        if (request == null || !StringUtils.hasText(request.documentId())) {
+            throw new IllegalArgumentException("documentId must not be blank");
+        }
+
+        DocumentDO metadata = requireMetadata(request.documentId());
+        log.info("[Offline RAG][VECTORIZE] 加载文档元数据成功: documentId={}, currentStatus={}, tenantId={}, kbId={}",
+            metadata.getDocumentId(), metadata.getStatus(), metadata.getTenantId(), metadata.getKbId());
+
+        String statusBeforeParsing = metadata.getStatus();
         updateStatus(metadata, DocumentProcessingStatus.PARSING);
+        log.info("[Offline RAG][VECTORIZE] 状态迁移: documentId={}, {} -> {}",
+            metadata.getDocumentId(), statusBeforeParsing, metadata.getStatus());
 
         try {
             String sourceFileUrl = firstNonBlank(request.fileUrl(), metadata.getMinioUrl());
@@ -73,12 +85,30 @@ public class DocumentVectorizationService {
                     ? splitRoles(metadata.getAllowedRoles())
                     : List.copyOf(request.allowedRoles());
 
+            log.info("[Offline RAG][SOURCE] 已解析向量化输入源: documentId={}, tenantId={}, kbId={}, fileName={}, extension={}",
+                metadata.getDocumentId(), tenantId, kbId, sourceFileName, sourceExtension);
+
+            DocumentParserStrategy parserStrategy = documentParserFactory.getStrategy(sourceExtension);
+            log.info("[Offline RAG][PARSE] 选择解析策略: documentId={}, strategy={}",
+                metadata.getDocumentId(), parserStrategy.getClass().getSimpleName());
+
+            log.info("[Offline RAG][PARSE] 开始读取并解析文本: documentId={}", metadata.getDocumentId());
             String content = minioStorageService.readUtf8String(sourceFileUrl);
-            ParsedDocument parsedDocument = documentParserFactory.getStrategy(sourceExtension)
+            ParsedDocument parsedDocument = parserStrategy
                     .parse(new DocumentParseSource(sourceFileUrl, sourceFileName, sourceExtension, content));
 
-            List<KnowledgeChunkDocument> indexedChunks = new ArrayList<>(parsedDocument.chunks().size());
-            parsedDocument.chunks().forEach(chunk -> {
+            int totalChunks = parsedDocument.chunks().size();
+            log.info("[Offline RAG][PARSE] 文档解析完成: documentId={}, chunkCount={}", metadata.getDocumentId(), totalChunks);
+
+            List<KnowledgeChunkDocument> indexedChunks = new ArrayList<>(totalChunks);
+            for (int index = 0; index < totalChunks; index++) {
+            var chunk = parsedDocument.chunks().get(index);
+            int processed = index + 1;
+            if (shouldLogEmbeddingProgress(processed, totalChunks)) {
+                log.info("[Offline RAG][EMBED] 进度: documentId={}, {}/{}, chunkId={}",
+                    metadata.getDocumentId(), processed, totalChunks, chunk.chunkId());
+            }
+
                 Embedding embedding = embeddingModel.embed(chunk.content()).content();
                 indexedChunks.add(new KnowledgeChunkDocument(
                         chunk.chunkId(),
@@ -91,13 +121,26 @@ public class DocumentVectorizationService {
                         chunk.content(),
                         embedding.vectorAsList()
                 ));
-            });
+                    }
 
+                    log.info("[Offline RAG][EMBED] 向量化完成，准备写入检索索引: documentId={}, chunkCount={}",
+                    metadata.getDocumentId(), indexedChunks.size());
+
+                    log.info("[Offline RAG][INDEX] 开始写入 ES 检索索引: documentId={}, chunkCount={}",
+                        metadata.getDocumentId(), indexedChunks.size());
             knowledgeChunkIndexService.indexChunks(indexedChunks);
+
+                    String statusBeforeVectorized = metadata.getStatus();
             updateStatus(metadata, DocumentProcessingStatus.VECTORIZED);
-            log.info("[Document Vectorization Service] Document vectorization completed: documentId={}, chunks={}", metadata.getDocumentId(), indexedChunks.size());
+                    log.info("[Offline RAG][VECTORIZE] 状态迁移: documentId={}, {} -> {}",
+                        metadata.getDocumentId(), statusBeforeVectorized, metadata.getStatus());
+                    log.info("[Offline RAG][DONE] 文档向量化完成: documentId={}, chunks={}", metadata.getDocumentId(), indexedChunks.size());
         } catch (Exception exception) {
+                    log.error("[Offline RAG][FAILED] 文档向量化失败: documentId={}", metadata.getDocumentId(), exception);
+                    String statusBeforeFailed = metadata.getStatus();
             updateStatus(metadata, DocumentProcessingStatus.FAILED);
+                    log.warn("[Offline RAG][VECTORIZE] 状态迁移: documentId={}, {} -> {}",
+                        metadata.getDocumentId(), statusBeforeFailed, metadata.getStatus());
             throw exception;
         }
     }
@@ -118,9 +161,9 @@ public class DocumentVectorizationService {
      * @param documentId 文档业务 ID
      * @return 对应元数据
      */
-    private DocumentMetadata requireMetadata(String documentId) {
-        DocumentMetadata metadata = documentMetadataMapper.selectOne(
-                new QueryWrapper<DocumentMetadata>().eq("document_id", documentId)
+    private DocumentDO requireMetadata(String documentId) {
+        DocumentDO metadata = documentMetadataMapper.selectOne(
+                new LambdaQueryWrapper<DocumentDO>().eq(DocumentDO::getDocumentId, documentId)
         );
         if (metadata == null) {
             throw new RuntimeException("Document metadata not found for documentId=" + documentId);
@@ -134,7 +177,7 @@ public class DocumentVectorizationService {
      * @param metadata 文档元数据
      * @param status 目标状态
      */
-    private void updateStatus(DocumentMetadata metadata, DocumentProcessingStatus status) {
+    private void updateStatus(DocumentDO metadata, DocumentProcessingStatus status) {
         metadata.setStatus(status.value());
         documentMetadataMapper.updateById(metadata);
     }
@@ -164,5 +207,12 @@ public class DocumentVectorizationService {
      */
     private String firstNonBlank(String preferred, String fallback) {
         return StringUtils.hasText(preferred) ? preferred : fallback;
+    }
+
+    private boolean shouldLogEmbeddingProgress(int processed, int total) {
+        if (total <= 5) {
+            return true;
+        }
+        return processed == 1 || processed == total || processed % 20 == 0;
     }
 }

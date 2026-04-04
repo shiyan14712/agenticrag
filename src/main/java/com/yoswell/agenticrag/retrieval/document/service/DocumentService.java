@@ -14,7 +14,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.yoswell.agenticrag.retrieval.document.dto.DocumentDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentDeleteRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentParseRequestDTO;
-import com.yoswell.agenticrag.retrieval.document.entity.DocumentMetadata;
+import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentProcessingStatus;
 import com.yoswell.agenticrag.retrieval.document.mq.DocumentMessageProducer;
@@ -54,7 +54,7 @@ public class DocumentService {
      * @param tenantId 当前租户 ID
      * @return 落库后的文档元数据
      */
-    public DocumentMetadata handleUpload(MultipartFile file, String tenantId) {
+    public DocumentDO handleUpload(MultipartFile file, String tenantId) {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Uploaded file cannot be empty");
         }
@@ -64,12 +64,16 @@ public class DocumentService {
             fileName = "unknown";
         }
         String contentType = file.getContentType() != null ? file.getContentType() : "application/octet-stream";
+        log.info("[Upload Pipeline][RECEIVE] 开始处理上传文件: tenantId={}, fileName={}, size={} bytes, contentType={}",
+                tenantId, fileName, file.getSize(), contentType);
 
         try (InputStream inputStream = file.getInputStream()) {
-            DocumentMetadata metadata = uploadAndDispatch(fileName, inputStream, file.getSize(), contentType, tenantId);
-            log.info("Document upload pipeline completed: documentId={}", metadata.getDocumentId());
+            DocumentDO metadata = uploadAndDispatch(fileName, inputStream, file.getSize(), contentType, tenantId);
+            log.info("[Upload Pipeline][DONE] 上传链路完成: documentId={}, tenantId={}, finalStatus={}",
+                    metadata.getDocumentId(), tenantId, metadata.getStatus());
             return metadata;
         } catch (Exception e) {
+            log.error("[Upload Pipeline][FAILED] 上传链路执行失败: tenantId={}, fileName={}", tenantId, fileName, e);
             throw new RuntimeException("Failed to process document upload", e);
         }
     }
@@ -85,17 +89,19 @@ public class DocumentService {
      * @return 已持久化的文档元数据
      */
     @Transactional
-    public DocumentMetadata uploadAndDispatch(String fileName, InputStream inputStream,
-                                              long fileSize, String contentType, String tenantId) {
+    public DocumentDO uploadAndDispatch(String fileName, InputStream inputStream,
+                                        long fileSize, String contentType, String tenantId) {
         String documentId = "doc-" + UUID.randomUUID();
         String extension = extractExtension(fileName);
         String objectName = documentId + "/" + fileName;
 
-        log.info("Starting document upload pipeline: documentId={}, fileName={}, tenantId={}", documentId, fileName, tenantId);
+        log.info("[Upload Pipeline][MINIO] 准备上传到 MinIO: documentId={}, objectName={}, tenantId={}",
+            documentId, objectName, tenantId);
 
         String minioUrl = minioStorageService.uploadFile(objectName, inputStream, fileSize, contentType);
+        log.info("[Upload Pipeline][MINIO] MinIO 上传完成: documentId={}, minioUrl={}", documentId, minioUrl);
 
-        DocumentMetadata metadata = new DocumentMetadata();
+        DocumentDO metadata = new DocumentDO();
         metadata.setDocumentId(documentId);
         metadata.setFileName(fileName);
         metadata.setTenantId(tenantId);
@@ -106,7 +112,8 @@ public class DocumentService {
         metadata.setStatus(DocumentProcessingStatus.UPLOADED.value());
         documentMetadataMapper.insert(metadata);
 
-        log.info("Document metadata persisted to MySQL: documentId={}, status={}", documentId, metadata.getStatus());
+        log.info("[Upload Pipeline][METADATA] 元数据落库完成: documentId={}, tenantId={}, status={}, extension={}",
+            documentId, tenantId, metadata.getStatus(), extension);
 
         documentMessageProducer.sendDocParseRequest(new DocumentParseRequestDTO(
                 documentId,
@@ -119,6 +126,9 @@ public class DocumentService {
                 System.currentTimeMillis()
         ));
 
+            log.info("[Upload Pipeline][DISPATCH] 已投递解析任务: topic=doc-parse-request, documentId={}, tenantId={}",
+                documentId, tenantId);
+
         return metadata;
     }
 
@@ -129,9 +139,9 @@ public class DocumentService {
      * @param tenantId 当前租户 ID
      * @return 文档元数据
      */
-    public DocumentMetadata getDocumentStatus(String documentId, String tenantId) {
-        DocumentMetadata metadata = documentMetadataMapper.selectOne(
-                new QueryWrapper<DocumentMetadata>()
+    public DocumentDO getDocumentStatus(String documentId, String tenantId) {
+        DocumentDO metadata = documentMetadataMapper.selectOne(
+                new QueryWrapper<DocumentDO>()
                         .eq("document_id", documentId)
                         .eq("tenant_id", tenantId)
         );
@@ -163,7 +173,7 @@ public class DocumentService {
             log.warn("[Document Service] Failed to get document status from Redis: {}", e.getMessage());
         }
 
-        DocumentMetadata metadata = getDocumentStatus(documentId, tenantId);
+        DocumentDO metadata = getDocumentStatus(documentId, tenantId);
         java.util.Map<String, String> statusMap = java.util.Map.of(
                 "documentId", metadata.getDocumentId(),
                 "status", metadata.getStatus(),
@@ -196,8 +206,8 @@ public class DocumentService {
             throw new IllegalArgumentException("Tenant ID cannot be null or empty");
         }
 
-        List<DocumentMetadata> metadataList = documentMetadataMapper.selectList(
-                new QueryWrapper<DocumentMetadata>()
+        List<DocumentDO> metadataList = documentMetadataMapper.selectList(
+                new QueryWrapper<DocumentDO>()
                         .eq("tenant_id", tenantId)
                         .orderByDesc("created_at")
         );
@@ -227,8 +237,8 @@ public class DocumentService {
         }
 
         // 1. 查询文档确认是否存在，并强校验 tenantId 防止越权
-        DocumentMetadata metadata = documentMetadataMapper.selectOne(
-                new QueryWrapper<DocumentMetadata>()
+        DocumentDO metadata = documentMetadataMapper.selectOne(
+                new QueryWrapper<DocumentDO>()
                         .eq("document_id", documentId)
                         .eq("tenant_id", tenantId)
         );

@@ -33,15 +33,24 @@ public class DocumentMessageProducer {
      * @param request 解析阶段所需的上下文
      */
     public void sendDocParseRequest(DocumentParseRequestDTO request) {
-        log.info("[DocumentMessageProducer] Sending doc-parse-request for documentId: {}, url: {}", request.documentId(), request.fileUrl());
+        log.info("[Upload Pipeline][DISPATCH] 开始发送 doc-parse-request: documentId={}, tenantId={}, kbId={}, fileExtension={}",
+                request.documentId(), request.tenantId(), request.kbId(), request.fileExtension());
         try {
             String payload = objectMapper.writeValueAsString(request);
             kafkaTemplate.send("doc-parse-request", request.documentId(), payload)
                     .whenComplete((result, ex) -> {
                         if (ex == null) {
-                            log.debug("Successfully sent doc-parse-request message for document: {}", request.documentId());
+                            if (result != null && result.getRecordMetadata() != null) {
+                                log.info("[Upload Pipeline][DISPATCH] doc-parse-request 发送成功: documentId={}, topic={}, partition={}, offset={}",
+                                        request.documentId(),
+                                        result.getRecordMetadata().topic(),
+                                        result.getRecordMetadata().partition(),
+                                        result.getRecordMetadata().offset());
+                            } else {
+                                log.info("[Upload Pipeline][DISPATCH] doc-parse-request 发送成功: documentId={}", request.documentId());
+                            }
                         } else {
-                            log.error("Failed to send doc-parse-request message for document: {}", request.documentId(), ex);
+                            log.error("[Upload Pipeline][DISPATCH] doc-parse-request 发送失败: documentId={}", request.documentId(), ex);
                         }
                     });
         } catch (JacksonException e) {

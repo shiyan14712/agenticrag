@@ -50,19 +50,37 @@ public class RerankerClient {
     }
 
     public List<RetrievedChunkDTO> rerank(String query, List<RetrievedChunkDTO> chunks) {
-        if (chunks == null || chunks.isEmpty() || !StringUtils.hasText(rerankerApiUrl)) {
+        if (chunks == null || chunks.isEmpty()) {
             return chunks == null ? List.of() : List.copyOf(chunks);
         }
 
+        if (!StringUtils.hasText(rerankerApiUrl)) {
+            log.debug("[Reranker Client] reranker api-url 未配置，跳过重排并保持融合排序结果。candidateCount={}", chunks.size());
+            return List.copyOf(chunks);
+        }
+
         try {
+            log.info("[Reranker Client] 开始调用 reranker: candidateCount={}, model={}, queryPreview={}",
+                    chunks.size(),
+                    StringUtils.hasText(rerankerModelName) ? rerankerModelName : "<default>",
+                    summarizeQuery(query));
             HttpRequest request = buildRequest(query, chunks);
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() >= 400) {
                 log.warn("[Reranker Client] Reranker returned non-success status {}, falling back to fused ordering", response.statusCode());
                 return List.copyOf(chunks);
             }
-            return mergeRerankerResponse(chunks, response.body());
-        } catch (Exception exception) {
+            List<RetrievedChunkDTO> reranked = mergeRerankerResponse(chunks, response.body());
+            log.info("[Reranker Client] reranker 调用完成: status={}, returnedCount={}", response.statusCode(), reranked.size());
+            return reranked;
+        } catch (IOException exception) {
+            log.warn("[Reranker Client] Reranker request failed, falling back to fused ordering", exception);
+            return List.copyOf(chunks);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            log.warn("[Reranker Client] Reranker request interrupted, falling back to fused ordering", exception);
+            return List.copyOf(chunks);
+        } catch (RuntimeException exception) {
             log.warn("[Reranker Client] Reranker request failed, falling back to fused ordering", exception);
             return List.copyOf(chunks);
         }
@@ -127,5 +145,16 @@ public class RerankerClient {
             return List.copyOf(chunks);
         }
         return List.copyOf(reordered);
+    }
+
+    private String summarizeQuery(String query) {
+        if (!StringUtils.hasText(query)) {
+            return "<empty>";
+        }
+        String normalized = query.replaceAll("\\s+", " ").trim();
+        if (normalized.length() <= 80) {
+            return normalized;
+        }
+        return normalized.substring(0, 80) + "...";
     }
 }

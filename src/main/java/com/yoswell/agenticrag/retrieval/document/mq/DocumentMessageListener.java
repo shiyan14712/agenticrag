@@ -43,12 +43,15 @@ public class DocumentMessageListener {
      */
     @KafkaListener(topics = "doc-vectorize-request", groupId = "agenticrag-group")
     public void listenVectorizeRequest(String message) {
-        log.info("Received doc-vectorize-request from Kafka: {}", message);
+        log.info("[Offline RAG][VECTORIZE_CONSUMER] 收到 doc-vectorize-request 消息，开始解析。payloadSize={} chars", message.length());
         try {
             DocumentVectorizeRequestDTO request = objectMapper.readValue(message, DocumentVectorizeRequestDTO.class);
+            log.info("[Offline RAG][VECTORIZE_CONSUMER] 消息解析完成: documentId={}, tenantId={}, kbId={}, fileName={}",
+                    request.documentId(), request.tenantId(), request.kbId(), request.fileName());
             documentVectorizationService.vectorize(request);
+            log.info("[Offline RAG][VECTORIZE_CONSUMER] 向量化流程执行完成: documentId={}", request.documentId());
         } catch (Exception exception) {
-            log.error("Failed to process doc-vectorize-request", exception);
+            log.error("[Offline RAG][VECTORIZE_CONSUMER] doc-vectorize-request 处理失败", exception);
             throw new RuntimeException("doc-vectorize-request processing failed", exception);
         }
     }
@@ -60,12 +63,12 @@ public class DocumentMessageListener {
      */
     @KafkaListener(topics = "doc-delete-request", groupId = "agenticrag-group")
     public void listenDocumentDeleteRequest(String message) {
-        log.info("Received doc-delete-request from Kafka: {}", message);
+        log.info("[Offline RAG][DELETE_CONSUMER] 收到 doc-delete-request 消息，开始解析。payloadSize={} chars", message.length());
         try {
             DocumentDeleteRequestDTO request = objectMapper.readValue(message, DocumentDeleteRequestDTO.class);
             knowledgeChunkIndexService.deleteByDocumentId(request.documentId(), request.tenantId());
         } catch (Exception exception) {
-            log.error("Failed to process doc-delete-request", exception);
+            log.error("[Offline RAG][DELETE_CONSUMER] Failed to process doc-delete-request", exception);
             throw new RuntimeException("doc-delete-request processing failed", exception);
         }
     }
@@ -78,7 +81,7 @@ public class DocumentMessageListener {
     @KafkaListener(topics = "doc-dlq", groupId = "agenticrag-group")
     @SuppressWarnings("unchecked")
     public void listenDeadLetterQueue(String message) {
-        log.error("Received failed document processing from doc-dlq: {}", message);
+        log.error("[Offline RAG][DLQ_CONSUMER] 从 doc-dlq 收到失败的文档处理消息: {}", message);
         try {
             Map<String, Object> payload = objectMapper.readValue(message, Map.class);
             Object documentId = payload.get("documentId");
@@ -86,7 +89,7 @@ public class DocumentMessageListener {
                 documentVectorizationService.markFailed(documentId.toString());
             }
         } catch (Exception exception) {
-            log.warn("Failed to parse doc-dlq payload for status update", exception);
+            log.warn("[Offline RAG][DLQ_CONSUMER] Failed to parse doc-dlq payload for status update", exception);
         }
     }
 }

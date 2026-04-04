@@ -55,8 +55,7 @@ public class RagTool {
 
     @Tool("search_enterprise_knowledge")
     public String searchEnterpriseKnowledge(String query) {
-        log.info("[RAG TOOL] ====== BEGIN TO RETRIEVE ======");
-        log.info("[RAG TOOL] Executing RagTool with query: {}", query);
+        log.info("[RAG TOOL] LLM 已决策调用工具 search_enterprise_knowledge，开始企业知识检索。queryPreview={}", summarizeQuery(query));
         try {
             var authentication = SecurityContextHolder.getContext().getAuthentication();
             if (authentication == null || !(authentication.getPrincipal() instanceof TenantUser user)) {
@@ -74,6 +73,7 @@ public class RagTool {
             List<RetrievedChunkDTO> bm25Hits = knowledgeChunkIndexService.searchByKeyword(query, tenantId, allowedRoles, bm25TopK);
             List<RetrievedChunkDTO> knnHits = knowledgeChunkIndexService.searchByVector(queryVector.vectorAsList(), tenantId, allowedRoles, knnTopK);
             List<RetrievedChunkDTO> fusedChunks = calculateRrfFusion(bm25Hits, knnHits);
+            log.info("[RAG TOOL] 混合检索完成: bm25Hits={}, knnHits={}, fusedHits={}", bm25Hits.size(), knnHits.size(), fusedChunks.size());
             List<RetrievedChunkDTO> rerankedChunks = crossAttentionRerank(fusedChunks, query);
             List<RetrievedChunkDTO> topChunks = rerankedChunks.stream().limit(rerankTopN).toList();
 
@@ -83,12 +83,11 @@ public class RagTool {
                     buildCitations(topChunks)
             );
             ragRetrievalContextHolder.publish(result);
-            log.info("[RAG TOOL] ====== RETRIEVE SUCCESS ======");
-            log.info("[RAG TOOL] Rag search completed, returning top {} chunks.", topChunks.size());
+            log.info("[RAG TOOL] 工具执行完成，已向 LLM 返回 top {} 条知识片段。", topChunks.size());
             return result.observation();
-        } catch (Exception e) {
-            log.error("[RAG TOOL] Error during enterprise knowledge search", e);
-            throw new RuntimeException("Search failed", e);
+        } catch (RuntimeException exception) {
+            log.error("[RAG TOOL] Error during enterprise knowledge search", exception);
+            throw new RuntimeException("Search failed", exception);
         }
     }
 
@@ -106,8 +105,19 @@ public class RagTool {
     }
 
     List<RetrievedChunkDTO> crossAttentionRerank(List<RetrievedChunkDTO> fusedChunks, String query) {
-        log.debug("[RAG TOOL] Reranking {} documents against query...", fusedChunks.size());
+        log.info("[RAG TOOL] 进入重排阶段，准备调用 reranker，候选片段数={}", fusedChunks.size());
         return rerankerClient.rerank(query, fusedChunks);
+    }
+
+    private String summarizeQuery(String query) {
+        if (query == null) {
+            return "<null>";
+        }
+        String normalized = query.replaceAll("\\s+", " ").trim();
+        if (normalized.length() <= 80) {
+            return normalized;
+        }
+        return normalized.substring(0, 50) + "...";
     }
 
     private void mergeRrfScores(List<RetrievedChunkDTO> hits,
@@ -116,7 +126,7 @@ public class RagTool {
         for (int index = 0; index < hits.size(); index++) {
             RetrievedChunkDTO hit = hits.get(index);
             chunkRegistry.putIfAbsent(hit.chunkId(), hit);
-            rrfScores.merge(hit.chunkId(), 1.0d / (RRF_K + index + 1), Double::sum);
+            rrfScores.merge(hit.chunkId(), 1.0d / (RRF_K + index + 1), (left, right) -> left + right);
         }
     }
 

@@ -15,6 +15,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.yoswell.agenticrag.core.agent.dto.RetrievedChunkDTO;
+import com.yoswell.agenticrag.retrieval.document.index.constants.KnowledgeChunkIndexConstants;
+import com.yoswell.agenticrag.retrieval.document.index.dto.KnowledgeChunkSearchHitDTO;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -22,10 +24,10 @@ import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * 负责知识块在 Elasticsearch 中的索引写入与检索。
+ * 负责知识块在 Elasticsearch 中的索引写入与检索
  *
  * <p>这里直接使用底层 REST Client 拼装请求，目的是让索引结构和查询 DSL
- * 尽量保持显式可控。</p>
+ * 尽量保持显式可控</p>
  */
 @Service
 public class KnowledgeChunkIndexService {
@@ -46,7 +48,7 @@ public class KnowledgeChunkIndexService {
     }
 
     /**
-     * 批量写入知识块到 Elasticsearch。
+     * 批量写入知识块到 Elasticsearch
      *
      * @param chunks 需要写入的知识块集合
      */
@@ -55,21 +57,38 @@ public class KnowledgeChunkIndexService {
             return;
         }
 
+        String documentId = chunks.get(0).documentId();
+        log.info("[Offline RAG][ES_INDEX] 开始写入索引: index={}, documentId={}, chunkCount={}",
+                indexName, documentId, chunks.size());
+
         ensureIndexExists(chunks.get(0).contentVector().size());
-        for (KnowledgeChunkDocument chunk : chunks) {
+
+        for (int index = 0; index < chunks.size(); index++) {
+            KnowledgeChunkDocument chunk = chunks.get(index);
             try {
-                Request request = new Request("PUT", "/" + indexName + "/_doc/" + chunk.chunkId());
+                Request request = new Request(KnowledgeChunkIndexConstants.METHOD_PUT, documentPath(chunk.chunkId()));
                 request.setJsonEntity(objectMapper.writeValueAsString(chunk));
                 restClient.performRequest(request);
+
+                int indexedCount = index + 1;
+                if (shouldLogIndexProgress(indexedCount, chunks.size())) {
+                    log.info("[Offline RAG][ES_INDEX] 写入进度: documentId={}, {}/{}, chunkId={}",
+                            documentId, indexedCount, chunks.size(), chunk.chunkId());
+                }
             } catch (Exception exception) {
+                log.error("[Offline RAG][ES_INDEX] 写入失败: index={}, documentId={}, chunkId={}",
+                        indexName, documentId, chunk.chunkId(), exception);
                 throw new RuntimeException("Failed to index knowledge chunk " + chunk.chunkId(), exception);
             }
         }
+
+        log.info("[Offline RAG][ES_INDEX] 索引写入完成: index={}, documentId={}, chunkCount={}",
+                indexName, documentId, chunks.size());
     }
 
     /**
-     * 根据文档 ID 删除该文档产生的所有向量与分块。
-     * 具备租户级别的条件隔离。
+     * 根据文档 ID 删除该文档产生的所有向量与分块
+     * 具备租户级别的条件隔离
      *
      * @param documentId 文档业务 ID
      * @param tenantId 当前所属租户
@@ -80,25 +99,29 @@ public class KnowledgeChunkIndexService {
         }
 
         try {
-            Request request = new Request("POST", "/" + indexName + "/_delete_by_query");
+            Request request = new Request(KnowledgeChunkIndexConstants.METHOD_POST, deleteByQueryPath());
             
             ObjectNode queryNode = objectMapper.createObjectNode();
-            ObjectNode boolNode = queryNode.putObject("bool");
-            ArrayNode filterArray = boolNode.putArray("filter");
+            ObjectNode boolNode = queryNode.putObject(KnowledgeChunkIndexConstants.JSON_BOOL);
+            ArrayNode filterArray = boolNode.putArray(KnowledgeChunkIndexConstants.JSON_FILTER);
 
-            filterArray.addObject().putObject("term").put("document_id.keyword", documentId);
-            filterArray.addObject().putObject("term").put("tenant_id.keyword", tenantId);
+            filterArray.addObject()
+                    .putObject(KnowledgeChunkIndexConstants.JSON_TERM)
+                    .put(KnowledgeChunkIndexConstants.FIELD_DOCUMENT_ID_KEYWORD, documentId);
+            filterArray.addObject()
+                    .putObject(KnowledgeChunkIndexConstants.JSON_TERM)
+                    .put(KnowledgeChunkIndexConstants.FIELD_TENANT_ID_KEYWORD, tenantId);
 
             ObjectNode payload = objectMapper.createObjectNode();
-            payload.set("query", queryNode);
+            payload.set(KnowledgeChunkIndexConstants.JSON_QUERY, queryNode);
 
             request.setJsonEntity(objectMapper.writeValueAsString(payload));
             
             JsonNode response = executeForJson(request);
-            long deletedCount = response.path("deleted").asLong();
+            long deletedCount = response.path(KnowledgeChunkIndexConstants.JSON_DELETED).asLong();
             log.info("Successfully deleted {} chunks from index {} for documentId: {}", deletedCount, indexName, documentId);
         } catch (ResponseException e) {
-             if (e.getResponse().getStatusLine().getStatusCode() == 404) {
+             if (e.getResponse().getStatusLine().getStatusCode() == KnowledgeChunkIndexConstants.HTTP_NOT_FOUND) {
                  log.warn("Index {} not found when trying to delete document: {}", indexName, documentId);
              } else {
                  throw new RuntimeException("ES Delete by query failed for document: " + documentId, e);
@@ -109,7 +132,7 @@ public class KnowledgeChunkIndexService {
     }
 
     /**
-     * 通过关键词执行 BM25 检索。
+     * 通过关键词执行 BM25 检索
      *
      * @param query 查询文本
      * @param tenantId 当前租户
@@ -119,7 +142,7 @@ public class KnowledgeChunkIndexService {
      */
     public List<RetrievedChunkDTO> searchByKeyword(String query, String tenantId, List<String> allowedRoles, int size) {
         try {
-            Request request = new Request("POST", "/" + indexName + "/_search");
+            Request request = new Request(KnowledgeChunkIndexConstants.METHOD_POST, searchPath());
             request.setJsonEntity(buildKeywordSearchPayload(query, tenantId, allowedRoles, size));
             JsonNode response = executeForJson(request);
             return parseSearchHits(response);
@@ -129,7 +152,7 @@ public class KnowledgeChunkIndexService {
     }
 
     /**
-     * 通过向量执行 kNN 检索。
+     * 通过向量执行 kNN 检索
      *
      * @param queryVector 查询向量
      * @param tenantId 当前租户
@@ -144,7 +167,7 @@ public class KnowledgeChunkIndexService {
 
         ensureIndexExists(queryVector.size());
         try {
-            Request request = new Request("POST", "/" + indexName + "/_search");
+            Request request = new Request(KnowledgeChunkIndexConstants.METHOD_POST, searchPath());
             request.setJsonEntity(buildVectorSearchPayload(queryVector, tenantId, allowedRoles, size));
             JsonNode response = executeForJson(request);
             return parseSearchHits(response);
@@ -154,7 +177,7 @@ public class KnowledgeChunkIndexService {
     }
 
     /**
-     * 确保索引存在，并在首次写入前按向量维度创建索引。
+     * 确保索引存在，并在首次写入前按向量维度创建索引
      *
      * @param vectorDimensions 向量维度
      */
@@ -179,36 +202,36 @@ public class KnowledgeChunkIndexService {
     }
 
     /**
-     * 检查目标索引是否已经存在。
+     * 检查目标索引是否已经存在
      *
      * @return true 表示索引存在
      */
     private boolean indexExists() {
         try {
-            Request request = new Request("HEAD", "/" + indexName);
+            Request request = new Request(KnowledgeChunkIndexConstants.METHOD_HEAD, indexPath());
             restClient.performRequest(request);
             return true;
         } catch (ResponseException exception) {
-            return exception.getResponse().getStatusLine().getStatusCode() != 404;
+            return exception.getResponse().getStatusLine().getStatusCode() != KnowledgeChunkIndexConstants.HTTP_NOT_FOUND;
         } catch (IOException exception) {
             throw new RuntimeException("Failed to check Elasticsearch index existence", exception);
         }
     }
 
     /**
-     * 创建用于知识块检索的索引结构。
+     * 创建用于知识块检索的索引结构
      *
      * @param vectorDimensions 向量维度
      */
     private void createIndex(int vectorDimensions) {
         try {
-            Request request = new Request("PUT", "/" + indexName);
+            Request request = new Request(KnowledgeChunkIndexConstants.METHOD_PUT, indexPath());
             request.setJsonEntity(buildCreateIndexPayload(vectorDimensions));
             restClient.performRequest(request);
             log.info("Created Elasticsearch chunk index: {}", indexName);
         } catch (ResponseException exception) {
             int statusCode = exception.getResponse().getStatusLine().getStatusCode();
-            if (statusCode != 400) {
+            if (statusCode != KnowledgeChunkIndexConstants.HTTP_BAD_REQUEST) {
                 throw new RuntimeException("Failed to create Elasticsearch index", exception);
             }
         } catch (Exception exception) {
@@ -217,7 +240,7 @@ public class KnowledgeChunkIndexService {
     }
 
     /**
-     * 执行请求并把响应解析为 JSON 树。
+     * 执行请求并把响应解析为 JSON 树
      *
      * @param request REST 请求
      * @return JSON 响应
@@ -228,43 +251,39 @@ public class KnowledgeChunkIndexService {
     }
 
     /**
-     * 把 Elasticsearch 返回的 hits 数组转换为内部检索结果。
+     * 把 Elasticsearch 返回的 hits 数组转换为内部检索结果
      *
      * @param response Elasticsearch 查询响应
      * @return 标准化后的检索结果
      */
     private List<RetrievedChunkDTO> parseSearchHits(JsonNode response) {
-        JsonNode hits = response.path("hits").path("hits");
+        JsonNode hits = response.path(KnowledgeChunkIndexConstants.JSON_HITS).path(KnowledgeChunkIndexConstants.JSON_HITS);
         if (!hits.isArray() || hits.isEmpty()) {
             return List.of();
         }
 
         ArrayList<RetrievedChunkDTO> chunks = new ArrayList<>(hits.size());
         for (JsonNode hit : hits) {
-            JsonNode source = hit.path("_source");
-            ArrayList<String> roles = new ArrayList<>();
-            JsonNode roleNode = source.path("allowedRoles");
-            if (roleNode.isArray()) {
-                roleNode.forEach(node -> roles.add(node.asText()));
-            }
+            JsonNode source = hit.path(KnowledgeChunkIndexConstants.JSON_SOURCE);
+            KnowledgeChunkSearchHitDTO sourceDto = objectMapper.convertValue(source, KnowledgeChunkSearchHitDTO.class);
 
             chunks.add(new RetrievedChunkDTO(
-                    source.path("chunkId").asText(hit.path("_id").asText()),
-                    source.path("documentId").asText(),
-                    source.path("documentName").asText(),
-                    source.path("tenantId").asText(),
-                    source.path("kbId").asText(),
-                    List.copyOf(roles),
-                    source.path("chunkIndex").asInt(),
-                    source.path("content").asText(),
-                    hit.path("_score").asDouble(0.0d)
+                    firstNonBlank(sourceDto.chunkId(), textValueOrEmpty(hit.path(KnowledgeChunkIndexConstants.JSON_ID))),
+                    defaultString(sourceDto.documentId()),
+                    defaultString(sourceDto.documentName()),
+                    defaultString(sourceDto.tenantId()),
+                    defaultString(sourceDto.kbId()),
+                    sourceDto.allowedRoles() == null ? List.of() : List.copyOf(sourceDto.allowedRoles()),
+                    sourceDto.chunkIndex(),
+                    defaultString(sourceDto.content()),
+                    hit.path(KnowledgeChunkIndexConstants.JSON_SCORE).asDouble(KnowledgeChunkIndexConstants.DEFAULT_SCORE)
             ));
         }
         return List.copyOf(chunks);
     }
 
     /**
-     * 构造关键词检索请求体。
+     * 构造关键词检索请求体
      *
      * @param query 查询文本
      * @param tenantId 当前租户
@@ -275,21 +294,22 @@ public class KnowledgeChunkIndexService {
      */
     private String buildKeywordSearchPayload(String query, String tenantId, List<String> allowedRoles, int size) throws IOException {
         ObjectNode root = objectMapper.createObjectNode();
-        root.put("size", size);
-        root.set("_source", sourceFields());
+        root.put(KnowledgeChunkIndexConstants.JSON_SIZE, size);
+        root.set(KnowledgeChunkIndexConstants.JSON_SOURCE_FIELDS, sourceFields());
 
-        ObjectNode boolNode = root.putObject("query").putObject("bool");
-        ArrayNode must = boolNode.putArray("must");
+        ObjectNode boolNode = root.putObject(KnowledgeChunkIndexConstants.JSON_QUERY)
+            .putObject(KnowledgeChunkIndexConstants.JSON_BOOL);
+        ArrayNode must = boolNode.putArray(KnowledgeChunkIndexConstants.JSON_MUST);
         must.addObject()
-                .putObject("match")
-                .putObject("content")
-                .put("query", query);
-        boolNode.set("filter", buildSecurityFilters(tenantId, allowedRoles));
+            .putObject(KnowledgeChunkIndexConstants.JSON_MATCH)
+            .putObject(KnowledgeChunkIndexConstants.FIELD_CONTENT)
+            .put(KnowledgeChunkIndexConstants.JSON_QUERY, query);
+        boolNode.set(KnowledgeChunkIndexConstants.JSON_FILTER, buildSecurityFilters(tenantId, allowedRoles));
         return objectMapper.writeValueAsString(root);
     }
 
     /**
-     * 构造向量检索请求体。
+     * 构造向量检索请求体
      *
      * @param queryVector 查询向量
      * @param tenantId 当前租户
@@ -300,20 +320,31 @@ public class KnowledgeChunkIndexService {
      */
     private String buildVectorSearchPayload(List<Float> queryVector, String tenantId, List<String> allowedRoles, int size) throws IOException {
         ObjectNode root = objectMapper.createObjectNode();
-        root.put("size", size);
-        root.set("_source", sourceFields());
+        root.put(KnowledgeChunkIndexConstants.JSON_SIZE, size);
+        root.set(KnowledgeChunkIndexConstants.JSON_SOURCE_FIELDS, sourceFields());
 
-        ObjectNode knn = root.putObject("knn");
-        knn.put("field", "contentVector");
-        knn.set("query_vector", objectMapper.valueToTree(queryVector));
-        knn.put("k", size);
-        knn.put("num_candidates", Math.max(size * 2, 20));
-        knn.set("filter", buildSecurityFilters(tenantId, allowedRoles));
+        ObjectNode knn = root.putObject(KnowledgeChunkIndexConstants.JSON_KNN);
+        knn.put(KnowledgeChunkIndexConstants.JSON_FIELD, KnowledgeChunkIndexConstants.FIELD_CONTENT_VECTOR);
+        knn.set(KnowledgeChunkIndexConstants.JSON_QUERY_VECTOR, objectMapper.valueToTree(queryVector));
+        knn.put(KnowledgeChunkIndexConstants.JSON_K, size);
+        knn.put(
+                KnowledgeChunkIndexConstants.JSON_NUM_CANDIDATES,
+                Math.max(size * KnowledgeChunkIndexConstants.KNN_CANDIDATES_MULTIPLIER,
+                        KnowledgeChunkIndexConstants.KNN_MIN_NUM_CANDIDATES)
+        );
+        knn.set(KnowledgeChunkIndexConstants.JSON_FILTER, buildSecurityFilters(tenantId, allowedRoles));
         return objectMapper.writeValueAsString(root);
     }
 
+    private boolean shouldLogIndexProgress(int indexedCount, int totalCount) {
+        if (totalCount <= 5) {
+            return true;
+        }
+        return indexedCount == 1 || indexedCount == totalCount || indexedCount % 50 == 0;
+    }
+
     /**
-     * 构造索引 mappings，请求中显式声明文本字段、权限字段和 dense_vector 字段。
+     * 构造索引 mappings，请求中显式声明文本字段、权限字段和 dense_vector 字段
      *
      * @param vectorDimensions 向量维度
      * @return JSON 请求体
@@ -321,43 +352,46 @@ public class KnowledgeChunkIndexService {
      */
     private String buildCreateIndexPayload(int vectorDimensions) throws IOException {
         ObjectNode root = objectMapper.createObjectNode();
-        ObjectNode properties = root.putObject("mappings").putObject("properties");
-        properties.putObject("chunkId").put("type", "keyword");
-        properties.putObject("documentId").put("type", "keyword");
-        properties.putObject("documentName").put("type", "keyword");
-        properties.putObject("tenantId").put("type", "keyword");
-        properties.putObject("kbId").put("type", "keyword");
-        properties.putObject("allowedRoles").put("type", "keyword");
-        properties.putObject("chunkIndex").put("type", "integer");
-        properties.putObject("content").put("type", "text");
-        ObjectNode vector = properties.putObject("contentVector");
-        vector.put("type", "dense_vector");
-        vector.put("dims", vectorDimensions);
-        vector.put("index", true);
-        vector.put("similarity", "cosine");
+        ObjectNode properties = root
+            .putObject(KnowledgeChunkIndexConstants.JSON_MAPPINGS)
+            .putObject(KnowledgeChunkIndexConstants.JSON_PROPERTIES);
+        properties.putObject(KnowledgeChunkIndexConstants.FIELD_CHUNK_ID)
+            .put(KnowledgeChunkIndexConstants.JSON_TYPE, KnowledgeChunkIndexConstants.TYPE_KEYWORD);
+        properties.putObject(KnowledgeChunkIndexConstants.FIELD_DOCUMENT_ID)
+            .put(KnowledgeChunkIndexConstants.JSON_TYPE, KnowledgeChunkIndexConstants.TYPE_KEYWORD);
+        properties.putObject(KnowledgeChunkIndexConstants.FIELD_DOCUMENT_NAME)
+            .put(KnowledgeChunkIndexConstants.JSON_TYPE, KnowledgeChunkIndexConstants.TYPE_KEYWORD);
+        properties.putObject(KnowledgeChunkIndexConstants.FIELD_TENANT_ID)
+            .put(KnowledgeChunkIndexConstants.JSON_TYPE, KnowledgeChunkIndexConstants.TYPE_KEYWORD);
+        properties.putObject(KnowledgeChunkIndexConstants.FIELD_KB_ID)
+            .put(KnowledgeChunkIndexConstants.JSON_TYPE, KnowledgeChunkIndexConstants.TYPE_KEYWORD);
+        properties.putObject(KnowledgeChunkIndexConstants.FIELD_ALLOWED_ROLES)
+            .put(KnowledgeChunkIndexConstants.JSON_TYPE, KnowledgeChunkIndexConstants.TYPE_KEYWORD);
+        properties.putObject(KnowledgeChunkIndexConstants.FIELD_CHUNK_INDEX)
+            .put(KnowledgeChunkIndexConstants.JSON_TYPE, KnowledgeChunkIndexConstants.TYPE_INTEGER);
+        properties.putObject(KnowledgeChunkIndexConstants.FIELD_CONTENT)
+            .put(KnowledgeChunkIndexConstants.JSON_TYPE, KnowledgeChunkIndexConstants.TYPE_TEXT);
+        ObjectNode vector = properties.putObject(KnowledgeChunkIndexConstants.FIELD_CONTENT_VECTOR);
+        vector.put(KnowledgeChunkIndexConstants.JSON_TYPE, KnowledgeChunkIndexConstants.TYPE_DENSE_VECTOR);
+        vector.put(KnowledgeChunkIndexConstants.JSON_DIMS, vectorDimensions);
+        vector.put(KnowledgeChunkIndexConstants.JSON_INDEX, true);
+        vector.put(KnowledgeChunkIndexConstants.JSON_SIMILARITY, KnowledgeChunkIndexConstants.SIMILARITY_COSINE);
         return objectMapper.writeValueAsString(root);
     }
 
     /**
-     * 定义查询结果中需要回传的字段，避免加载整个源文档。
+     * 定义查询结果中需要回传的字段，避免加载整个源文档
      *
      * @return source 字段数组
      */
     private ArrayNode sourceFields() {
         ArrayNode source = objectMapper.createArrayNode();
-        source.add("chunkId");
-        source.add("documentId");
-        source.add("documentName");
-        source.add("tenantId");
-        source.add("kbId");
-        source.add("allowedRoles");
-        source.add("chunkIndex");
-        source.add("content");
+        KnowledgeChunkIndexConstants.DEFAULT_SOURCE_FIELDS.forEach(source::add);
         return source;
     }
 
     /**
-     * 构造租户和角色维度的安全过滤条件。
+     * 构造租户和角色维度的安全过滤条件
      *
      * @param tenantId 当前租户
      * @param allowedRoles 当前允许访问的角色
@@ -366,14 +400,49 @@ public class KnowledgeChunkIndexService {
     private ArrayNode buildSecurityFilters(String tenantId, List<String> allowedRoles) {
         ArrayNode filters = objectMapper.createArrayNode();
         filters.addObject()
-                .putObject("term")
-                .put("tenantId", tenantId);
+                .putObject(KnowledgeChunkIndexConstants.JSON_TERM)
+                .put(KnowledgeChunkIndexConstants.FIELD_TENANT_ID, tenantId);
 
         ArrayNode rolesArray = objectMapper.createArrayNode();
         allowedRoles.forEach(rolesArray::add);
         filters.addObject()
-                .putObject("terms")
-                .set("allowedRoles", rolesArray);
+                .putObject(KnowledgeChunkIndexConstants.JSON_TERMS)
+                .set(KnowledgeChunkIndexConstants.FIELD_ALLOWED_ROLES, rolesArray);
         return filters;
+    }
+
+    private String indexPath() {
+        return "/" + indexName;
+    }
+
+    private String searchPath() {
+        return indexPath() + KnowledgeChunkIndexConstants.PATH_SEARCH;
+    }
+
+    private String deleteByQueryPath() {
+        return indexPath() + KnowledgeChunkIndexConstants.PATH_DELETE_BY_QUERY;
+    }
+
+    private String documentPath(String chunkId) {
+        return indexPath() + KnowledgeChunkIndexConstants.PATH_DOC_PREFIX + chunkId;
+    }
+
+    private String firstNonBlank(String preferred, String fallback) {
+        if (preferred != null && !preferred.isBlank()) {
+            return preferred;
+        }
+        return fallback;
+    }
+
+    private String defaultString(String value) {
+        return value == null ? "" : value;
+    }
+
+    private String textValueOrEmpty(JsonNode node) {
+        if (node == null) {
+            return "";
+        }
+        String text = objectMapper.convertValue(node, String.class);
+        return text == null ? "" : text;
     }
 }

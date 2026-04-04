@@ -49,6 +49,7 @@ public class MinioStorageService {
      */
     public String uploadFile(String objectName, InputStream inputStream, long size, String contentType) {
         try {
+            log.info("[MinIO][UPLOAD] 开始写入对象: bucket={}, objectName={}, size={} bytes", defaultBucket, objectName, size);
             ensureBucketExists(defaultBucket);
 
             PutObjectArgs putArgs = PutObjectArgs.builder()
@@ -61,7 +62,7 @@ public class MinioStorageService {
             minioClient.putObject(putArgs);
 
             String minioUrl = endpoint + "/" + defaultBucket + "/" + objectName;
-            log.info("File uploaded to MinIO: {}", minioUrl);
+            log.info("[MinIO][UPLOAD] 写入成功: bucket={}, objectName={}, minioUrl={}", defaultBucket, objectName, minioUrl);
             return minioUrl;
         } catch (Exception e) {
             log.error("[Minio Storage Service] Failed to upload file to MinIO: {}", objectName, e);
@@ -96,7 +97,10 @@ public class MinioStorageService {
      * @return 文本内容
      */
     public String readUtf8String(String fileUrl) {
-        return new String(readFile(fileUrl), StandardCharsets.UTF_8);
+        byte[] rawBytes = readFile(fileUrl);
+        String text = new String(rawBytes, StandardCharsets.UTF_8);
+        log.info("[MinIO][READ_TEXT] 文本读取完成: fileUrl={}, bytes={}, chars={}", fileUrl, rawBytes.length, text.length());
+        return text;
     }
 
     /**
