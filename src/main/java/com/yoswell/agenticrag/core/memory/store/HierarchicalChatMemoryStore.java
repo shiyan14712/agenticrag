@@ -13,7 +13,6 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yoswell.agenticrag.core.memory.constants.MemoryStoreConstants;
 import com.yoswell.agenticrag.core.memory.entity.UserGlobalMemory;
@@ -27,7 +26,7 @@ import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 
 /**
@@ -94,7 +93,7 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     /**
      * 聊天语言模型，用于生成对话摘要
      */
-    private final ChatLanguageModel chatLanguageModel;
+    private final ChatModel chatLanguageModel;
 
     /**
      * JSON 序列化器，处理 Redis 数据的序列化/反序列化
@@ -132,7 +131,7 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
                                        UserGlobalMemoryMapper userGlobalMemoryMapper,
                                        ChatSessionMapper chatSessionMapper,
                                        ChatMessageMapper chatMessageMapper,
-                                       ChatLanguageModel chatLanguageModel,
+                                       ChatModel chatLanguageModel,
                                        @Value("${rag.memory.max-messages:40}") int maxMessages,
                                        @Value("${rag.memory.l1-limit:10}") int l1Limit,
                                        @Value("${rag.memory.l2-limit:30}") int l2Limit) {
@@ -397,7 +396,7 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
                 .collect(Collectors.joining("\n"));
 
         String prompt = instruction + "\n\nConversation:\n" + transcript;
-        return chatLanguageModel.generate(prompt).trim();
+        return chatLanguageModel.chat(prompt).trim();
     }
 
     /**

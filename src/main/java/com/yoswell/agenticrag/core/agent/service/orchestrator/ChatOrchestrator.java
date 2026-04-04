@@ -89,7 +89,7 @@ public class ChatOrchestrator {
                 log.info("[Chat Orchestrator] LLM React process and reasoning started for session: {}", sessionId);
                 TokenStream tokenStream = enterpriseAgent.chat(sessionId, message);
                 tokenStream
-                    .onNext(token -> {
+                    .onPartialResponse(token -> {
                         fullResponse.append(token);
                         try {
                             emitter.send(SseEmitter.event().name("message").data(token));
@@ -97,7 +97,7 @@ public class ChatOrchestrator {
                             log.error("[Chat Orchestrator] Failed to send token", ex);
                         }
                     })
-                    .onComplete(response -> {
+                    .onCompleteResponse(response -> {
                         try {
                             List<CitationDTO> citations = ragRetrievalContextHolder.consume(sessionId)
                                     .map(RagSearchResultDTO::citations)

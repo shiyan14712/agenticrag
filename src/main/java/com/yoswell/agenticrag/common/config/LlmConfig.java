@@ -9,8 +9,8 @@ import org.springframework.context.annotation.Configuration;
 
 import com.yoswell.agenticrag.core.agent.llm.DoubaoMultimodalEmbeddingModel;
 
-import dev.langchain4j.model.chat.ChatLanguageModel;
-import dev.langchain4j.model.chat.StreamingChatLanguageModel;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiEmbeddingModel;
@@ -53,7 +53,7 @@ public class LlmConfig {
     private Integer embeddingDimensions;
 
     @Bean
-    public ChatLanguageModel chatLanguageModel() {
+    public ChatModel chatLanguageModel() {
         return OpenAiChatModel.builder()
                 .baseUrl(llmBaseUrl)
                 .apiKey(llmApiKey)
@@ -68,7 +68,7 @@ public class LlmConfig {
     }
 
     @Bean
-    public StreamingChatLanguageModel streamingChatLanguageModel() {
+    public StreamingChatModel streamingChatLanguageModel() {
         return OpenAiStreamingChatModel.builder()
                 .baseUrl(llmBaseUrl)
                 .apiKey(llmApiKey)

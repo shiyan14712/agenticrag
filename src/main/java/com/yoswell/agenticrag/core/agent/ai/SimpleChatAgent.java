@@ -2,12 +2,10 @@ package com.yoswell.agenticrag.core.agent.ai;
 
 import dev.langchain4j.service.SystemMessage;
 import dev.langchain4j.service.UserMessage;
-import dev.langchain4j.service.spring.AiService;
 
 /**
  * 标题生成智能体接口
  */
-@AiService
 public interface SimpleChatAgent {
     
     // 用于每个Session初次对话后，生成一个标题，作为整个Session的Title
