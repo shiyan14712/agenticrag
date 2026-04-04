@@ -168,3 +168,27 @@
 - **验证结果**：
   - 已执行 `./mvnw.cmd -DskipTests compile`，编译通过（BUILD SUCCESS）。
 
+## 本轮新增 (2026-04-04, ReAct 过程可观测性)
+
+- **问题诊断**：
+  - 发现 `ChatOrchestrator` 的 SSE 事件流仅推送 `message`（最终回答 token）和 `citations`（引用卡片），ReAct 循环的 Thought → Action → Observation 中间过程对前端完全不可见。
+  - 前端只能看到一段沉默期之后突然开始流式返回最终答案，无法呈现"正在思考"、"正在检索知识库"等交互动画。
+- **LangChain4J 1.12.2 `TokenStream` 回调链利用**：
+  - 完整挂载了 5 个生命周期回调：`onPartialThinking`、`beforeToolExecution`、`onToolExecuted`、`onPartialResponse`、`onCompleteResponse`。
+  - `onPartialThinking`：接收 `PartialThinking` 对象（非 String），提取 `.text()` 推送 `event: thinking`。
+  - `beforeToolExecution`：接收 `BeforeToolExecution` 对象，提取工具名和参数摘要，推送 `event: tool_start` + `ToolEventDTO` JSON。
+  - `onToolExecuted`：接收 `ToolExecution` 对象，计算执行耗时，推送 `event: tool_result` + `ToolEventDTO` JSON。
+  - `onPartialResponse`：保留原有的最终回答 token 推送。
+  - `onCompleteResponse`：保留原有的 citations 推送 + 消息持久化，新增 `event: done` 结束信号。
+- **新增文件**：
+  - `SseEventType.java`：SSE 事件类型枚举，统一管理 7 种事件名常量（thinking / tool_start / tool_result / message / citations / done / error）。
+  - `ToolEventDTO.java`：工具事件 JSON 载荷 record，提供 `executing()` / `completed()` / `failed()` 三个工厂方法。
+- **不再需要 `ToolExecutionEventBus`**：
+  - 原 plan 中为 0.36.x 设计的 EventBus 方案，因升级到 1.12.2 后框架原生提供 `beforeToolExecution` 回调，不再需要手动侵入 `@Tool` 方法推送事件。
+- **设计文档同步**：
+  - 更新 `CLAUDE.md` 中 Agent 编排模块的 SSE 契约描述，从旧的 3 事件模型（tool_call / message / citations）升级为完整的 7 事件 ReAct 可观测性协议。
+- **架构决策说明**：
+  - `thinking` 事件是否有输出取决于 LLM 后端（qwen3.5-122B）是否支持 reasoning token；若不支持，框架不会触发该回调，不影响其他功能。
+  - 支持多 Tool 连续调用场景（如 LLM 先调 `search_enterprise_knowledge` 再调 `save_user_preference`），前端会收到多对 `tool_start → tool_result` 事件。
+- **验证结果**：
+  - 已执行 `./mvnw.cmd -DskipTests compile`，编译通过（BUILD SUCCESS）。

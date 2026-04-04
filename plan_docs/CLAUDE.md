@@ -1,4 +1,4 @@
-这份文档不仅是一份架构说明，更是整个系统工程的**宪法**。它明确了从宏观架构到微观设计模式、存储分工、以及系统与前端的契约。
+这份文档不仅是一份架构说明，更是整个系统工程的**宪法**。它明确了从宏观架构到微观设计模式、存储分工、以及系统与前端的规约。
 
 ---
 
@@ -22,11 +22,16 @@
 *   **单一 Agent 编排机制**：
     * **ReAct 模式 (常规问答)**：基于 LangChain4j `AiServices`。大模型根据当前上下文，按照 `Thought -> Action (调用 Tool) -> Observation` 循环自主执行。
     * **Spring Boot 4 + LangChain4j 1.12.2 装配基线**：不依赖 `langchain4j-spring-boot-starter` 与 `@AiService` 自动注册；必须在配置类中使用 `AiServices.builder(...)/AiServices.create(...)` 手动注册 Spring Bean，并显式挂接 `chatMemoryProvider`、`tools`。
-*   **前端接口预留与 SSE 契约 (Rich UI Rendering)**：
-    系统提供统一的 WebMVC (Servlet) SSE 接口 `/api/v1/agent/chat/stream`，配合虚拟线程使用 `SseEmitter` 异步推流。后端会向前端推送不同类型的 Event，前端据此渲染不同的 UI 组件：
-    *   `event: tool_call` -> 推送工具执行状态（如“正在检索知识库：2025财报”），前端渲染为加载动画。
-    *   `event: message` -> 推送 Markdown 文本流，前端渲染为打字机对话。
+*   **前端接口预留与 SSE 契约 (Rich UI Rendering / ReAct 过程可观测性)**：
+    系统提供统一的 WebMVC (Servlet) SSE 接口 `/api/v1/agent/chat/stream`，配合虚拟线程使用 `SseEmitter` 异步推流。
+    `ChatOrchestrator` 通过 LangChain4j 1.12.2 的 `TokenStream` 完整回调链（`onPartialThinking`、`beforeToolExecution`、`onToolExecuted`、`onPartialResponse`、`onCompleteResponse`）将 ReAct 循环的每个阶段实时暴露给前端：
+    *   `event: thinking` -> 推送 LLM 的 CoT 推理 token 流（需要 LLM 后端支持 reasoning token 输出），前端渲染为**思考动画 + 打字机文本**。
+    *   `event: tool_start` -> 推送 `ToolEventDTO` JSON，标记工具开始执行（如"正在检索知识库：虚拟线程调度机制"），前端渲染为**加载动画 + 工具名标签**。
+    *   `event: tool_result` -> 推送 `ToolEventDTO` JSON，标记工具执行完成（如"检索到 5 条知识片段，耗时 320ms"），前端渲染为**完成卡片**。
+    *   `event: message` -> 推送 Markdown 文本流，前端渲染为**打字机对话**。
     *   `event: citations` -> 推送 JSON 格式的溯源数组（包含 `doc_id`, `chunk_id`），前端渲染为**富文本引用卡片**。
+    *   `event: done` -> 推送空 JSON `{}`，标记整个 ReAct 循环结束。
+    *   `event: error` -> 推送 `{ code, message }` JSON，前端渲染为**错误提示**。
 
 ## 2. RAG 核心引擎模块[core]
 
