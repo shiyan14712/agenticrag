@@ -9,7 +9,7 @@ import org.springframework.stereotype.Service;
 
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentDeleteRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentVectorizeRequestDTO;
-import com.yoswell.agenticrag.retrieval.document.index.KnowledgeChunkIndexService;
+import com.yoswell.agenticrag.retrieval.document.service.KnowledgeChunkIndexService;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentVectorizationService;
 
 import tools.jackson.databind.ObjectMapper;

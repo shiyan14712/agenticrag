@@ -1,10 +1,11 @@
-package com.yoswell.agenticrag.retrieval.document.index;
+package com.yoswell.agenticrag.retrieval.document.service;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import com.yoswell.agenticrag.retrieval.document.dto.KnowledgeChunkDocumentDTO;
 import org.apache.http.util.EntityUtils;
 import org.elasticsearch.client.Request;
 import org.elasticsearch.client.ResponseException;
@@ -15,8 +16,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.yoswell.agenticrag.core.agent.dto.RetrievedChunkDTO;
-import com.yoswell.agenticrag.retrieval.document.index.constants.KnowledgeChunkIndexConstants;
-import com.yoswell.agenticrag.retrieval.document.index.dto.KnowledgeChunkSearchHitDTO;
+import com.yoswell.agenticrag.common.constants.KnowledgeChunkIndexConstants;
+import com.yoswell.agenticrag.retrieval.document.dto.KnowledgeChunkSearchHitDTO;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -52,7 +53,7 @@ public class KnowledgeChunkIndexService {
      *
      * @param chunks 需要写入的知识块集合
      */
-    public void indexChunks(List<KnowledgeChunkDocument> chunks) {
+    public void indexChunks(List<KnowledgeChunkDocumentDTO> chunks) {
         if (chunks == null || chunks.isEmpty()) {
             return;
         }
@@ -64,7 +65,7 @@ public class KnowledgeChunkIndexService {
         ensureIndexExists(chunks.get(0).contentVector().size());
 
         for (int index = 0; index < chunks.size(); index++) {
-            KnowledgeChunkDocument chunk = chunks.get(index);
+            KnowledgeChunkDocumentDTO chunk = chunks.get(index);
             try {
                 Request request = new Request(KnowledgeChunkIndexConstants.METHOD_PUT, documentPath(chunk.chunkId()));
                 request.setJsonEntity(objectMapper.writeValueAsString(chunk));

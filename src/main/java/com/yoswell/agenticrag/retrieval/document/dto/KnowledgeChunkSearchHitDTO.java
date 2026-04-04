@@ -1,4 +1,4 @@
-package com.yoswell.agenticrag.retrieval.document.index.dto;
+package com.yoswell.agenticrag.retrieval.document.dto;
 
 import java.util.List;
 

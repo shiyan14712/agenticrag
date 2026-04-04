@@ -16,7 +16,7 @@ import com.yoswell.agenticrag.core.agent.dto.CitationDTO;
 import com.yoswell.agenticrag.core.agent.dto.RagSearchResultDTO;
 import com.yoswell.agenticrag.core.agent.dto.RetrievedChunkDTO;
 import com.yoswell.agenticrag.core.agent.rag.RerankerClient;
-import com.yoswell.agenticrag.retrieval.document.index.KnowledgeChunkIndexService;
+import com.yoswell.agenticrag.retrieval.document.service.KnowledgeChunkIndexService;
 import com.yoswell.agenticrag.web.security.model.TenantUser;
 
 import dev.langchain4j.agent.tool.Tool;
@@ -120,6 +120,16 @@ public class RagTool {
         return normalized.substring(0, 50) + "...";
     }
 
+    /**
+     * Calculates RRF scores for each chunk and adds them to the rrfScores map.
+     *
+     * RRF(d) = \sum_{i=1}^{m} \frac{1}{RRF_K + rank(d)}
+     * d for Document-Block, m for Num of Search Channels
+     * rank(d) for rank of d in the search channel, RRF_K for smoothing constant.
+     * @param hits List of retrieved chunks from a single search channel
+     * @param chunkRegistry Registry to track unique chunks across channels
+     * @param rrfScores Accumulated RRF scores map
+     */
     private void mergeRrfScores(List<RetrievedChunkDTO> hits,
                                 Map<String, RetrievedChunkDTO> chunkRegistry,
                                 Map<String, Double> rrfScores) {

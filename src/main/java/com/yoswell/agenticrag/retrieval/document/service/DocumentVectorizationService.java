@@ -11,11 +11,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentVectorizeRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
-import com.yoswell.agenticrag.retrieval.document.index.KnowledgeChunkDocument;
-import com.yoswell.agenticrag.retrieval.document.index.KnowledgeChunkIndexService;
+import com.yoswell.agenticrag.retrieval.document.dto.KnowledgeChunkDocumentDTO;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentProcessingStatus;
 import com.yoswell.agenticrag.retrieval.document.parser.DocumentParserFactory;
@@ -100,7 +98,7 @@ public class DocumentVectorizationService {
             int totalChunks = parsedDocument.chunks().size();
             log.info("[Offline RAG][PARSE] 文档解析完成: documentId={}, chunkCount={}", metadata.getDocumentId(), totalChunks);
 
-            List<KnowledgeChunkDocument> indexedChunks = new ArrayList<>(totalChunks);
+            List<KnowledgeChunkDocumentDTO> indexedChunks = new ArrayList<>(totalChunks);
             for (int index = 0; index < totalChunks; index++) {
             var chunk = parsedDocument.chunks().get(index);
             int processed = index + 1;
@@ -110,7 +108,7 @@ public class DocumentVectorizationService {
             }
 
                 Embedding embedding = embeddingModel.embed(chunk.content()).content();
-                indexedChunks.add(new KnowledgeChunkDocument(
+                indexedChunks.add(new KnowledgeChunkDocumentDTO(
                         chunk.chunkId(),
                         metadata.getDocumentId(),
                         sourceFileName,

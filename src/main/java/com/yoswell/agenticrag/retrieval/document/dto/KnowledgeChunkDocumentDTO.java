@@ -1,4 +1,4 @@
-package com.yoswell.agenticrag.retrieval.document.index;
+package com.yoswell.agenticrag.retrieval.document.dto;
 
 import java.util.List;
 
@@ -15,7 +15,7 @@ import java.util.List;
  * @param content 原始文本内容
  * @param contentVector 对应的向量表示
  */
-public record KnowledgeChunkDocument(
+public record KnowledgeChunkDocumentDTO(
         String chunkId,
         String documentId,
         String documentName,

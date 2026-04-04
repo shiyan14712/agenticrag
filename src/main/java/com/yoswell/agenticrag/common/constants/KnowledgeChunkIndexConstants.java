@@ -1,4 +1,4 @@
-package com.yoswell.agenticrag.retrieval.document.index.constants;
+package com.yoswell.agenticrag.common.constants;
 
 import java.util.List;
 
