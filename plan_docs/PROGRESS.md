@@ -4,8 +4,17 @@
 
 ### 基础架构与配置
 - 已完成 Spring Boot 4.0.5 + LangChain4j + MySQL + Redis + Kafka + MinIO + Elasticsearch 的基础工程集成。
+- 已完成 LangChain4j `0.36.x -> 1.12.2` 大版本迁移，移除 `langchain4j-spring-boot-starter`（该 starter 当前不支持 Spring Boot 4.x）。
 - 已完成 `application.yaml` 的真实环境接入配置，并补充了 Elasticsearch 鉴权占位字段、RAG 索引名和分层记忆参数。
 - 已启用异步能力，`ObjectMapper` 统一使用 `findAndRegisterModules()`。
+
+### LangChain4j 1.12.2 大版本迁移 (Spring Boot 4 兼容)
+- 已将模型接口从 `ChatLanguageModel` / `StreamingChatLanguageModel` 迁移为 `ChatModel` / `StreamingChatModel`。
+- 已移除 `@AiService` 注解自动注册路径，新增 `AiServiceConfig`，统一通过 `AiServices.create(...)` / `AiServices.builder(...)` 手动注册 Spring Bean。
+- 已在手动装配时显式挂接 `ChatMemoryProvider` 与工具集合（`RagTool`、`PreferenceTool`），确保 ReAct 与分层记忆行为保持一致。
+- 已完成 `TokenStream` API 迁移：`onNext/onComplete` 升级为 `onPartialResponse/onCompleteResponse`。
+- 已完成分层记忆摘要调用迁移：`chatLanguageModel.generate(...)` 升级为 `chatModel.chat(...)`。
+- 已执行并通过编译验证：`./mvnw.cmd -DskipTests compile`。
 
 ### Agent 编排与 SSE 对话
 - 已完成 `AgentController` 与 `ChatOrchestrator` 的职责拆分，流式对话仍由统一 SSE 接口输出。
@@ -84,7 +93,7 @@
 
 - **Agent 重构 (ReAct 模式升级)**：
   - 彻底移除了原先充当硬编码路由守卫的 `IntentRouterAgent` 及关联意图对象 `IntentDecisionDTO`。
-  - 将 `ChatOrchestrator` 的核心链路改造为依托 LangChain4j `@AiService` 的纯 ReAct 模式。不再通过代码 `if/else` 判断是否调用 RAG 检索，而是将所有的 `@Tool`（如 `RagTool`、`PreferenceTool`）代理给大模型自主判断。
+  - 将 `ChatOrchestrator` 的核心链路改造为纯 ReAct 模式。不再通过代码 `if/else` 判断是否调用 RAG 检索，而是将所有的 `@Tool`（如 `RagTool`、`PreferenceTool`）代理给大模型自主判断（该阶段最初基于 `@AiService` 注解实现，已在 2026-04-04 迁移为 `AiServices.builder(...)` 手动装配）。
   - 完善了 `ChatOrchestrator` 的虚拟线程上下文拦截，在 Agent 触发隐式 Tool Calling 时优雅地提取 Citations 引用，并推送到前端 SSE 事件。
 - **虚拟线程异步生成会话标题**：
   - 修复了 LLM 的 Prompt Hijacking 漏洞（对用户输入进行 `{{it}}` 沙箱包裹与规范约束）。
@@ -140,4 +149,22 @@
 - **JWT 稳定性补强**：
   - `SecurityConfig` 明确配置 `SessionCreationPolicy.STATELESS`。
   - 修复登出场景 Bearer Token 解析，确保 Redis 中 Access Token 正确失效。
+
+## 本轮新增 (2026-04-04, LangChain4j 1.12.2 大版本迁移)
+
+- **依赖层迁移**：
+  - 将 LangChain4j 版本升级至 `1.12.2`。
+  - 移除 `langchain4j-spring-boot-starter`，改为显式依赖 `langchain4j` 与 `langchain4j-open-ai`。
+- **模型层 API 迁移**：
+  - 将 `LlmConfig` 中返回类型切换为 `ChatModel` / `StreamingChatModel`。
+  - 保留 OpenAI/Doubao embedding 双提供方配置，兼容当前 provider 切换策略。
+- **AI Service 装配迁移**：
+  - 新增 `AiServiceConfig` 统一注册 `SimpleChatAgent`、`EnterpriseAgent`、`RagStructuredAgent`。
+  - `EnterpriseAgent` 挂接流式模型、`ChatMemoryProvider` 与工具集，维持现有 ReAct 能力。
+  - `RagStructuredAgent` 挂接非流式模型、`ChatMemoryProvider` 与 `RagTool`，维持结构化问答链路。
+- **调用链兼容修复**：
+  - `TokenStream` 回调迁移到 `onPartialResponse/onCompleteResponse`，恢复 WebMVC SSE 流式输出。
+  - `HierarchicalChatMemoryStore` 摘要生成调用升级到 `chatModel.chat(...)`。
+- **验证结果**：
+  - 已执行 `./mvnw.cmd -DskipTests compile`，编译通过（BUILD SUCCESS）。
 

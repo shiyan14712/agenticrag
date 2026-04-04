@@ -3,7 +3,7 @@
 ---
 
 ## 0. 项目概述 (Project Overview)
-本项目是一个基于 Java21 生态（Spring Boot 4.0.5 + LangChain4j + ElasticSearch + Kafka + Redis + MySQL + WebMVC + Virtual Threads）的企业级 Agentic RAG（检索增强生成智能体）系统。
+本项目是一个基于 Java21 生态（Spring Boot 4.0.5 + LangChain4j 1.12.2 + ElasticSearch + Kafka + Redis + MySQL + WebMVC + Virtual Threads）的企业级 Agentic RAG（检索增强生成智能体）系统。
 本系统的核心理念是**渐进式能力叠加**。它不仅提供传统的对话问答，更具备单一 Agent 编排（ReAct）、分级上下文压缩、跨会话长期记忆、以及基于 MinerU 的高精度异构文档解析管道。
 
 **核心存储规范，分工明确各司其职：**
@@ -21,6 +21,7 @@
 *   **技术栈**：Spring Boot WebMVC (Virtual Threads, SseEmitter), LangChain4j, JSON Schema (Jackson)
 *   **单一 Agent 编排机制**：
     * **ReAct 模式 (常规问答)**：基于 LangChain4j `AiServices`。大模型根据当前上下文，按照 `Thought -> Action (调用 Tool) -> Observation` 循环自主执行。
+    * **Spring Boot 4 + LangChain4j 1.12.2 装配基线**：不依赖 `langchain4j-spring-boot-starter` 与 `@AiService` 自动注册；必须在配置类中使用 `AiServices.builder(...)/AiServices.create(...)` 手动注册 Spring Bean，并显式挂接 `chatMemoryProvider`、`tools`。
 *   **前端接口预留与 SSE 契约 (Rich UI Rendering)**：
     系统提供统一的 WebMVC (Servlet) SSE 接口 `/api/v1/agent/chat/stream`，配合虚拟线程使用 `SseEmitter` 异步推流。后端会向前端推送不同类型的 Event，前端据此渲染不同的 UI 组件：
     *   `event: tool_call` -> 推送工具执行状态（如“正在检索知识库：2025财报”），前端渲染为加载动画。
@@ -108,7 +109,7 @@
     *   **生命周期**：每次新建 Session，拦截器自动读取该用户的长期记忆表，转化为 System Prompt 注入对话初始上下文中。
 *   **工程落地补充（已实现约束）**：
     *   `memoryId` 在当前工程中等价于真实 `sessionId`，绝对不要假设它是 `"userId_sessionId"` 拼接串；需要先查 `chat_session` 再拿到 `user_id`。
-    *   LangChain4j 侧必须显式挂接 `ChatMemoryProvider`，确保 `@AiService` 真正使用 `HierarchicalChatMemoryStore`，不能只定义 Store Bean 却没有被 AI Service 消费。
+    *   LangChain4j 侧必须显式挂接 `ChatMemoryProvider`，确保通过 `AiServices.builder(...)` 注册的 AI Service 代理真正使用 `HierarchicalChatMemoryStore`，不能只定义 Store Bean 却没有被 AI Service 消费。
     *   L2/L3 压缩结果除了写 Redis 以外，还必须回写 `chat_message.compressed_content` 与 `chat_session.summary`，否则“分层记忆”无法在持久化层闭环。
 
 ## 5. 异构文档处理与消息管道模块
@@ -160,7 +161,7 @@
 
 ---
 ## 给 AI 编程助手的开发指令：
-1. **严格遵守职责分离**：不要在 Controller 层写业务逻辑；大模型调用和提示词组装必须封装在独立的 Service 或 LangChain4j 的 `AiServices` 接口中。RAG Agent Loop 核心编排不要全部依赖框架和Annotation，自己实现也不难，这是为了体现项目理解深度。
+1. **严格遵守职责分离**：不要在 Controller 层写业务逻辑；大模型调用和提示词组装必须封装在独立的 Service 或 LangChain4j 的 `AiServices` 接口中。Spring Boot 4.x 下不要依赖 `@AiService` 注解自动装配，统一通过配置类手动注册 AI Service Bean。RAG Agent Loop 核心编排不要全部依赖框架和Annotation，自己实现也不难，这是为了体现项目理解深度。
 2. **面向契约编程**：前端 UI 需要的References溯源 (Citations) 和计划进度 (Todos)，必须使用 Jackson 生成/解析严格的 JSON Schema，绝对不要尝试用正则解析大模型的 Markdown 输出。LangChain4J应该是支持带上JSON Schema的。
 3. **依赖注入**：充分利用 Spring 的 IoC 容器，所有的 Tool（如 `RagTool`）必须是 Bean，以便内部能够注入 ES Client 或 Mapper。
 4. **日志规范**：在 Tool 被调用、Kafka 消息投递与消费、以及触发 L2/L3 记忆压缩时，必须使用 `log.info` 或 `log.debug` 打印关键追踪信息，方便链路排查。
