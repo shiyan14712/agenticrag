@@ -292,3 +292,59 @@ org.springframework.security.authorization.AuthorizationDeniedException: Access 
 5. **验证结果**：修复后已通过 `mvnw -DskipTests compile` 编译验证。
 
 ---
+
+## 🐞 [2026-04-04] RagRetrievalContextHolder 在 ReAct 异步线程模型下丢失会话上下文，导致 citations 静默丢失
+
+### 现象描述 (Symptom)
+在 `/api/v1/agent/chat/stream` 的 ReAct 对话过程中，前端能够正常收到 `thinking / tool_start / tool_result / message` 等 SSE 事件，工具看起来也执行成功；但在流结束阶段，`citations` 经常为空数组，表现为：
+1. 大模型确实调用了 `search_enterprise_knowledge`，但最终回答没有引用卡片。
+2. `onCompleteResponse` 中 `ragRetrievalContextHolder.consume(sessionId)` 返回 `Optional.empty()`。
+3. 多轮工具调用场景下，引用信息不是部分丢失就是完全丢失。
+
+### 根因分析 (Root Cause Analysis)
+该问题本质是 **ThreadLocal 传播假设与真实线程拓扑不一致**：
+
+1. **旧实现依赖 `InheritableThreadLocal`**：
+    - `dispatchDynamicStream()` 中通过 `bindSession(sessionId)` 将会话写入 `InheritableThreadLocal`。
+    - `publish(result)` 再通过 `activeSessionId.get()` 读取会话并聚合结果。
+
+2. **ReAct 回调与 Tool 执行发生在线程池线程**：
+    - `Thread.startVirtualThread(...)` 只负责启动流。
+    - LangChain4j 的 `TokenStream.start()` 后续回调（含 Tool 执行）可能运行在 IO/Executor 线程，而不是虚拟线程本身或其子线程。
+    - `InheritableThreadLocal` 无法跨线程池传递到这些回调线程。
+
+3. **直接后果是静默丢弃**：
+    - `publish(result)` 里读取到 `sessionId == null`，旧逻辑直接 `return`。
+    - 结果未进入 `sessionResults`，最终 `consume(sessionId)` 取不到数据，`citations` 为空。
+
+4. **为什么 SSE 主流看起来正常**：
+    - `SseEmitter` 支持跨线程发送，`message`/`tool_*` 推送本身不依赖 `ThreadLocal`。
+    - 所以“文本流正常但引用丢失”成为典型误导现象。
+
+### 解决方案 (Resolution)
+本次修复将上下文传播从“隐式 ThreadLocal”改为“显式线程-会话映射 + 生命周期清理”：
+
+1. **重构 `RagRetrievalContextHolder` 上下文模型**：
+    - 删除 `InheritableThreadLocal`。
+    - 新增 `threadToSession: Map<Long, String>`，按 `threadId -> sessionId` 记录当前线程绑定。
+    - 新增 `sessionToThreads: Map<String, Set<Long>>`，用于回答结束时反向批量清理。
+
+2. **新增线程绑定 API**：
+    - `bindCurrentThread(sessionId)`：入口线程作用域绑定。
+    - `registerCurrentThread(sessionId)`：在当前回调线程注册会话。
+    - `unregisterCurrentThread()`：解除当前线程绑定。
+    - `clearSessionBindings(sessionId)`：在完成/异常时清理该会话所有线程绑定，避免线程池复用串会话。
+
+3. **编排器侧接入显式注册与清理**（`ChatOrchestrator`）：
+    - 流启动时先 `clearSessionResult(sessionId)` 并 `bindCurrentThread(sessionId)`。
+    - 在 `onPartialThinking / beforeToolExecution / onToolExecuted / onPartialResponse / onCompleteResponse / onError` 回调入口执行 `registerCurrentThread(sessionId)`。
+    - 在 `onCompleteResponse / onError / catch` 中执行 `clearSessionBindings(sessionId)`，并在异常路径清理 `clearSessionResult(sessionId)`。
+
+4. **可观测性增强**：
+    - `publish()` 在未绑定会话时改为 `warn` 日志，不再无声失败，便于快速定位线程上下文问题。
+
+5. **验证结果**：
+    - 已执行 `mvnw.cmd -DskipTests clean compile`，构建通过（BUILD SUCCESS）。
+    - 在多次 Tool 调用场景下，`sessionResults` 可正确按 `chunkId` 合并并在 `onCompleteResponse` 输出 citations。
+
+---
