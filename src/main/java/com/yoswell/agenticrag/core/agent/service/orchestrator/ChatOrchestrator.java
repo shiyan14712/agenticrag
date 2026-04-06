@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -56,6 +57,7 @@ import tools.jackson.databind.ObjectMapper;
  * {@code onPartialResponse}、{@code onCompleteResponse}。</p>
  */
 @Service
+@RequiredArgsConstructor
 public class ChatOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(ChatOrchestrator.class);
@@ -68,22 +70,12 @@ public class ChatOrchestrator {
     private final StringRedisTemplate stringRedisTemplate;
     private final ChatSessionMapper chatSessionMapper;
 
-    public ChatOrchestrator(EnterpriseAgent enterpriseAgent,
-                            ObjectMapper objectMapper,
-                            ChatMessageService chatMessageService,
-                            RagRetrievalContextHolder ragRetrievalContextHolder,
-                            ChatService chatService,
-                            StringRedisTemplate stringRedisTemplate,
-                            ChatSessionMapper chatSessionMapper) {
-        this.enterpriseAgent = enterpriseAgent;
-        this.objectMapper = objectMapper;
-        this.chatMessageService = chatMessageService;
-        this.ragRetrievalContextHolder = ragRetrievalContextHolder;
-        this.chatService = chatService;
-        this.stringRedisTemplate = stringRedisTemplate;
-        this.chatSessionMapper = chatSessionMapper;
-    }
-
+    /**
+     * 启动 ReAct Agent Loop 推理循环
+     * @param sessionId 会话 ID
+     * @param message 用户消息
+     * @return SseEmitter 流式响应
+     */
     public SseEmitter dispatchDynamicStream(String sessionId, String message) {
         SseEmitter emitter = new SseEmitter(10L * 60 * 1000); // 10 minutes timeout
         
