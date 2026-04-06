@@ -15,6 +15,10 @@ import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiEmbeddingModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
+import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
+import dev.langchain4j.http.client.jdk.JdkHttpClient;
+import java.net.http.HttpClient;
+import java.util.Map;
 
 @Configuration
 public class LlmConfig {
@@ -53,8 +57,20 @@ public class LlmConfig {
     private Integer embeddingDimensions;
 
     @Bean
-    public ChatModel chatLanguageModel() {
+    public JdkHttpClientBuilder jdkHttpClientBuilder() {
+        HttpClient.Builder httpClientBuilder = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(Duration.ofSeconds(60));
+
+        return JdkHttpClient.builder()
+                .httpClientBuilder(httpClientBuilder);
+    }
+
+    @Bean
+    public ChatModel chatLanguageModel(JdkHttpClientBuilder jdkHttpClientBuilder) {
         return OpenAiChatModel.builder()
+                .httpClientBuilder(jdkHttpClientBuilder)
+                .customHeaders(Map.of("Connection", "close"))
                 .baseUrl(llmBaseUrl)
                 .apiKey(llmApiKey)
                 .modelName(llmModelName)
@@ -68,8 +84,9 @@ public class LlmConfig {
     }
 
     @Bean
-    public StreamingChatModel streamingChatLanguageModel() {
+    public StreamingChatModel streamingChatLanguageModel(JdkHttpClientBuilder jdkHttpClientBuilder) {
         return OpenAiStreamingChatModel.builder()
+                .httpClientBuilder(jdkHttpClientBuilder)
                 .baseUrl(llmBaseUrl)
                 .apiKey(llmApiKey)
                 .modelName(llmModelName)
