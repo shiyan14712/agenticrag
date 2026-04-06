@@ -1,14 +1,12 @@
 package com.yoswell.agenticrag.retrieval.document.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentVectorizeRequestDTO;
@@ -40,17 +38,20 @@ public class DocumentVectorizationService {
     private final DocumentParserFactory documentParserFactory;
     private final EmbeddingModel embeddingModel;
     private final KnowledgeChunkIndexService knowledgeChunkIndexService;
+    private final DocumentProcessingStateService documentProcessingStateService;
 
     public DocumentVectorizationService(DocumentMetadataMapper documentMetadataMapper,
                                         MinioStorageService minioStorageService,
                                         DocumentParserFactory documentParserFactory,
                                         EmbeddingModel embeddingModel,
-                                        KnowledgeChunkIndexService knowledgeChunkIndexService) {
+                                        KnowledgeChunkIndexService knowledgeChunkIndexService,
+                                        DocumentProcessingStateService documentProcessingStateService) {
         this.documentMetadataMapper = documentMetadataMapper;
         this.minioStorageService = minioStorageService;
         this.documentParserFactory = documentParserFactory;
         this.embeddingModel = embeddingModel;
         this.knowledgeChunkIndexService = knowledgeChunkIndexService;
+        this.documentProcessingStateService = documentProcessingStateService;
     }
 
     /**
@@ -58,7 +59,6 @@ public class DocumentVectorizationService {
      *
      * @param request 向量化阶段的上下文消息
      */
-    @Transactional
     public void vectorize(DocumentVectorizeRequestDTO request) {
         if (request == null || !StringUtils.hasText(request.documentId())) {
             throw new IllegalArgumentException("documentId must not be blank");
@@ -68,20 +68,38 @@ public class DocumentVectorizationService {
         log.info("[Offline RAG][VECTORIZE] 加载文档元数据成功: documentId={}, currentStatus={}, tenantId={}, kbId={}",
             metadata.getDocumentId(), metadata.getStatus(), metadata.getTenantId(), metadata.getKbId());
 
-        String statusBeforeParsing = metadata.getStatus();
-        updateStatus(metadata, DocumentProcessingStatus.PARSING);
-        log.info("[Offline RAG][VECTORIZE] 状态迁移: documentId={}, {} -> {}",
-            metadata.getDocumentId(), statusBeforeParsing, metadata.getStatus());
+        if (DocumentProcessingStatus.VECTORIZED.value().equals(metadata.getStatus())) {
+            log.info("[Offline RAG][VECTORIZE] 检测到重复消息，文档已是终态，直接跳过: documentId={}",
+                    metadata.getDocumentId());
+            return;
+        }
+
+        boolean claimed = documentProcessingStateService.transitionStatus(
+                metadata.getDocumentId(),
+                DocumentProcessingStatus.PARSING,
+                List.of(DocumentProcessingStatus.UPLOADED, DocumentProcessingStatus.FAILED)
+        );
+        if (!claimed) {
+            String currentStatus = documentProcessingStateService.getCurrentStatus(metadata.getDocumentId());
+            if (DocumentProcessingStatus.PARSING.value().equals(currentStatus)
+                    || DocumentProcessingStatus.VECTORIZED.value().equals(currentStatus)) {
+                log.info("[Offline RAG][VECTORIZE] 检测到重复或并发中的向量化任务，直接跳过: documentId={}, currentStatus={}",
+                        metadata.getDocumentId(), currentStatus);
+                return;
+            }
+            log.warn("[Offline RAG][VECTORIZE] 文档状态不符合向量化前置条件，仍尝试继续处理: documentId={}, currentStatus={}",
+                    metadata.getDocumentId(), currentStatus);
+        }
 
         try {
             String sourceFileUrl = firstNonBlank(request.fileUrl(), metadata.getMinioUrl());
             String sourceFileName = firstNonBlank(request.fileName(), metadata.getFileName());
             String sourceExtension = firstNonBlank(request.fileExtension(), metadata.getFileExtension());
-            String tenantId = firstNonBlank(request.tenantId(), metadata.getTenantId());
-            String kbId = firstNonBlank(request.kbId(), metadata.getKbId());
+            String tenantId = metadata.getTenantId();
+            String kbId = metadata.getKbId();
             List<String> allowedRoles = request.allowedRoles() == null || request.allowedRoles().isEmpty()
                     ? splitRoles(metadata.getAllowedRoles())
-                    : List.copyOf(request.allowedRoles());
+                    : splitRoles(metadata.getAllowedRoles());
 
             log.info("[Offline RAG][SOURCE] 已解析向量化输入源: documentId={}, tenantId={}, kbId={}, fileName={}, extension={}",
                 metadata.getDocumentId(), tenantId, kbId, sourceFileName, sourceExtension);
@@ -126,19 +144,18 @@ public class DocumentVectorizationService {
 
                     log.info("[Offline RAG][INDEX] 开始写入 ES 检索索引: documentId={}, chunkCount={}",
                         metadata.getDocumentId(), indexedChunks.size());
+            knowledgeChunkIndexService.deleteByDocumentId(metadata.getDocumentId(), tenantId);
             knowledgeChunkIndexService.indexChunks(indexedChunks);
 
-                    String statusBeforeVectorized = metadata.getStatus();
-            updateStatus(metadata, DocumentProcessingStatus.VECTORIZED);
-                    log.info("[Offline RAG][VECTORIZE] 状态迁移: documentId={}, {} -> {}",
-                        metadata.getDocumentId(), statusBeforeVectorized, metadata.getStatus());
-                    log.info("[Offline RAG][DONE] 文档向量化完成: documentId={}, chunks={}", metadata.getDocumentId(), indexedChunks.size());
+            documentProcessingStateService.updateStatus(metadata.getDocumentId(), DocumentProcessingStatus.VECTORIZED);
+            log.info("[Offline RAG][VECTORIZE] 状态迁移: documentId={}, {} -> {}",
+                    metadata.getDocumentId(), DocumentProcessingStatus.PARSING.value(), DocumentProcessingStatus.VECTORIZED.value());
+            log.info("[Offline RAG][DONE] 文档向量化完成: documentId={}, chunks={}", metadata.getDocumentId(), indexedChunks.size());
         } catch (Exception exception) {
-                    log.error("[Offline RAG][FAILED] 文档向量化失败: documentId={}", metadata.getDocumentId(), exception);
-                    String statusBeforeFailed = metadata.getStatus();
-            updateStatus(metadata, DocumentProcessingStatus.FAILED);
-                    log.warn("[Offline RAG][VECTORIZE] 状态迁移: documentId={}, {} -> {}",
-                        metadata.getDocumentId(), statusBeforeFailed, metadata.getStatus());
+            log.error("[Offline RAG][FAILED] 文档向量化失败: documentId={}", metadata.getDocumentId(), exception);
+            documentProcessingStateService.updateStatus(metadata.getDocumentId(), DocumentProcessingStatus.FAILED);
+            log.warn("[Offline RAG][VECTORIZE] 状态迁移: documentId={}, {} -> {}",
+                    metadata.getDocumentId(), DocumentProcessingStatus.PARSING.value(), DocumentProcessingStatus.FAILED.value());
             throw exception;
         }
     }
@@ -148,9 +165,8 @@ public class DocumentVectorizationService {
      *
      * @param documentId 文档业务 ID
      */
-    @Transactional
     public void markFailed(String documentId) {
-        updateStatus(requireMetadata(documentId), DocumentProcessingStatus.FAILED);
+        documentProcessingStateService.updateStatus(documentId, DocumentProcessingStatus.FAILED);
     }
 
     /**
@@ -168,18 +184,6 @@ public class DocumentVectorizationService {
         }
         return metadata;
     }
-
-    /**
-     * 更新文档处理状态并回写数据库。
-     *
-     * @param metadata 文档元数据
-     * @param status 目标状态
-     */
-    private void updateStatus(DocumentDO metadata, DocumentProcessingStatus status) {
-        metadata.setStatus(status.value());
-        documentMetadataMapper.updateById(metadata);
-    }
-
     /**
      * 把数据库里逗号分隔的角色串还原成列表。
      *

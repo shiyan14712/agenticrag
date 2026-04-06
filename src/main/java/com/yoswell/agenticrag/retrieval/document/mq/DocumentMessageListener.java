@@ -2,15 +2,17 @@ package com.yoswell.agenticrag.retrieval.document.mq;
 
 import java.util.Map;
 
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Service;
 
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentDeleteRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentVectorizeRequestDTO;
-import com.yoswell.agenticrag.retrieval.document.service.KnowledgeChunkIndexService;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentVectorizationService;
+import com.yoswell.agenticrag.retrieval.document.service.KnowledgeChunkIndexService;
 
 import tools.jackson.databind.ObjectMapper;
 
@@ -27,13 +29,16 @@ public class DocumentMessageListener {
     private final ObjectMapper objectMapper;
     private final DocumentVectorizationService documentVectorizationService;
     private final KnowledgeChunkIndexService knowledgeChunkIndexService;
+    private final DocumentKafkaProperties kafkaProperties;
 
     public DocumentMessageListener(ObjectMapper objectMapper,
                                    DocumentVectorizationService documentVectorizationService,
-                                   KnowledgeChunkIndexService knowledgeChunkIndexService) {
+                                   KnowledgeChunkIndexService knowledgeChunkIndexService,
+                                   DocumentKafkaProperties kafkaProperties) {
         this.objectMapper = objectMapper;
         this.documentVectorizationService = documentVectorizationService;
         this.knowledgeChunkIndexService = knowledgeChunkIndexService;
+        this.kafkaProperties = kafkaProperties;
     }
 
     /**
@@ -41,18 +46,25 @@ public class DocumentMessageListener {
      *
      * @param message Kafka 中的 JSON 字符串消息体
      */
-    @KafkaListener(topics = "doc-vectorize-request", groupId = "agenticrag-group")
-    public void listenVectorizeRequest(String message) {
-        log.info("[Offline RAG][VECTORIZE_CONSUMER] 收到 doc-vectorize-request 消息，开始解析。payloadSize={} chars", message.length());
+    @KafkaListener(
+            topics = "#{@documentKafkaProperties.topics.vectorizeRequest}",
+            containerFactory = "documentKafkaListenerContainerFactory"
+    )
+    public void listenVectorizeRequest(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
+        String message = record.value();
+        log.info("[Offline RAG][VECTORIZE_CONSUMER] 收到 Kafka 消息: topic={}, partition={}, offset={}, key={}, payloadSize={} chars",
+                record.topic(), record.partition(), record.offset(), record.key(), message.length());
         try {
             DocumentVectorizeRequestDTO request = objectMapper.readValue(message, DocumentVectorizeRequestDTO.class);
             log.info("[Offline RAG][VECTORIZE_CONSUMER] 消息解析完成: documentId={}, tenantId={}, kbId={}, fileName={}",
                     request.documentId(), request.tenantId(), request.kbId(), request.fileName());
             documentVectorizationService.vectorize(request);
             log.info("[Offline RAG][VECTORIZE_CONSUMER] 向量化流程执行完成: documentId={}", request.documentId());
+            acknowledgment.acknowledge();
         } catch (Exception exception) {
-            log.error("[Offline RAG][VECTORIZE_CONSUMER] doc-vectorize-request 处理失败", exception);
-            throw new RuntimeException("doc-vectorize-request processing failed", exception);
+            log.error("[Offline RAG][VECTORIZE_CONSUMER] Kafka 消息处理失败: topic={}, key={}",
+                    record.topic(), record.key(), exception);
+            throw new RuntimeException("document vectorize processing failed", exception);
         }
     }
 
@@ -61,15 +73,22 @@ public class DocumentMessageListener {
      *
      * @param message Kafka 中的 JSON 字符串消息体
      */
-    @KafkaListener(topics = "doc-delete-request", groupId = "agenticrag-group")
-    public void listenDocumentDeleteRequest(String message) {
-        log.info("[Offline RAG][DELETE_CONSUMER] 收到 doc-delete-request 消息，开始解析。payloadSize={} chars", message.length());
+    @KafkaListener(
+            topics = "#{@documentKafkaProperties.topics.deleteRequest}",
+            containerFactory = "documentKafkaListenerContainerFactory"
+    )
+    public void listenDocumentDeleteRequest(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
+        String message = record.value();
+        log.info("[Offline RAG][DELETE_CONSUMER] 收到 Kafka 消息: topic={}, partition={}, offset={}, key={}, payloadSize={} chars",
+                record.topic(), record.partition(), record.offset(), record.key(), message.length());
         try {
             DocumentDeleteRequestDTO request = objectMapper.readValue(message, DocumentDeleteRequestDTO.class);
             knowledgeChunkIndexService.deleteByDocumentId(request.documentId(), request.tenantId());
+            acknowledgment.acknowledge();
         } catch (Exception exception) {
-            log.error("[Offline RAG][DELETE_CONSUMER] Failed to process doc-delete-request", exception);
-            throw new RuntimeException("doc-delete-request processing failed", exception);
+            log.error("[Offline RAG][DELETE_CONSUMER] Failed to process Kafka delete message: topic={}, key={}",
+                    record.topic(), record.key(), exception);
+            throw new RuntimeException("document delete processing failed", exception);
         }
     }
 
@@ -78,10 +97,15 @@ public class DocumentMessageListener {
      *
      * @param message 死信消息体
      */
-    @KafkaListener(topics = "doc-dlq", groupId = "agenticrag-group")
+    @KafkaListener(
+            topics = "#{@documentKafkaProperties.topics.deadLetter}",
+            containerFactory = "documentKafkaListenerContainerFactory"
+    )
     @SuppressWarnings("unchecked")
-    public void listenDeadLetterQueue(String message) {
-        log.error("[Offline RAG][DLQ_CONSUMER] 从 doc-dlq 收到失败的文档处理消息: {}", message);
+    public void listenDeadLetterQueue(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
+        String message = record.value();
+        log.error("[Offline RAG][DLQ_CONSUMER] 收到死信消息: topic={}, sourceKey={}, payload={}",
+                kafkaProperties.getTopics().getDeadLetter(), record.key(), message);
         try {
             Map<String, Object> payload = objectMapper.readValue(message, Map.class);
             Object documentId = payload.get("documentId");
@@ -89,7 +113,9 @@ public class DocumentMessageListener {
                 documentVectorizationService.markFailed(documentId.toString());
             }
         } catch (Exception exception) {
-            log.warn("[Offline RAG][DLQ_CONSUMER] Failed to parse doc-dlq payload for status update", exception);
+            log.warn("[Offline RAG][DLQ_CONSUMER] Failed to parse dead-letter payload for status update", exception);
+        } finally {
+            acknowledgment.acknowledge();
         }
     }
 }

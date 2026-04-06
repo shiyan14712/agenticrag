@@ -22,8 +22,16 @@ spring:
 
   kafka:
     bootstrap-servers: 10.60.31.253:9092
+    producer:
+      acks: all
+      retries: 10
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        delivery.timeout.ms: 120000
     consumer:
       group-id: agenticrag-group
+      enable-auto-commit: false
 
   elasticsearch:
     uris: http://10.60.31.253:9200
@@ -93,3 +101,16 @@ server:
   port: 8000
   tomcat:
     max-swallow-size: -1
+
+agenticrag:
+  kafka:
+    topics:
+      parse-request: doc-parse-request
+      vectorize-request: doc-vectorize-request
+      delete-request: doc-delete-request
+      dead-letter: doc-dlq
+    retry:
+      max-attempts: 3
+      interval-ms: 1000
+      multiplier: 2.0
+      max-interval-ms: 10000

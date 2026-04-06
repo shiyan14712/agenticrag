@@ -21,10 +21,14 @@ public class DocumentMessageProducer {
 
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper;
+    private final DocumentKafkaProperties kafkaProperties;
 
-    public DocumentMessageProducer(KafkaTemplate<String, String> kafkaTemplate, ObjectMapper objectMapper) {
+    public DocumentMessageProducer(KafkaTemplate<String, String> kafkaTemplate,
+                                   ObjectMapper objectMapper,
+                                   DocumentKafkaProperties kafkaProperties) {
         this.kafkaTemplate = kafkaTemplate;
         this.objectMapper = objectMapper;
+        this.kafkaProperties = kafkaProperties;
     }
 
     /**
@@ -33,28 +37,30 @@ public class DocumentMessageProducer {
      * @param request 解析阶段所需的上下文
      */
     public void sendDocParseRequest(DocumentParseRequestDTO request) {
-        log.info("[Upload Pipeline][DISPATCH] 开始发送 doc-parse-request: documentId={}, tenantId={}, kbId={}, fileExtension={}",
-                request.documentId(), request.tenantId(), request.kbId(), request.fileExtension());
+        String topic = kafkaProperties.getTopics().getParseRequest();
+        log.info("[Upload Pipeline][DISPATCH] 开始发送 Kafka 消息: topic={}, documentId={}, tenantId={}, kbId={}, fileExtension={}",
+                topic, request.documentId(), request.tenantId(), request.kbId(), request.fileExtension());
         try {
             String payload = objectMapper.writeValueAsString(request);
-            kafkaTemplate.send("doc-parse-request", request.documentId(), payload)
+            kafkaTemplate.send(topic, request.documentId(), payload)
                     .whenComplete((result, ex) -> {
                         if (ex == null) {
                             if (result != null && result.getRecordMetadata() != null) {
-                                log.info("[Upload Pipeline][DISPATCH] doc-parse-request 发送成功: documentId={}, topic={}, partition={}, offset={}",
+                                log.info("[Upload Pipeline][DISPATCH] Kafka 消息发送成功: documentId={}, topic={}, partition={}, offset={}",
                                         request.documentId(),
                                         result.getRecordMetadata().topic(),
                                         result.getRecordMetadata().partition(),
                                         result.getRecordMetadata().offset());
                             } else {
-                                log.info("[Upload Pipeline][DISPATCH] doc-parse-request 发送成功: documentId={}", request.documentId());
+                                log.info("[Upload Pipeline][DISPATCH] Kafka 消息发送成功: topic={}, documentId={}", topic, request.documentId());
                             }
                         } else {
-                            log.error("[Upload Pipeline][DISPATCH] doc-parse-request 发送失败: documentId={}", request.documentId(), ex);
+                            log.error("[Upload Pipeline][DISPATCH] Kafka 消息发送失败: topic={}, documentId={}",
+                                    topic, request.documentId(), ex);
                         }
                     });
         } catch (JacksonException e) {
-            throw new RuntimeException("Failed to serialize doc-parse-request payload", e);
+            throw new RuntimeException("Failed to serialize document parse payload", e);
         }
     }
 
@@ -64,19 +70,23 @@ public class DocumentMessageProducer {
      * @param request 包含文档与租户标识的删除请求
      */
     public void sendDocumentDeletedRequest(DocumentDeleteRequestDTO request) {
-        log.info("[DocumentMessageProducer] Sending doc-delete-request for documentId: {}, tenantId: {}", request.documentId(), request.tenantId());
+        String topic = kafkaProperties.getTopics().getDeleteRequest();
+        log.info("[DocumentMessageProducer] Sending Kafka message. topic={}, documentId={}, tenantId={}",
+                topic, request.documentId(), request.tenantId());
         try {
             String payload = objectMapper.writeValueAsString(request);
-            kafkaTemplate.send("doc-delete-request", request.documentId(), payload)
+            kafkaTemplate.send(topic, request.documentId(), payload)
                     .whenComplete((result, ex) -> {
                         if (ex == null) {
-                            log.debug("[DocumentMessageProducer] Successfully sent doc-delete-request message for document: {}", request.documentId());
+                            log.debug("[DocumentMessageProducer] Successfully sent Kafka message. topic={}, documentId={}",
+                                    topic, request.documentId());
                         } else {
-                            log.error("[DocumentMessageProducer] Failed to send doc-delete-request message for document: {}", request.documentId(), ex);
+                            log.error("[DocumentMessageProducer] Failed to send Kafka message. topic={}, documentId={}",
+                                    topic, request.documentId(), ex);
                         }
                     });
         } catch (JacksonException e) {
-            throw new RuntimeException("Failed to serialize doc-delete-request payload", e);
+            throw new RuntimeException("Failed to serialize document delete payload", e);
         }
     }
 }

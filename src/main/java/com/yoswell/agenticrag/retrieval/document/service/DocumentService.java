@@ -17,6 +17,7 @@ import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentParseReques
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentProcessingStatus;
+import com.yoswell.agenticrag.retrieval.document.mq.DocumentKafkaProperties;
 import com.yoswell.agenticrag.retrieval.document.mq.DocumentMessageProducer;
 
 /**
@@ -35,15 +36,18 @@ public class DocumentService {
     private final MinioStorageService minioStorageService;
     private final DocumentMetadataMapper documentMetadataMapper;
     private final DocumentMessageProducer documentMessageProducer;
+    private final DocumentKafkaProperties kafkaProperties;
     private final org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
 
     public DocumentService(MinioStorageService minioStorageService,
                            DocumentMetadataMapper documentMetadataMapper,
                            DocumentMessageProducer documentMessageProducer,
+                           DocumentKafkaProperties kafkaProperties,
                            org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate) {
         this.minioStorageService = minioStorageService;
         this.documentMetadataMapper = documentMetadataMapper;
         this.documentMessageProducer = documentMessageProducer;
+        this.kafkaProperties = kafkaProperties;
         this.redisTemplate = redisTemplate;
     }
 
@@ -126,8 +130,8 @@ public class DocumentService {
                 System.currentTimeMillis()
         ));
 
-            log.info("[Upload Pipeline][DISPATCH] 已投递解析任务: topic=doc-parse-request, documentId={}, tenantId={}",
-                documentId, tenantId);
+        log.info("[Upload Pipeline][DISPATCH] 已投递解析任务: topic={}, documentId={}, tenantId={}",
+                kafkaProperties.getTopics().getParseRequest(), documentId, tenantId);
 
         return metadata;
     }
