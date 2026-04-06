@@ -348,3 +348,24 @@ org.springframework.security.authorization.AuthorizationDeniedException: Access 
     - 在多次 Tool 调用场景下，`sessionResults` 可正确按 `chunkId` 合并并在 `onCompleteResponse` 输出 citations。
 
 ---
+
+## 🐞 [2026-04-06] 多线程环境下的认证传播路径
+
+### 现象描述 (Symptom)
+系统运行到大模型自主调用 `search_enterprise_knowledge` 工具节点时，控制台突然报错：
+`java.lang.IllegalStateException: Authentication missing or invalid. Strict tenant isolation requires a valid user context.`
+并带有 `[onPool-worker-1]` 线程标记。外在表现为 LLM 无法完成企业知识检索，工具直接中断异常。此外，返回给前台的错误信息是一个含糊的 500 系统错误，没有给出清晰的未授权提示。
+
+### 根因分析 (Root Cause Analysis)
+该问题源于 **WebMVC 安全上下文在多线程环境下发生静默丢失**：
+1. **ThreadLocal 机制限制**：由于系统使用基于 WebMVC 的 Spring Security 鉴权，默认的 `SecurityContextHolder` 策略是 `MODE_THREADLOCAL`，身份凭证仅绑定在处理 HTTP 请求的那个专属 Tomcat 主线程上。
+2. **LangChain4j 异步工具派发**：大模型框架在实际派发工具执行任务时，启用了额外的调度或工作线程池（如 `onPool-worker-1`）进行异步处理。
+3. **安全凭证空白**：新生成的工作子线程并未能顺延获得 HTTP 请求产生的鉴权认证信息（`Authentication` 为空）。所以当 RAG 工具准备执行 Zero-Trust 强租户隔离检索而索要 `userId` 时，校验强制失败。
+4. **异常包装吞咽误导**：原本的 RAG 工具使用了宽泛的 `catch (RuntimeException)` 捕获异常，并使用标准的 `new RuntimeException("Search failed", e)` 向外抛出，这导致专属负责接盘的 `GlobalExceptionHandler` 只能用最降级的 `Exception` 段将其当作泛 `SYSTEM_ERROR` 接管，从而破坏了对外的语意连贯性。
+
+### 解决方案 (Resolution)
+1. **升级 SecurityContext 跨线程继承策略**：
+    在 `SecurityConfig.java` 中增加初始化机制：采用 `@PostConstruct` 并配置 `SecurityContextHolder.setStrategyName(SecurityContextHolder.MODE_INHERITABLETHREADLOCAL);` 。此举将 Spring 的上下文传递切换为可继承模型，主线程派生出工具执行线程时，会自动复制下发用户鉴权对象。
+2. **重构 RAG 工具的异常外溢与日志体系**：
+    - **异常精准定级**：移除 `IllegalStateException` 和直接覆盖的 `RuntimeException`，修改为直接抛出封装好的 `BusinessException(ErrorCode.UNAUTHORIZED_ERROR)` 和 `BusinessException(ErrorCode.SYSTEM_ERROR)`。完美对接 `GlobalExceptionHandler` 进行一致化的 JSON （含 HttpCode）响应。
+    - **节点打点追踪**：系统性地补足了跨渠召回（BM25 & KNN）、RRF 倒排融合算法和 Cross-Attention 大模型重排所有三个维度的执行性能及命中数据埋点日志（Logs），提升链路可观测度。
