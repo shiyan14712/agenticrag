@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 import com.yoswell.agenticrag.core.agent.dto.CitationDTO;
 import com.yoswell.agenticrag.core.agent.dto.RagSearchResultDTO;
 import com.yoswell.agenticrag.core.agent.dto.RetrievedChunkDTO;
+import com.yoswell.agenticrag.web.security.model.TenantUser;
 
 /**
  * RAG 检索上下文聚合器 —— 在 ReAct 生命周期内合并多次 Tool 调用的结构化检索结果
@@ -54,6 +55,9 @@ public class RagRetrievalContextHolder {
 
     /** 会话级聚合结果：支持一次回答里多次 RAG 调用的 citations 合并 */
     private final Map<String, RagSearchResultDTO> sessionResults = new ConcurrentHashMap<>();
+
+    /** 会话级认证主体快照：用于跨线程池执行 Tool 时恢复可靠用户身份 */
+    private final Map<String, TenantUser> sessionPrincipals = new ConcurrentHashMap<>();
 
     // ================================================================
     // 线程与会话绑定管理
@@ -101,12 +105,34 @@ public class RagRetrievalContextHolder {
      */
     public void clearSessionBindings(String sessionId) {
         Set<Long> threadIds = sessionToThreads.remove(sessionId);
+        sessionPrincipals.remove(sessionId);
         if (threadIds == null || threadIds.isEmpty()) {
             return;
         }
         for (Long threadId : threadIds) {
             threadToSession.remove(threadId, sessionId);
         }
+    }
+
+    /**
+     * 注册会话对应的认证主体快照
+     */
+    public void registerSessionPrincipal(String sessionId, TenantUser tenantUser) {
+        if (sessionId == null || sessionId.isBlank() || tenantUser == null) {
+            return;
+        }
+        sessionPrincipals.put(sessionId, tenantUser);
+    }
+
+    /**
+     * 按当前线程绑定反查会话主体
+     */
+    public Optional<TenantUser> currentTenantUser() {
+        String sessionId = threadToSession.get(Thread.currentThread().threadId());
+        if (sessionId == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(sessionPrincipals.get(sessionId));
     }
 
     // ================================================================

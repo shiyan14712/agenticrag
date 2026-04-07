@@ -16,6 +16,7 @@ import com.yoswell.agenticrag.core.agent.dto.RagStructuredResponseDTO;
 import com.yoswell.agenticrag.core.agent.service.ChatService;
 import com.yoswell.agenticrag.core.agent.service.orchestrator.ChatOrchestrator;
 import com.yoswell.agenticrag.platform.session.service.SessionService;
+import com.yoswell.agenticrag.web.security.model.TenantUser;
 import com.yoswell.agenticrag.web.security.util.SecurityUtils;
 
 import lombok.RequiredArgsConstructor;
@@ -52,9 +53,10 @@ public class AgentController {
     public SseEmitter chatStream(
             @RequestHeader(value = "X-Session-Id", required = false) String sessionId,
             @RequestBody String message) {
-        String userId = SecurityUtils.getCurrentUserId();
+        TenantUser tenantUser = SecurityUtils.getCurrentTenantUser();
+        String userId = tenantUser.getUserId();
         sessionService.verifySessionAccess(sessionId, userId);
-        return chatOrchestrator.dispatchDynamicStream(sessionId, message);
+        return chatOrchestrator.dispatchDynamicStream(sessionId, message, tenantUser);
     }
 
     /**

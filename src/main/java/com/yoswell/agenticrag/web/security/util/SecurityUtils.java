@@ -23,11 +23,7 @@ public final class SecurityUtils {
      * @return 当前用户 ID
      */
     public static String getCurrentUserId() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication == null || !authentication.isAuthenticated()) {
-            throw new AuthenticationCredentialsNotFoundException(ErrorCode.UNAUTHORIZED_ERROR.getMessage());
-        }
-
+        Authentication authentication = requireAuthentication();
         Object principal = authentication.getPrincipal();
         if (principal instanceof TenantUser tenantUser) {
             return tenantUser.getUserId();
@@ -41,26 +37,39 @@ public final class SecurityUtils {
     }
 
     /**
+     * 从当前 SecurityContext 中提取完整租户用户身份。
+     *
+     * @return 当前租户用户身份
+     */
+    public static TenantUser getCurrentTenantUser() {
+        Authentication authentication = requireAuthentication();
+        Object principal = authentication.getPrincipal();
+        if (principal instanceof TenantUser tenantUser) {
+            return tenantUser;
+        }
+        throw new AuthenticationCredentialsNotFoundException(ErrorCode.UNAUTHORIZED_ERROR.getMessage());
+    }
+
+    /**
      * 从当前 SecurityContext 中提取当前登录用户所在的租户 ID。
      * 遵循 CLAUDE.md 中租户强制隔离（Tenant Isolation Scope）的安全原则。
      *
      * @return 租户 ID。
      */
     public static String getCurrentTenantId() {
+        TenantUser tenantUser = getCurrentTenantUser();
+        String tenantId = tenantUser.getTenantId();
+        if (tenantId == null || tenantId.isBlank()) {
+            throw new AuthenticationCredentialsNotFoundException(ErrorCode.UNAUTHORIZED_ERROR.getMessage());
+        }
+        return tenantId;
+    }
+
+    private static Authentication requireAuthentication() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !authentication.isAuthenticated()) {
             throw new AuthenticationCredentialsNotFoundException(ErrorCode.UNAUTHORIZED_ERROR.getMessage());
         }
-
-        Object principal = authentication.getPrincipal();
-        if (principal instanceof TenantUser tenantUser) {
-            String tenantId = tenantUser.getTenantId();
-            if (tenantId == null || tenantId.isBlank()) {
-                throw new AuthenticationCredentialsNotFoundException(ErrorCode.UNAUTHORIZED_ERROR.getMessage());
-            }
-            return tenantId;
-        }
-
-        throw new AuthenticationCredentialsNotFoundException(ErrorCode.UNAUTHORIZED_ERROR.getMessage());
+        return authentication;
     }
 }

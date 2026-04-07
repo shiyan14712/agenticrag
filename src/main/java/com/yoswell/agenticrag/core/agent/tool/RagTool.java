@@ -60,12 +60,11 @@ public class RagTool {
         log.info("[RAG TOOL] LLM 已决策调用工具 search_enterprise_knowledge，开始企业知识检索。queryPreview={}", summarizeQuery(query));
         long totalStartTime = System.currentTimeMillis();
         try {
-            // 获取当前线程的安全上下文。得益于 SecurityConfig 中开启的 MODE_INHERITABLETHREADLOCAL，
-            // 异步或子线程调用（如 LangChain4j Worker）中依然可以获取到登录阶段写入的凭证。
-            // TODO 这里依旧存在鉴权问题
-            var authentication = SecurityContextHolder.getContext().getAuthentication();
-            if (authentication == null || !(authentication.getPrincipal() instanceof TenantUser user)) {
-                log.warn("[RAG TOOL] 权限缺失或无效，安全上下文为空或未包含预期租户信息");
+            TenantUser user = resolveCurrentTenantUser();
+
+            if (user == null) {
+                log.warn("[RAG TOOL] 鉴权失败，未找到有效的租户用户身份。threadName={}, threadId={}",
+                        Thread.currentThread().getName(), Thread.currentThread().threadId());
                 throw new BusinessException(ErrorCode.UNAUTHORIZED_ERROR);
             }
             
@@ -123,6 +122,38 @@ public class RagTool {
             log.error("[RAG TOOL] 检索期间发生底层的未知系统异常，即将包裹为业务异常暴露", exception);
             throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "知识检索失败：" + exception.getMessage());
         }
+    }
+
+    private TenantUser resolveCurrentTenantUser() {
+        TenantUser sessionBoundUser = ragRetrievalContextHolder.currentTenantUser().orElse(null);
+        var authentication = SecurityContextHolder.getContext().getAuthentication();
+        TenantUser securityContextUser = null;
+        if (authentication != null && authentication.getPrincipal() instanceof TenantUser user) {
+            securityContextUser = user;
+        }
+
+        if (sessionBoundUser != null) {
+            if (securityContextUser != null && !sameIdentity(sessionBoundUser, securityContextUser)) {
+                log.warn("[RAG TOOL] 鉴权上下文冲突，拒绝执行。sessionUserId={}, securityUserId={}, threadName={}, threadId={}",
+                        sessionBoundUser.getUserId(), securityContextUser.getUserId(),
+                        Thread.currentThread().getName(), Thread.currentThread().threadId());
+                throw new BusinessException(ErrorCode.UNAUTHORIZED_ERROR);
+            }
+            return sessionBoundUser;
+        }
+
+        if (securityContextUser != null) {
+            return securityContextUser;
+        }
+
+        log.warn("[RAG TOOL] 权限缺失或无效，未找到可用租户身份。threadName={}, threadId={}",
+                Thread.currentThread().getName(), Thread.currentThread().threadId());
+        throw new BusinessException(ErrorCode.UNAUTHORIZED_ERROR);
+    }
+
+    private boolean sameIdentity(TenantUser left, TenantUser right) {
+        return left.getUserId().equals(right.getUserId())
+                && left.getTenantId().equals(right.getTenantId());
     }
 
     List<RetrievedChunkDTO> calculateRrfFusion(List<RetrievedChunkDTO> bm25Hits, List<RetrievedChunkDTO> knnHits) {
