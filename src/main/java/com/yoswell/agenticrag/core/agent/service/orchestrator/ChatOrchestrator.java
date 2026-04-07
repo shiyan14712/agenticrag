@@ -142,7 +142,7 @@ public class ChatOrchestrator {
                                 log.error("[ReAct] TokenStream 执行异常", error);
                                 emitSseEventJson(emitter, SseEventType.ERROR,
                                         new ErrorPayload("AGENT_ERROR", error.getMessage()));
-                                emitter.completeWithError(error);
+                                emitter.complete();
                             } finally {
                                 closeQuietly(finalRetrievalScope);
                                 ragRetrievalContextHolder.clearSessionBindings(sessionId);
@@ -152,7 +152,9 @@ public class ChatOrchestrator {
                         .start();
             } catch (Exception e) {
                 log.error("[ReAct] 虚拟线程执行异常", e);
-                emitter.completeWithError(e);
+                emitSseEventJson(emitter, SseEventType.ERROR,
+                        new ErrorPayload("AGENT_ERROR", e.getMessage()));
+                emitter.complete();
                 closeQuietly(retrievalScope);
                 ragRetrievalContextHolder.clearSessionBindings(sessionId);
                 ragRetrievalContextHolder.clearSessionResult(sessionId);

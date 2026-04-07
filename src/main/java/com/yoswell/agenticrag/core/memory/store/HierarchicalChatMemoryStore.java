@@ -1,8 +1,10 @@
 package com.yoswell.agenticrag.core.memory.store;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -64,6 +66,8 @@ import dev.langchain4j.store.memory.chat.ChatMemoryStore;
  */
 @Component
 public class HierarchicalChatMemoryStore implements ChatMemoryStore {
+
+    private static final String SYNTHETIC_SYSTEM_MESSAGE_MARKER = "AgenticRag Internal System Context";
 
     /**
      * 日志记录器
@@ -170,32 +174,31 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
         String sessionId = memoryId.toString();
         log.info("Retrieving memory for session: {}", sessionId);
 
-        // 分离 SystemMessage 和其他消息，确保 SystemMessage 始终在开头
-        ArrayList<ChatMessage> systemMessages = new ArrayList<>();
+        // 将动态上下文和持久化 system 指令合并为单条 SystemMessage，兼容只接受单 system 的模型后端
+        ArrayList<String> systemSegments = new ArrayList<>();
         ArrayList<ChatMessage> otherMessages = new ArrayList<>();
-        
-        // 收集所有 SystemMessage（用户偏好、摘要等）
-        injectUserPreferences(sessionId, systemMessages);
-        injectSummary(sessionId, "session:memory:l3:", "Long-range session summary", systemMessages);
-        injectSummary(sessionId, "session:memory:l2:", "Medium-range session summary", systemMessages);
 
         // 从 Redis 获取 L1 原始消息，支持多种数据格式的自动转换
         Object l1Data = redisTemplate.opsForValue().get(MemoryStoreConstants.REDIS_PREFIX_L1 + sessionId);
         if (l1Data != null) {
             List<ChatMessage> l1Messages = deserializeChatMessages(l1Data);
-            // 将 L1 消息按类型分离：SystemMessage 放到前面，其他消息放到后面
             for (ChatMessage msg : l1Messages) {
-                if (msg instanceof SystemMessage) {
-                    systemMessages.add(msg);
+                if (msg instanceof SystemMessage systemMessage) {
+                    extractStoredSystemSegment(systemMessage).ifPresent(systemSegments::add);
                 } else {
                     otherMessages.add(msg);
                 }
             }
         }
 
-        // 合并：所有 SystemMessage 在前，其他消息在后
-        systemMessages.addAll(otherMessages);
-        return systemMessages;
+        injectUserPreferences(sessionId, systemSegments);
+        injectSummary(sessionId, "session:memory:l3:", "Long-range session summary", systemSegments);
+        injectSummary(sessionId, "session:memory:l2:", "Medium-range session summary", systemSegments);
+
+        ArrayList<ChatMessage> messages = new ArrayList<>();
+        buildCompositeSystemMessage(systemSegments).ifPresent(messages::add);
+        messages.addAll(otherMessages);
+        return messages;
     }
 
     /**
@@ -280,7 +283,7 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
      * @see MemoryStoreConstants#GLOBAL_MEMORY_ITEM_PREFIX
      * @see MemoryStoreConstants#GLOBAL_MEMORY_KV_SEPARATOR
      */
-    private void injectUserPreferences(String sessionId, List<ChatMessage> target) {
+    private void injectUserPreferences(String sessionId, List<String> target) {
         ChatSession session = findSession(sessionId);
         if (session == null) {
             return;
@@ -297,7 +300,7 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
                                       MemoryStoreConstants.GLOBAL_MEMORY_KV_SEPARATOR + 
                                       p.getPreferenceValue())
                             .collect(Collectors.joining("\n"));
-            target.add(SystemMessage.from(globalMemStr));
+            target.add(globalMemStr);
         }
     }
 
@@ -314,11 +317,64 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
      * @see MemoryStoreConstants#REDIS_PREFIX_L2
      * @see MemoryStoreConstants#REDIS_PREFIX_L3
      */
-    private void injectSummary(String sessionId, String prefix, String title, List<ChatMessage> target) {
+    private void injectSummary(String sessionId, String prefix, String title, List<String> target) {
         Object summary = redisTemplate.opsForValue().get(prefix + sessionId);
         if (summary instanceof String text && !text.isBlank()) {
-            target.add(SystemMessage.from(title + ":\n" + text));
+            target.add(title + ":\n" + text);
         }
+    }
+
+    /**
+     * 提取持久化的 SystemMessage 文本
+     * 
+     * <p>从 Redis L1 缓存的历史消息中提取有效的系统指令片段，过滤掉由本类合成的复合 SystemMessage（以 {@code SYNTHETIC_SYSTEM_MESSAGE_MARKER} 开头），
+     * 避免重复注入导致上下文膨胀。</p>
+     * 
+     * @param systemMessage  待检查的系统消息对象
+     * @return 提取后的文本片段（空表示应忽略）
+     * 
+     * @see #SYNTHETIC_SYSTEM_MESSAGE_MARKER
+     */
+    private Optional<String> extractStoredSystemSegment(SystemMessage systemMessage) {
+        String text = systemMessage.text();
+        if (text == null || text.isBlank()) {
+            return Optional.empty();
+        }
+        String normalized = text.trim();
+        if (normalized.startsWith(SYNTHETIC_SYSTEM_MESSAGE_MARKER)) {
+            return Optional.empty();
+        }
+        return Optional.of(normalized);
+    }
+
+    /**
+     * 构建复合 SystemMessage
+     * 
+     * <p>将多个系统指令片段（用户偏好、L2/L3 摘要、历史系统消息）合并为单条 SystemMessage，
+     * 确保 {@code getMessages()} 只返回一条 SystemMessage，避免与 {@code EnterpriseAgent} 方法上的 {@code @SystemMessage} 
+     * 叠加后产生多条 system message，触发 OpenAI 兼容接口的校验失败。</p>
+     * 
+     * <p>处理流程：去重 → 过滤空值 → 添加内部标记头 → 双换行分隔符拼接。</p>
+     * 
+     * @param systemSegments  系统指令片段集合
+     * @return 合成后的 SystemMessage（无有效片段时返回空）
+     * 
+     * @see #SYNTHETIC_SYSTEM_MESSAGE_MARKER
+     * @see #extractStoredSystemSegment(SystemMessage)
+     */
+    private Optional<SystemMessage> buildCompositeSystemMessage(List<String> systemSegments) {
+        LinkedHashSet<String> deduplicatedSegments = systemSegments.stream()
+                .filter(segment -> segment != null && !segment.isBlank())
+                .map(String::trim)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        if (deduplicatedSegments.isEmpty()) {
+            return Optional.empty();
+        }
+
+        String combined = SYNTHETIC_SYSTEM_MESSAGE_MARKER + "\n\n"
+                + String.join("\n\n", deduplicatedSegments);
+        return Optional.of(SystemMessage.from(combined));
     }
 
     /**

@@ -436,3 +436,84 @@ java.lang.IllegalArgumentException: restricted header name: "Connection"
 5. **验证结果**
    - 已执行 `mvnw.cmd -DskipTests compile`，构建通过。
    - 修复后，title 生成请求可以正常进入 LLM 调用链路；即使后续再次失败，Redis 锁也会被回收，不会再出现会话长时间无法重试的问题。
+
+---
+
+## 🐞 [2026-04-07] `/api/v1/agent/chat/stream` 同时触发 OpenAI `System message must be at the beginning` 与 SSE 异常写回失败
+
+### 现象描述 (Symptom)
+调用流式对话接口 `/api/v1/agent/chat/stream` 时，前端收到的 SSE 错误事件为：
+
+```text
+error{"code":"AGENT_ERROR","message":"{\"error\":{\"message\":\"System message must be at the beginning.\",\"type\":\"BadRequestError\",\"param\":null,\"code\":400}}"}
+```
+
+同时后端日志继续出现第二层异常：
+
+```text
+org.springframework.http.converter.HttpMessageNotWritableException: No converter for [class java.util.LinkedHashMap] with preset Content-Type 'text/event-stream'
+org.springframework.http.converter.HttpMessageNotWritableException: No converter for [class com.yoswell.agenticrag.common.result.ApiResponse] with preset Content-Type 'text/event-stream'
+```
+
+外在表现是：流式接口不是单纯返回上游 LLM 错误，而是会在请求尾部继续发生一次 Spring MVC 写回失败，导致故障表象混杂、排查困难。
+
+### 根因分析 (Root Cause Analysis)
+这次问题实际上是**两层独立错误叠加**：
+
+1. **第一层真实错误：发给 OpenAI 兼容接口的消息序列仍然不合规**
+   - `EnterpriseAgent` 本身通过 `@SystemMessage` 注入了一条顶层系统提示词。
+   - 同时，自定义 `HierarchicalChatMemoryStore.getMessages()` 还会把用户偏好、L2/L3 摘要以及 Redis L1 中遗留的 `SystemMessage` 一并组装进历史消息。
+   - 结合 LangChain4j 1.12.2 的 `DefaultAiServices` 实现可知：在启用 `ChatMemory` 时，框架会先把当前方法上的 `systemMessage` 加入 memory，再读取 `chatMemory.messages()` 作为最终请求消息。
+   - 这意味着只要 memory 返回结果中再带有额外的 `SystemMessage`，最终发往 OpenAI 兼容后端的 `messages` 数组里就会出现**多条 system message**。很多 OpenAI 兼容实现不仅要求 system 在开头，还要求只有一条，因此直接报错 `System message must be at the beginning.`。
+
+2. **第二层派生错误：SSE 场景下异常被再次抛回 Spring MVC**
+   - `ChatOrchestrator` 在 `TokenStream.onError(...)` 中已经通过 SSE `event: error` 把错误发给前端，但随后又调用了 `emitter.completeWithError(error)`。
+   - 对 `SseEmitter` 而言，这会把异常重新交回 Spring MVC 异步请求收尾链路处理。
+   - 而当前接口在 `AgentController` 上声明了 `produces = MediaType.TEXT_EVENT_STREAM_VALUE`，所以请求响应头已固定为 `text/event-stream`。
+   - 当异常继续被 `GlobalExceptionHandler` 接住并尝试返回 `ApiResponse` 或 `LinkedHashMap` 时，Spring 找不到能把普通 JSON 结构写入 `text/event-stream` 的 `HttpMessageConverter`，于是又抛出了 `HttpMessageNotWritableException`。
+
+3. **为什么日志里看起来像是“一个问题导致一切都坏了”**
+   - 第一层是上游模型协议问题，真正导致智能体失败。
+   - 第二层是本地 WebMVC 流式错误收尾策略不当，属于“错误路径上的二次爆炸”。
+   - 如果只盯着 `HttpMessageNotWritableException`，会误以为问题在 Spring SSE 序列化；如果只盯着 OpenAI 400，又会漏掉流式接口为何不能平稳返回 SSE error 事件。
+
+### 解决方案 (Resolution)
+本次采用“**分别修正消息装配** + **收敛 SSE 错误出口**”的方式增量修复：
+
+1. **将 memory 中的多条系统上下文压缩为单条 composite SystemMessage**
+   - 修改 `HierarchicalChatMemoryStore.getMessages()`：
+     - 不再把用户偏好、L2/L3 摘要、Redis 中已有的 `SystemMessage` 作为多条消息直接返回。
+     - 而是先提取成多个文本片段，再去重合并成一条统一的 `SystemMessage` 返回。
+   - 这样与 `EnterpriseAgent` 方法上的 `@SystemMessage` 配合后，memory 侧不会再制造多条 system message，避免再次触发 OpenAI 兼容接口的顺序/数量校验。
+
+2. **启用 `alwaysKeepSystemMessageFirst(true)`**
+   - 在 `MemoryConfig` 中为 `MessageWindowChatMemory.builder()` 增加：
+   ```java
+   .alwaysKeepSystemMessageFirst(true)
+   ```
+   - 即使后续 system message 发生替换，也强制确保其位于消息列表第 0 位。
+
+3. **SSE 错误只走事件通道，不再回抛给 MVC**
+   - 修改 `ChatOrchestrator.onError(...)`：
+     - 保留 `emitSseEventJson(..., SseEventType.ERROR, ...)`
+     - 将 `emitter.completeWithError(error)` 改为 `emitter.complete()`
+   - 同时在虚拟线程外围 `catch` 分支也统一改为：
+     - 先发 `event: error`
+     - 再 `emitter.complete()`
+   - 这样流式错误会停留在 SSE 通道内完成收尾，不会再触发全局异常处理器二次写回。
+
+4. **去掉流式接口方法上的显式 `produces = text/event-stream`**
+   - 将 `AgentController.chatStream()` 从：
+   ```java
+   @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+   ```
+   - 调整为：
+   ```java
+   @PostMapping("/chat/stream")
+   ```
+   - 这样如果错误发生在真正创建 `SseEmitter` 之前，Spring 仍可按普通 JSON 错误体返回；只有进入 `SseEmitter.send(...)` 之后，才由响应本身切换到 SSE 语义。
+
+5. **验证结果**
+   - 已执行 `./mvnw -q -DskipTests compile`，编译通过。
+   - 修复后，`/api/v1/agent/chat/stream` 遇到上游模型异常时，会稳定输出 SSE `error` 事件并正常结束，不再触发 `HttpMessageNotWritableException` 的二次异常。
+   - 同时 memory 侧的 system message 组装被收敛，避免与 `@SystemMessage` 叠加后再次触发 OpenAI 兼容接口的 system 排序/数量错误。

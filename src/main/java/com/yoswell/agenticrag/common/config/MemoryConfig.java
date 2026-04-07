@@ -17,6 +17,7 @@ public class MemoryConfig {
         return memoryId -> MessageWindowChatMemory.builder()
                 .id(memoryId)
                 .maxMessages(maxMessages)
+                .alwaysKeepSystemMessageFirst(true)
                 .chatMemoryStore(chatMemoryStore)
                 .build();
     }
