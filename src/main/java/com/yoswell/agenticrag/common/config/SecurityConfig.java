@@ -1,6 +1,6 @@
 package com.yoswell.agenticrag.common.config;
 
-import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
@@ -11,7 +11,6 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.AuthenticationEntryPoint;
@@ -28,24 +27,20 @@ import tools.jackson.databind.ObjectMapper;
 
 @Configuration
 @EnableWebSecurity
+@RequiredArgsConstructor
 public class SecurityConfig {
 
     private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
 
-    @PostConstruct
-    public void configureSecurityContext() {
-        // 配置 Spring Security 上下文策略为可继承以支持 Langchain4j 异步工具执行和子线程中的权限透传
-        SecurityContextHolder.setStrategyName(SecurityContextHolder.MODE_INHERITABLETHREADLOCAL);
-        log.info("[Security Config] 已开启 SecurityContextHolder.MODE_INHERITABLETHREADLOCAL，支持 WebMVC 全局子线程 SecurityContext 继承传递。");
-    }
+    // @PostConstruct
+    // public void configureSecurityContext() {
+    //     // 配置 Spring Security 上下文策略为可继承以支持 Langchain4j 异步工具执行和子线程中的权限透传
+    //     SecurityContextHolder.setStrategyName(SecurityContextHolder.MODE_INHERITABLETHREADLOCAL);
+    //     log.info("[Security Config] 已开启 SecurityContextHolder.MODE_INHERITABLETHREADLOCAL，支持 WebMVC 全局子线程 SecurityContext 继承传递。");
+    // }
 
     private final TenantAuthenticationFilter tenantAuthenticationFilter;
     private final ObjectMapper objectMapper;
-
-    public SecurityConfig(TenantAuthenticationFilter tenantAuthenticationFilter, ObjectMapper objectMapper) {
-        this.tenantAuthenticationFilter = tenantAuthenticationFilter;
-        this.objectMapper = objectMapper;
-    }
 
     @Bean
     public PasswordEncoder passwordEncoder() {
