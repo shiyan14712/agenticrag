@@ -4,7 +4,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
-import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -25,36 +24,16 @@ import com.yoswell.agenticrag.platform.session.mapper.ChatSessionMapper;
 import com.yoswell.agenticrag.platform.session.service.ChatMessageService;
 
 import dev.langchain4j.service.TokenStream;
+import lombok.RequiredArgsConstructor;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * ReAct 过程编排器 —— 将 LangChain4J Agent 的内部推理链实时暴露给前端
+ * ReAct 流式对话编排器
  *
- * <p>核心职责：在 LLM 的 Thought → Action → Observation 循环的每个阶段，
- * 通过 SSE 事件通道向前端推送实时状态，驱动前端的交互动画（CoT 思考、工具调用、最终回答）。</p>
- *
- * <p>SSE 事件时间线（典型 ReAct 循环）：</p>
- * <pre>
- *   User Query 进入
- *     ↓
- *   [thinking]    "正在分析您的问题..."（LLM reasoning token 流）
- *     ↓
- *   [tool_start]  { tool: "search_enterprise_knowledge", status: "executing" }
- *     ↓
- *   [tool_result] { tool: "search_enterprise_knowledge", status: "completed", resultSummary: "检索到 5 条" }
- *     ↓
- *   [thinking]    "正在深入解析检索结果..."（LLM 继续推理）
- *     ↓
- *   [message]     token token token...（最终回答流式输出）
- *     ↓
- *   [citations]   [{ docId, chunkId, ... }]
- *     ↓
- *   [done]        { }
- * </pre>
- *
- * <p>依赖 LangChain4J 1.2.0+ 的 {@link TokenStream} 回调：
- * {@code onPartialThinking}、{@code beforeToolExecution}、{@code onToolExecuted}、
- * {@code onPartialResponse}、{@code onCompleteResponse}。</p>
+ * <p>职责分为三部分：</p>
+ * <p>1. 驱动 LangChain4j 的流式推理链路，并将关键阶段转换成 SSE 事件推给前端</p>
+ * <p>2. 在流式会话生命周期内维护检索上下文、工具执行耗时与引用聚合</p>
+ * <p>3. 处理会话级副作用，例如用户消息落库、助手消息落库，以及首轮消息后的异步标题生成</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -71,14 +50,21 @@ public class ChatOrchestrator {
     private final ChatSessionMapper chatSessionMapper;
 
     /**
-     * 启动 ReAct Agent Loop 推理循环
+     * 发起一轮 ReAct 流式对话
+     *
+     * <p>统一执行顺序如下：</p>
+     * <p>1. 先保存用户消息，并尝试触发“仅首轮执行一次”的异步标题生成</p>
+     * <p>2. 绑定当前会话的检索上下文，启动 Agent 的 TokenStream</p>
+     * <p>3. 将 thinking / tool_start / tool_result / message / citations / done 逐步发给前端</p>
+     * <p>4. 在完成或失败时清理上下文绑定，避免线程复用污染后续请求</p>
+     *
      * @param sessionId 会话 ID
-     * @param message 用户消息
-     * @return SseEmitter 流式响应
+     * @param message 用户输入
+     * @return SSE 发射器
      */
     public SseEmitter dispatchDynamicStream(String sessionId, String message) {
-        SseEmitter emitter = new SseEmitter(10L * 60 * 1000); // 10 minutes timeout
-        
+        SseEmitter emitter = new SseEmitter(10L * 60 * 1000);
+
         Thread.startVirtualThread(() -> {
             AutoCloseable retrievalScope = null;
             try {
@@ -89,96 +75,81 @@ public class ChatOrchestrator {
                 ragRetrievalContextHolder.clearSessionResult(sessionId);
                 retrievalScope = ragRetrievalContextHolder.bindCurrentThread(sessionId);
                 final AutoCloseable finalRetrievalScope = retrievalScope;
-                
-                // 用于计算工具执行耗时
                 AtomicLong toolStartTimestamp = new AtomicLong(0);
-                
+
                 log.info("[ReAct] Agent 推理循环启动: session={}", sessionId);
                 TokenStream tokenStream = enterpriseAgent.chat(sessionId, message);
                 tokenStream
-                    // ────────────────────────────────────────
-                    // 阶段 1: CoT 推理过程（Thinking）
-                    // LLM 的内部推理 token，前端渲染为"正在思考..."动画
-                    // 注意：需要 LLM 后端支持 reasoning/thinking token 输出
-                    // ────────────────────────────────────────
-                        // TODO: 此处需要适配 vLLM Inference 流式返回格式
-                    .onPartialThinking(partialThinking -> {
-                        bindRagContextToCurrentThread(sessionId);
-                        String thinkingText = partialThinking.text();
-                        if (thinkingText != null && !thinkingText.isEmpty()) {
-                            emitSseEvent(emitter, SseEventType.THINKING, thinkingText);
-                        }
-                    })
-                    // ────────────────────────────────────────
-                    // 阶段 2: Tool 开始执行（beforeToolExecution）
-                    // LLM 决定调用工具，前端渲染为加载动画 + "正在检索知识库..."
-                    // ────────────────────────────────────────
-                    .beforeToolExecution(beforeTool -> {
-                        bindRagContextToCurrentThread(sessionId);
-                        toolStartTimestamp.set(System.currentTimeMillis());
-                        String toolName = beforeTool.request().name();
-                        String argsPreview = summarizeToolArgs(beforeTool.request().arguments());
-                        log.info("[ReAct] Tool 即将执行: tool={}, args={}", toolName, argsPreview);
+                        // 阶段 1：流式思考过程前端通常会渲染成“正在思考”或 reasoning 面板
+                        .onPartialThinking(partialThinking -> {
+                            bindRagContextToCurrentThread(sessionId);
+                            String thinkingText = partialThinking.text();
+                            if (thinkingText != null && !thinkingText.isEmpty()) {
+                                emitSseEvent(emitter, SseEventType.THINKING, thinkingText);
+                            }
+                        })
+                        // 阶段 2：工具开始执行这里记录开始时间，并把工具名与参数摘要发给前端
+                        .beforeToolExecution(beforeTool -> {
+                            bindRagContextToCurrentThread(sessionId);
+                            toolStartTimestamp.set(System.currentTimeMillis());
+                            String toolName = beforeTool.request().name();
+                            String argsPreview = summarizeToolArgs(beforeTool.request().arguments());
+                            log.info("[ReAct] Tool 即将执行: tool={}, args={}", toolName, argsPreview);
 
-                        ToolEventDTO startEvent = ToolEventDTO.executing(toolName, argsPreview);
-                        emitSseEventJson(emitter, SseEventType.TOOL_START, startEvent);
-                    })
-                    // ────────────────────────────────────────
-                    // 阶段 3: Tool 执行完成（onToolExecuted）
-                    // 工具返回结果，前端渲染为完成卡片
-                    // ────────────────────────────────────────
-                    .onToolExecuted(toolExecution -> {
-                        bindRagContextToCurrentThread(sessionId);
-                        long elapsed = System.currentTimeMillis() - toolStartTimestamp.get();
-                        String toolName = toolExecution.request().name();
-                        String resultPreview = summarizeToolResult(toolExecution.result());
-                        log.info("[ReAct] Tool 执行完成: tool={}, elapsed={}ms, resultPreview={}", toolName, elapsed, resultPreview);
+                            ToolEventDTO startEvent = ToolEventDTO.executing(toolName, argsPreview);
+                            emitSseEventJson(emitter, SseEventType.TOOL_START, startEvent);
+                        })
+                        // 阶段 3：工具执行完成这里计算耗时，并把结果摘要发给前端
+                        .onToolExecuted(toolExecution -> {
+                            bindRagContextToCurrentThread(sessionId);
+                            long elapsed = System.currentTimeMillis() - toolStartTimestamp.get();
+                            String toolName = toolExecution.request().name();
+                            String resultPreview = summarizeToolResult(toolExecution.result());
+                            log.info("[ReAct] Tool 执行完成: tool={}, elapsed={}ms, resultPreview={}",
+                                    toolName, elapsed, resultPreview);
 
-                        ToolEventDTO resultEvent = ToolEventDTO.completed(toolName, resultPreview, elapsed);
-                        emitSseEventJson(emitter, SseEventType.TOOL_RESULT, resultEvent);
-                    })
-                    // ────────────────────────────────────────
-                    // 阶段 4: 最终回答流式输出（Message）
-                    // ────────────────────────────────────────
-                    .onPartialResponse(token -> {
-                        bindRagContextToCurrentThread(sessionId);
-                        fullResponse.append(token);
-                        emitSseEvent(emitter, SseEventType.MESSAGE, token);
-                    })
-                    // ────────────────────────────────────────
-                    // 阶段 5: 整个 ReAct 循环结束
-                    // ────────────────────────────────────────
-                    .onCompleteResponse(response -> {
-                        bindRagContextToCurrentThread(sessionId);
-                        try {
-                            List<CitationDTO> citations = ragRetrievalContextHolder.consume(sessionId)
-                                    .map(RagSearchResultDTO::citations)
-                                    .orElse(List.of());
-                            emitCitationsWidget(emitter, citations);
-                            emitSseEvent(emitter, SseEventType.DONE, "{}");
-                            
-                            chatMessageService.saveAssistantMessage(sessionId, fullResponse.toString(), citations);
-                            emitter.complete();
-                            log.info("[ReAct] Agent 推理循环结束: session={}", sessionId);
-                        } finally {
-                            closeQuietly(finalRetrievalScope);
-                            ragRetrievalContextHolder.clearSessionBindings(sessionId);
-                        }
-                    })
-                    .onError(error -> {
-                        bindRagContextToCurrentThread(sessionId);
-                        try {
-                            log.error("[ReAct] TokenStream 执行异常", error);
-                            emitSseEventJson(emitter, SseEventType.ERROR,
-                                    new ErrorPayload("AGENT_ERROR", error.getMessage()));
-                            emitter.completeWithError(error);
-                        } finally {
-                            closeQuietly(finalRetrievalScope);
-                            ragRetrievalContextHolder.clearSessionBindings(sessionId);
-                            ragRetrievalContextHolder.clearSessionResult(sessionId);
-                        }
-                    })
-                    .start();
+                            ToolEventDTO resultEvent = ToolEventDTO.completed(toolName, resultPreview, elapsed);
+                            emitSseEventJson(emitter, SseEventType.TOOL_RESULT, resultEvent);
+                        })
+                        // 阶段 4：最终回答流式输出每个 token 都会推给前端，并拼接完整回答
+                        .onPartialResponse(token -> {
+                            bindRagContextToCurrentThread(sessionId);
+                            fullResponse.append(token);
+                            emitSseEvent(emitter, SseEventType.MESSAGE, token);
+                        })
+                        // 阶段 5：整轮会话完成聚合引用、发送结束事件、保存助手消息并清理上下文
+                        .onCompleteResponse(response -> {
+                            bindRagContextToCurrentThread(sessionId);
+                            try {
+                                List<CitationDTO> citations = ragRetrievalContextHolder.consume(sessionId)
+                                        .map(RagSearchResultDTO::citations)
+                                        .orElse(List.of());
+                                emitCitationsWidget(emitter, citations);
+                                emitSseEvent(emitter, SseEventType.DONE, "{}");
+
+                                chatMessageService.saveAssistantMessage(sessionId, fullResponse.toString(), citations);
+                                emitter.complete();
+                                log.info("[ReAct] Agent 推理循环结束: session={}", sessionId);
+                            } finally {
+                                closeQuietly(finalRetrievalScope);
+                                ragRetrievalContextHolder.clearSessionBindings(sessionId);
+                            }
+                        })
+                        // 异常阶段：发送 error 事件，并回收检索上下文与会话结果缓存
+                        .onError(error -> {
+                            bindRagContextToCurrentThread(sessionId);
+                            try {
+                                log.error("[ReAct] TokenStream 执行异常", error);
+                                emitSseEventJson(emitter, SseEventType.ERROR,
+                                        new ErrorPayload("AGENT_ERROR", error.getMessage()));
+                                emitter.completeWithError(error);
+                            } finally {
+                                closeQuietly(finalRetrievalScope);
+                                ragRetrievalContextHolder.clearSessionBindings(sessionId);
+                                ragRetrievalContextHolder.clearSessionResult(sessionId);
+                            }
+                        })
+                        .start();
             } catch (Exception e) {
                 log.error("[ReAct] 虚拟线程执行异常", e);
                 emitter.completeWithError(e);
@@ -187,16 +158,14 @@ public class ChatOrchestrator {
                 ragRetrievalContextHolder.clearSessionResult(sessionId);
             }
         });
-        
+
         return emitter;
     }
 
-    // ================================================================
-    // SSE 推送方法
-    // ================================================================
-
     /**
-     * 推送纯文本 SSE 事件（如 thinking token、message token）
+     * 发送纯文本 SSE 事件
+     *
+     * <p>适用于 thinking 与 message 这类天然按 token 流动的文本事件</p>
      */
     private void emitSseEvent(SseEmitter emitter, SseEventType eventType, String data) {
         try {
@@ -207,7 +176,9 @@ public class ChatOrchestrator {
     }
 
     /**
-     * 推送 JSON 序列化的 SSE 事件（如 tool_start、tool_result、error）
+     * 发送 JSON 类型 SSE 事件
+     *
+     * <p>适用于 tool_start、tool_result、error、citations 这类结构化载荷</p>
      */
     private void emitSseEventJson(SseEmitter emitter, SseEventType eventType, Object payload) {
         try {
@@ -218,6 +189,11 @@ public class ChatOrchestrator {
         }
     }
 
+    /**
+     * 发送引用卡片事件
+     *
+     * <p>只有存在引用时才发送，避免前端为“空引用”渲染无意义组件</p>
+     */
     private void emitCitationsWidget(SseEmitter emitter, List<CitationDTO> citations) {
         if (citations == null || citations.isEmpty()) {
             return;
@@ -225,57 +201,97 @@ public class ChatOrchestrator {
         emitSseEventJson(emitter, SseEventType.CITATIONS, citations);
     }
 
-    // ================================================================
-    // 辅助方法
-    // ================================================================
-
-    /** 异步标题生成（首条消息时触发） */
+    /**
+     * 首轮消息后异步生成会话标题
+     *
+     * <p>使用 Redis 锁避免重复生成；如果生成失败，则主动释放锁，允许后续消息重新触发</p>
+     */
     private void asyncTitleGenerationIfNeeded(String sessionId, String message) {
         String titleGenKey = ChatCacheConstants.SESSION_TITLE_GEN_PREFIX + sessionId;
         Boolean isFirstMessage = stringRedisTemplate.opsForValue().setIfAbsent(titleGenKey, "1", Duration.ofHours(24));
-        
-        if (Boolean.TRUE.equals(isFirstMessage)) {
-            ChatSession session = chatSessionMapper.selectOne(new LambdaQueryWrapper<ChatSession>()
-                .eq(ChatSession::getSessionId, sessionId)
-                .select(ChatSession::getSessionId, ChatSession::getTitle)
-            );
-            if (session != null && session.getTitle() == null) {
-                Thread.startVirtualThread(() -> {
-                    log.info("[ReAct] 异步生成会话标题: session={}", sessionId);
-                    try {
-                        chatService.generateTitleAndSave(sessionId, message);
-                    } catch (Exception e) {
-                        log.error("[ReAct] 标题生成失败，移除 Redis 锁以允许重试", e);
-                        stringRedisTemplate.delete(titleGenKey);
-                    }
-                });
-            }
+
+        if (!Boolean.TRUE.equals(isFirstMessage)) {
+            log.info("[ReAct] 跳过异步标题生成，已有进行中的生成锁: session={}", sessionId);
+            return;
         }
+
+        ChatSession session = chatSessionMapper.selectOne(new LambdaQueryWrapper<ChatSession>()
+                .eq(ChatSession::getSessionId, sessionId)
+                .select(ChatSession::getSessionId, ChatSession::getTitle));
+        if (session == null) {
+            log.warn("[ReAct] 跳过异步标题生成，会话不存在: session={}", sessionId);
+            stringRedisTemplate.delete(titleGenKey);
+            return;
+        }
+        if (session.getTitle() != null && !session.getTitle().isBlank()) {
+            log.info("[ReAct] 跳过异步标题生成，会话已有标题: session={}, title={}", sessionId, session.getTitle());
+            return;
+        }
+
+        Thread.startVirtualThread(() -> {
+            log.info("[ReAct] 异步生成会话标题: session={}", sessionId);
+            try {
+                chatService.generateTitleAndSave(sessionId, message);
+            } catch (Exception e) {
+                log.error("[ReAct] 标题生成失败，移除 Redis 锁以允许重试: session={}", sessionId, e);
+                stringRedisTemplate.delete(titleGenKey);
+            }
+        });
     }
 
-    /** 工具参数摘要（截取前 80 字符） */
+    /**
+     * 生成工具参数摘要
+     *
+     * <p>统一压缩空白符，并限制长度，避免长参数把日志和前端状态卡片刷屏</p>
+     */
     private String summarizeToolArgs(String arguments) {
-        if (arguments == null) return "<无参数>";
+        if (arguments == null) {
+            return "<无参数>";
+        }
         String normalized = arguments.replaceAll("\\s+", " ").trim();
         return normalized.length() <= 80 ? normalized : normalized.substring(0, 77) + "...";
     }
 
-    /** 工具结果摘要（截取前 120 字符） */
+    /**
+     * 生成工具结果摘要
+     *
+     * <p>只保留前 120 个字符，方便日志定位问题，同时避免原始结果过长</p>
+     */
     private String summarizeToolResult(String result) {
-        if (result == null) return "<无结果>";
+        if (result == null) {
+            return "<无结果>";
+        }
         String normalized = result.replaceAll("\\s+", " ").trim();
         return normalized.length() <= 120 ? normalized : normalized.substring(0, 117) + "...";
     }
 
+    /**
+     * 把当前回调线程重新注册到会话级检索上下文中
+     *
+     * <p>这是为了兼容流式回调与工具执行可能发生在线程切换上的情况</p>
+     */
     private void bindRagContextToCurrentThread(String sessionId) {
         ragRetrievalContextHolder.registerCurrentThread(sessionId);
     }
 
+    /**
+     * 安静关闭作用域对象
+     *
+     * <p>这里不向外抛异常，避免清理阶段反向覆盖主异常</p>
+     */
     private void closeQuietly(AutoCloseable scope) {
-        if (scope == null) return;
-        try { scope.close(); } catch (Exception e) { log.debug("Failed to close rag retrieval scope cleanly", e); }
+        if (scope == null) {
+            return;
+        }
+        try {
+            scope.close();
+        } catch (Exception e) {
+            log.debug("Failed to close rag retrieval scope cleanly", e);
+        }
     }
 
-    /** 错误事件的 JSON 载荷 */
+    /**
+     * SSE error 事件载荷
+     */
     private record ErrorPayload(String code, String message) {}
 }
