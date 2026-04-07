@@ -4,6 +4,7 @@ import java.io.InputStream;
 import java.util.List;
 import java.util.UUID;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -120,7 +121,11 @@ public class DocumentService {
         metadata.setFileExtension(extension);
         metadata.setAllowedRoles(String.join(",", DEFAULT_ALLOWED_ROLES));
         metadata.setStatus(DocumentProcessingStatus.UPLOADED.value());
-        documentMetadataMapper.insert(metadata);
+
+        int rowsAffected = documentMetadataMapper.insert(metadata);
+        if (rowsAffected != 1) {
+            throw new RuntimeException("Failed to insert document metadata");
+        }
 
         log.info("[Upload Pipeline][METADATA] 元数据落库完成: documentId={}, tenantId={}, status={}, extension={}",
             documentId, tenantId, metadata.getStatus(), extension);
@@ -168,11 +173,10 @@ public class DocumentService {
      * @return 文档元数据
      */
     public DocumentDO getDocumentStatus(String documentId, String tenantId) {
-        DocumentDO metadata = documentMetadataMapper.selectOne(
-                new QueryWrapper<DocumentDO>()
-                        .eq("document_id", documentId)
-                        .eq("tenant_id", tenantId)
-        );
+        LambdaQueryWrapper<DocumentDO> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(DocumentDO::getDocumentId, documentId)
+                .eq(DocumentDO::getTenantId, tenantId);
+        DocumentDO metadata = documentMetadataMapper.selectOne(queryWrapper);
 
         if (metadata == null) {
             log.warn("Document not found or access denied: {}", documentId);
