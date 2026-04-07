@@ -48,7 +48,7 @@ mybatis-plus:
     db-config:
       id-type: auto
   configuration:
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
     map-underscore-to-camel-case: true
 
 minio:
@@ -98,7 +98,7 @@ jwt:
   expiration: 86400000
   refresh-expiration: 604800000
 server:
-  port: 8000
+  port: 8080
   tomcat:
     max-swallow-size: -1
 
@@ -121,3 +121,13 @@ agenticrag:
       dispatch-timeout-ms: 5000
     consume:
       processing-timeout-ms: 60000
+
+logging:
+  level:
+    # 关闭 MyBatis SQL 语句级别的全量日志，防止定时轮询任务（OutboxDispatcher）每 2s 刷一次 SQL 刷屏
+    # 若需要调试某个具体 mapper，可临时把对应包改回 debug
+    com.yoswell.agenticrag.retrieval.document.reliability.mapper: info
+    # MyBatis 全局日志也压到 warn，避免框架本身的 SqlSession 生命周期日志刷屏
+    org.mybatis: info
+    org.apache.ibatis.transaction: info
+    com.baomidou.mybatisplus: info
