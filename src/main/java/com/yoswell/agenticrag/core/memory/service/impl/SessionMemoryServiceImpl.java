@@ -6,6 +6,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -14,6 +15,7 @@ import com.yoswell.agenticrag.core.memory.dto.ChatMessageDTO;
 import com.yoswell.agenticrag.core.memory.dto.SessionMemoryViewDTO;
 import com.yoswell.agenticrag.core.memory.service.SessionMemoryService;
 import com.yoswell.agenticrag.core.memory.store.HierarchicalChatMemoryStore;
+import com.yoswell.agenticrag.platform.session.service.JudgeSessionService;
 
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
@@ -26,22 +28,17 @@ import tools.jackson.databind.ObjectMapper;
 
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class SessionMemoryServiceImpl implements SessionMemoryService {
 
     private final RedisTemplate<String, Object> redisTemplate;
     private final HierarchicalChatMemoryStore chatMemoryStore;
+    private final JudgeSessionService judgeSessionService;
     private final ObjectMapper objectMapper;
-
-    public SessionMemoryServiceImpl(RedisTemplate<String, Object> redisTemplate,
-                                    HierarchicalChatMemoryStore chatMemoryStore,
-                                    ObjectMapper objectMapper) {
-        this.redisTemplate = redisTemplate;
-        this.chatMemoryStore = chatMemoryStore;
-        this.objectMapper = objectMapper;
-    }
 
     @Override
     public SessionMemoryViewDTO getSessionMemoryLayers(String sessionId) {
+        judgeSessionService.validateSessionExists(sessionId);
         log.info("[SessionMemoryService] 查询会话分层记忆开始: sessionId={}", sessionId);
         SessionMemoryViewDTO dto = new SessionMemoryViewDTO();
 
@@ -70,6 +67,7 @@ public class SessionMemoryServiceImpl implements SessionMemoryService {
 
     @Override
     public List<ChatMessageDTO> getAssembledContext(String sessionId) {
+        judgeSessionService.validateSessionExists(sessionId);
         log.info("[SessionMemoryService] 查询会话组装上下文开始: sessionId={}", sessionId);
         List<ChatMessage> assembledMessages = chatMemoryStore.getMessages(sessionId);
         if (assembledMessages == null) {
