@@ -125,15 +125,22 @@
 *   **Kafka 消息队列设计**：
     *   `doc-parse-request`: Spring Boot 将上传到 MinIO 的文件 URL 放入此队列。Python 端的 MinerU Worker 消费并执行深度学习版面分析。
     *   `doc-vectorize-request`: Python 端将高精度 Markdown 存入 MinIO 后触发此队列。Spring Boot 监听并开始离线 Chunking。
+    *   `doc-delete-request`: 文档进入删除补偿链路时投递此队列，供下游组件删除 Elasticsearch 中的向量与分块。
     *   `doc-dlq` (死信队列): 失败超过 3 次的任务进入此队列，记录 MySQL `FAILED` 状态并报警。
 *   **离线 Chunking 与设计模式**：
     为了未来优雅地兼容 TXT、DOCX 等格式，此处**必须**使用设计模式：
     *   **Strategy Pattern (策略模式)**：定义 `DocumentParserStrategy` 接口，下设 `MinerUMarkdownStrategy` (根据 Markdown 标题层级结合 Overlap 切分) 和 `StandardTxtStrategy`。
     *   **Factory Method (工厂模式)**：`DocumentParserFactory` 根据 MySQL 中的文件后缀动态组装并返回具体的策略执行类。
 *   **工程落地补充（已实现约束）**：
+    *   Kafka topic 名称、死信 topic 与消费重试参数必须统一收口到专用配置类（如 `DocumentKafkaProperties`）与 `application.yaml`，严禁在 Producer / Listener / Service 中继续硬编码 `doc-parse-request`、`doc-vectorize-request`、`doc-delete-request`、`doc-dlq`。
     *   `doc-parse-request` 与 `doc-vectorize-request` 必须是显式 JSON DTO，不要再发送松散 `Map` 或靠日志约定字段名。
+    *   Spring Kafka 消费端必须使用统一的 `ConcurrentKafkaListenerContainerFactory`，显式启用 `AckMode.MANUAL_IMMEDIATE`；业务处理成功后再 `ack.acknowledge()`，禁止依赖默认自动提交 offset 的隐式行为。
+    *   文档消费链路必须配置统一的 `DefaultErrorHandler`、指数退避重试与 DLT 路由，避免把“抛异常 + 期待默认行为正确”当作可靠性方案。
     *   `DocumentParserStrategy` 不应再使用 `void parse(...)` 这种“只执行不返回”的接口；必须返回标准化解析结果（例如 `ParsedDocument` + `ParsedDocumentChunk`），这样向量化链路才能稳定消费。
     *   Java 侧 `doc-vectorize-request` 的真实流程已经确定为：回读 MinIO 内容 -> 根据扩展名选择策略 -> 分块 -> embedding -> 写 ES -> 更新 `document_metadata.status`。
+    *   `DocumentVectorizationService` 不应再把 MinIO 读取、embedding、ES 写入和状态迁移包裹在同一个长事务中；状态迁移必须拆到短事务边界中处理，避免失败时 `FAILED` 状态随事务一起回滚。
+    *   Java 侧消费 `doc-vectorize-request` 时必须做基础重复消费防护：至少要在文档已是 `VECTORIZED` 或已被其他消费者抢占到 `PARSING` 状态时安全跳过，不允许同一文档被并发重复向量化。
+    *   当前阶段写 ES 前应先按 `documentId + tenantId` 清理旧 chunk，再写入新 chunk，确保重复消费或重跑时不会残留过期分块。
     *   `document_metadata` 的代码模型与 schema 必须始终保持一致，至少包括 `document_id / tenant_id / kb_id / allowed_roles / status / minio_url / file_extension` 这些字段。
 
 ## 6. 权限控制与零信任安全模块

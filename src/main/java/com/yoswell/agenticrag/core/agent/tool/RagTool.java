@@ -62,6 +62,7 @@ public class RagTool {
         try {
             // 获取当前线程的安全上下文。得益于 SecurityConfig 中开启的 MODE_INHERITABLETHREADLOCAL，
             // 异步或子线程调用（如 LangChain4j Worker）中依然可以获取到登录阶段写入的凭证。
+            // TODO 这里依旧存在鉴权问题
             var authentication = SecurityContextHolder.getContext().getAuthentication();
             if (authentication == null || !(authentication.getPrincipal() instanceof TenantUser user)) {
                 log.warn("[RAG TOOL] 权限缺失或无效，安全上下文为空或未包含预期租户信息");

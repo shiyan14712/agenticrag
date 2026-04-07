@@ -55,6 +55,16 @@
 - 已将 Kafka 消息从松散 Map/字符串升级为显式 DTO：
   - `DocumentParseRequest`
   - `DocumentVectorizeRequest`
+- 已将文档异步链路的 topic 与重试参数统一收口到 `DocumentKafkaProperties + application.yaml`，移除 Producer / Listener / Service 中散落的 topic 硬编码。
+- 已新增统一 Kafka 基础配置：
+  - `AckMode.MANUAL_IMMEDIATE`
+  - `DefaultErrorHandler`
+  - 指数退避重试
+  - `doc-dlq` 死信路由
+- 已为 Kafka producer 显式补齐基础可靠性参数：
+  - `acks=all`
+  - `enable.idempotence=true`
+  - `enable-auto-commit=false`
 - 已完成 `DocumentMessageListener` 的真实向量化消费流程：
   - 解析 Kafka JSON
   - 回读 MinIO 文件内容
@@ -63,6 +73,11 @@
   - 写入 Elasticsearch
   - 更新文档状态
   - `doc-dlq` 失败状态回写
+- 已把 `DocumentVectorizationService` 的状态迁移拆到独立短事务服务中，修复“向量化失败后 `FAILED` 状态可能随长事务回滚丢失”的问题。
+- 已补充向量化阶段的基础重复消费防护：
+  - 文档已 `VECTORIZED` 时直接跳过
+  - 抢占 `PARSING` 状态失败时检测并发/重复处理
+  - 写 ES 前先按 `documentId + tenantId` 清理旧 chunk
 
 ### 文档解析策略
 - 已把 `DocumentParserStrategy` 从 `void parse(String fileUrl)` 升级为返回标准化 `ParsedDocument` 结果。
@@ -192,3 +207,28 @@
   - 支持多 Tool 连续调用场景（如 LLM 先调 `search_enterprise_knowledge` 再调 `save_user_preference`），前端会收到多对 `tool_start → tool_result` 事件。
 - **验证结果**：
   - 已执行 `./mvnw.cmd -DskipTests compile`，编译通过（BUILD SUCCESS）。
+
+## 本轮新增 (2026-04-07, Kafka 配置收口与可靠性第一阶段)
+
+- **Kafka 配置收口**：
+  - 新增 `DocumentKafkaProperties`，将文档异步链路的 topic、DLQ 与重试参数统一绑定到 `agenticrag.kafka.*`。
+  - 新增 `KafkaConfig`，集中定义文档链路的 listener container factory 和 error handler。
+  - 移除 `DocumentMessageProducer`、`DocumentMessageListener`、`DocumentService` 中的 topic 硬编码字符串。
+- **消费确认语义显式化**：
+  - `DocumentMessageListener` 监听器升级为接收 `ConsumerRecord + Acknowledgment`。
+  - 文档向量化与删除消费链路切换为 `MANUAL_IMMEDIATE` 手动 ack，只有业务处理成功后才提交消费确认。
+  - 死信消费也统一走显式 ack，避免再次依赖隐式默认行为。
+- **Kafka 可靠性基础补强**：
+  - `application.yaml` 中为 producer 补充 `acks=all`、`enable.idempotence=true`、`max.in.flight.requests.per.connection=5`、`delivery.timeout.ms`。
+  - consumer 明确关闭 `enable-auto-commit`。
+  - 接入 `DefaultErrorHandler + ExponentialBackOffWithMaxRetries + DeadLetterPublishingRecoverer`，将重试耗尽的消息路由到 `doc-dlq`。
+- **向量化状态与幂等修复**：
+  - 新增 `DocumentProcessingStateService`，专门负责文档状态短事务迁移。
+  - `DocumentVectorizationService` 不再把长耗时 I/O 包在单个事务里，失败时会独立回写 `FAILED` 状态。
+  - 新增基础重复消费防护：文档已终态或已被其他消费者推进到 `PARSING` 时安全跳过。
+  - 写 ES 前先删除同文档旧 chunk，降低重跑后残留过期分块的风险。
+- **当前边界说明**：
+  - 这一轮还没有落地事务型 Outbox、`document_async_task`、`mq_consume_log` 等完整可靠投递账本。
+  - 上传与删除链路目前仍属于“发送可靠性初步补强”，尚未完成“数据库提交与消息投递最终一致性”的闭环。
+- **验证结果**：
+  - 已执行 `./mvnw.cmd -q -DskipTests compile`，编译通过。

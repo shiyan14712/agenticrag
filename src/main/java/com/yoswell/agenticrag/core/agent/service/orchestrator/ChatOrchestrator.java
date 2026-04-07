@@ -101,6 +101,7 @@ public class ChatOrchestrator {
                     // LLM 的内部推理 token，前端渲染为"正在思考..."动画
                     // 注意：需要 LLM 后端支持 reasoning/thinking token 输出
                     // ────────────────────────────────────────
+                        // TODO: 此处需要适配 vLLM Inference 流式返回格式
                     .onPartialThinking(partialThinking -> {
                         bindRagContextToCurrentThread(sessionId);
                         String thinkingText = partialThinking.text();
