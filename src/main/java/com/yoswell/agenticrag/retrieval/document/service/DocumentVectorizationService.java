@@ -59,7 +59,7 @@ public class DocumentVectorizationService {
      *
      * @param request 向量化阶段的上下文消息
      */
-    public void vectorize(DocumentVectorizeRequestDTO request) {
+    public DocumentVectorizationExecutionResult vectorize(DocumentVectorizeRequestDTO request) {
         if (request == null || !StringUtils.hasText(request.documentId())) {
             throw new IllegalArgumentException("documentId must not be blank");
         }
@@ -71,7 +71,7 @@ public class DocumentVectorizationService {
         if (DocumentProcessingStatus.VECTORIZED.value().equals(metadata.getStatus())) {
             log.info("[Offline RAG][VECTORIZE] 检测到重复消息，文档已是终态，直接跳过: documentId={}",
                     metadata.getDocumentId());
-            return;
+            return DocumentVectorizationExecutionResult.skipped("document already vectorized");
         }
 
         boolean claimed = documentProcessingStateService.transitionStatus(
@@ -85,7 +85,7 @@ public class DocumentVectorizationService {
                     || DocumentProcessingStatus.VECTORIZED.value().equals(currentStatus)) {
                 log.info("[Offline RAG][VECTORIZE] 检测到重复或并发中的向量化任务，直接跳过: documentId={}, currentStatus={}",
                         metadata.getDocumentId(), currentStatus);
-                return;
+                return DocumentVectorizationExecutionResult.skipped("document is already processing or vectorized");
             }
             log.warn("[Offline RAG][VECTORIZE] 文档状态不符合向量化前置条件，仍尝试继续处理: documentId={}, currentStatus={}",
                     metadata.getDocumentId(), currentStatus);
@@ -99,7 +99,7 @@ public class DocumentVectorizationService {
             String kbId = metadata.getKbId();
             List<String> allowedRoles = request.allowedRoles() == null || request.allowedRoles().isEmpty()
                     ? splitRoles(metadata.getAllowedRoles())
-                    : splitRoles(metadata.getAllowedRoles());
+                    : request.allowedRoles();
 
             log.info("[Offline RAG][SOURCE] 已解析向量化输入源: documentId={}, tenantId={}, kbId={}, fileName={}, extension={}",
                 metadata.getDocumentId(), tenantId, kbId, sourceFileName, sourceExtension);
@@ -118,12 +118,12 @@ public class DocumentVectorizationService {
 
             List<KnowledgeChunkDocumentDTO> indexedChunks = new ArrayList<>(totalChunks);
             for (int index = 0; index < totalChunks; index++) {
-            var chunk = parsedDocument.chunks().get(index);
-            int processed = index + 1;
-            if (shouldLogEmbeddingProgress(processed, totalChunks)) {
-                log.info("[Offline RAG][EMBED] 进度: documentId={}, {}/{}, chunkId={}",
-                    metadata.getDocumentId(), processed, totalChunks, chunk.chunkId());
-            }
+                var chunk = parsedDocument.chunks().get(index);
+                int processed = index + 1;
+                if (shouldLogEmbeddingProgress(processed, totalChunks)) {
+                    log.info("[Offline RAG][EMBED] 进度: documentId={}, {}/{}, chunkId={}",
+                            metadata.getDocumentId(), processed, totalChunks, chunk.chunkId());
+                }
 
                 Embedding embedding = embeddingModel.embed(chunk.content()).content();
                 indexedChunks.add(new KnowledgeChunkDocumentDTO(
@@ -137,13 +137,13 @@ public class DocumentVectorizationService {
                         chunk.content(),
                         embedding.vectorAsList()
                 ));
-                    }
+            }
 
-                    log.info("[Offline RAG][EMBED] 向量化完成，准备写入检索索引: documentId={}, chunkCount={}",
+            log.info("[Offline RAG][EMBED] 向量化完成，准备写入检索索引: documentId={}, chunkCount={}",
                     metadata.getDocumentId(), indexedChunks.size());
 
-                    log.info("[Offline RAG][INDEX] 开始写入 ES 检索索引: documentId={}, chunkCount={}",
-                        metadata.getDocumentId(), indexedChunks.size());
+            log.info("[Offline RAG][INDEX] 开始写入 ES 检索索引: documentId={}, chunkCount={}",
+                    metadata.getDocumentId(), indexedChunks.size());
             knowledgeChunkIndexService.deleteByDocumentId(metadata.getDocumentId(), tenantId);
             knowledgeChunkIndexService.indexChunks(indexedChunks);
 
@@ -151,6 +151,7 @@ public class DocumentVectorizationService {
             log.info("[Offline RAG][VECTORIZE] 状态迁移: documentId={}, {} -> {}",
                     metadata.getDocumentId(), DocumentProcessingStatus.PARSING.value(), DocumentProcessingStatus.VECTORIZED.value());
             log.info("[Offline RAG][DONE] 文档向量化完成: documentId={}, chunks={}", metadata.getDocumentId(), indexedChunks.size());
+            return DocumentVectorizationExecutionResult.success("vectorized chunks=" + indexedChunks.size());
         } catch (Exception exception) {
             log.error("[Offline RAG][FAILED] 文档向量化失败: documentId={}", metadata.getDocumentId(), exception);
             documentProcessingStateService.updateStatus(metadata.getDocumentId(), DocumentProcessingStatus.FAILED);
@@ -184,6 +185,7 @@ public class DocumentVectorizationService {
         }
         return metadata;
     }
+
     /**
      * 把数据库里逗号分隔的角色串还原成列表。
      *

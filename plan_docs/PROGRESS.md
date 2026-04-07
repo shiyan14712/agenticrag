@@ -124,6 +124,7 @@
 ### Python MinerU Worker
 - Java 侧的 `doc-parse-request` / `doc-vectorize-request` 契约已经明确，但 Python Worker 本身仍未在本仓库内实现。
 - 当前默认约定是：Python 端完成高精度 Markdown 产出后，按 `DocumentVectorizeRequest` JSON 结构投递回 Kafka。
+- 下一步需要让 Python 端显式透传 `taskId / messageId`，这样 `doc-parse-request -> doc-vectorize-request` 才能完成跨系统的可靠投递与消费账本闭环。
 
 ### 基础设施与部署
 - 本地 Docker Compose 开发环境仍未补齐。
@@ -131,6 +132,7 @@
 
 ### 待办
 - MinerU 链路接入
+- Outbox / `document_async_task` / `mq_consume_log` 的查询、重放与人工补偿接口
 - citations 目前回传的是本轮检索结果的聚合视图；如果未来出现多工具、多轮检索交错，需要考虑更稳定的会话级检索上下文传播机制。
 - 当前记忆摘要为“生成式摘要”实现，后续可继续补 token 预算、摘要版本管理和更加细粒度的 L2/L3 触发条件。
 - 会话消息缓存闭环（`session:messages:*`）尚未落地：当前仅定义 key 并在清理时删除，读取路径仍直连数据库。
@@ -230,5 +232,31 @@
 - **当前边界说明**：
   - 这一轮还没有落地事务型 Outbox、`document_async_task`、`mq_consume_log` 等完整可靠投递账本。
   - 上传与删除链路目前仍属于“发送可靠性初步补强”，尚未完成“数据库提交与消息投递最终一致性”的闭环。
+- **验证结果**：
+  - 已执行 `./mvnw.cmd -q -DskipTests compile`，编译通过。
+
+## 本轮新增 (2026-04-07, Kafka 可靠性第二阶段账本闭环)
+
+- **事务型 Outbox 落地**：
+  - 新增 `mq_outbox` 表及对应的 entity / mapper / service，补齐消息投递账本。
+  - 文档上传与文档删除链路已改为：事务内写业务数据 + 写 `mq_outbox`，不再直接在事务中调用 Kafka Producer。
+  - 新增 `DocumentOutboxDispatcher`，通过定时轮询扫描 `PENDING / FAILED` 的 outbox 记录并异步投递，发送成功后回写 `SENT`，失败则记录 `retry_count / next_retry_at / last_error`。
+  - 新增 `agenticrag.kafka.outbox.*` 配置项，并在应用入口启用 `@EnableScheduling`。
+- **文档异步任务账本落地**：
+  - 新增 `document_async_task` 表及 `DocumentAsyncTaskService`，将 `DOCUMENT_PARSE / DOCUMENT_VECTORIZATION / DOCUMENT_DELETE` 纳入统一异步任务生命周期管理。
+  - 上传阶段会为 `DOCUMENT_PARSE` 创建任务；删除阶段会为 `DOCUMENT_DELETE` 创建任务；Java 侧消费 `doc-vectorize-request` 时会补齐/创建 `DOCUMENT_VECTORIZATION` 任务。
+  - 任务状态已接入 `PENDING / DISPATCHED / RUNNING / SUCCEEDED / FAILED / SKIPPED` 的真实推进，便于排障、补偿与后续查询接口扩展。
+- **消费日志、防重与幂等落地**：
+  - 新增 `mq_consume_log` 表及 `MqConsumeLogService`，按 `consumerGroup + topic + messageIdentity` 建立消费幂等与日志记录。
+  - `DocumentMessageListener` 已在 `doc-vectorize-request`、`doc-delete-request`、`doc-dlq` 三条链路接入 claim 逻辑：已成功/已跳过的消息会直接 ack；仍在处理中的消息不会被并发消费者重复执行。
+  - 消息幂等键优先使用显式 `messageId`，缺失时回退到 `messageKey + payload hash`，兼容当前外部 Worker 尚未全部升级契约的阶段性现实。
+- **向量化消费协同改造**：
+  - `DocumentVectorizeRequestDTO`、`DocumentParseRequestDTO`、`DocumentDeleteRequestDTO` 已补充 `taskId / messageId` 字段，用于跨链路追踪与幂等。
+  - `DocumentVectorizationService#vectorize(...)` 现在会显式返回“成功 / 跳过”结果，而不是把所有分支都折叠成异常，避免 `document_async_task` 与 `mq_consume_log` 记账失真。
+  - Java 消费 `doc-vectorize-request` 时，会在进入向量化前将对应的 `DOCUMENT_PARSE` 任务标记为已完成，并在缺失 `tenantId` 时回退查询 `document_metadata`，降低外部 parse worker 渐进升级期间的兼容风险。
+- **当前边界说明（第二阶段后）**：
+  - Java 侧已经完成“业务表提交 -> Outbox -> Kafka 投递 -> 消费 claim -> 任务/消费日志落账”的半闭环；但 `doc-parse-request` 的真正消费端仍在外部 Python MinerU Worker，不在本仓库内。
+  - 若要完成跨系统全链路最终闭环，下一步需要让 Python Worker 透传并回写 `taskId / messageId` 到 `doc-vectorize-request`，而不是只保证 Java 侧后半程可靠。
+  - 当前还没有提供 Outbox 重放、任务补偿、消费日志查询等管理面接口，后续可继续补管理后台或运维脚本。
 - **验证结果**：
   - 已执行 `./mvnw.cmd -q -DskipTests compile`，编译通过。

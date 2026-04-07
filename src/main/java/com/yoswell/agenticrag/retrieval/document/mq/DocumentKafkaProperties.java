@@ -33,6 +33,14 @@ public class DocumentKafkaProperties {
     @NotNull
     private Retry retry = new Retry();
 
+    @Valid
+    @NotNull
+    private Outbox outbox = new Outbox();
+
+    @Valid
+    @NotNull
+    private Consume consume = new Consume();
+
     @Setter
     @Getter
     public static class Topics {
@@ -67,5 +75,29 @@ public class DocumentKafkaProperties {
         @Min(100)
         private long maxIntervalMs = 10_000L;
 
+    }
+
+    @Setter
+    @Getter
+    public static class Outbox {
+
+        private boolean enabled = true;
+
+        @Min(1)
+        private int batchSize = 20;
+
+        @Min(100)
+        private long pollIntervalMs = 2_000L;
+
+        @Min(100)
+        private long dispatchTimeoutMs = 5_000L;
+    }
+
+    @Setter
+    @Getter
+    public static class Consume {
+
+        @Min(1_000)
+        private long processingTimeoutMs = 60_000L;
     }
 }

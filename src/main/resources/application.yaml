@@ -114,3 +114,10 @@ agenticrag:
       interval-ms: 1000
       multiplier: 2.0
       max-interval-ms: 10000
+    outbox:
+      enabled: true
+      batch-size: 20
+      poll-interval-ms: 2000
+      dispatch-timeout-ms: 5000
+    consume:
+      processing-timeout-ms: 60000

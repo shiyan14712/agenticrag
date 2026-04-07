@@ -7,11 +7,15 @@ package com.yoswell.agenticrag.retrieval.document.dto.request;
  *
  * @param documentId 文档业务 ID
  * @param tenantId 当前租户 ID（用于安全双检与隔离）
+ * @param taskId 关联的异步任务 ID
+ * @param messageId 业务幂等消息 ID
  * @param timestamp 消息投递时间戳
  */
 public record DocumentDeleteRequestDTO(
         String documentId,
         String tenantId,
+        String taskId,
+        String messageId,
         long timestamp
 ) {
 }

@@ -15,6 +15,8 @@ import java.util.List;
  * @param fileUrl 文件在对象存储中的地址
  * @param fileExtension 文件扩展名，用于选择解析策略
  * @param allowedRoles 文档允许访问的角色列表
+ * @param taskId 关联的异步任务 ID
+ * @param messageId 业务幂等消息 ID
  * @param timestamp 消息创建时间戳，用于链路追踪
  */
 public record DocumentParseRequestDTO(
@@ -25,6 +27,8 @@ public record DocumentParseRequestDTO(
         String fileUrl,
         String fileExtension,
         List<String> allowedRoles,
+        String taskId,
+        String messageId,
         long timestamp
 ) {
 }

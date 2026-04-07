@@ -18,7 +18,10 @@ import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentProcessingStatus;
 import com.yoswell.agenticrag.retrieval.document.mq.DocumentKafkaProperties;
-import com.yoswell.agenticrag.retrieval.document.mq.DocumentMessageProducer;
+import com.yoswell.agenticrag.retrieval.document.reliability.entity.DocumentAsyncTaskDO;
+import com.yoswell.agenticrag.retrieval.document.reliability.model.DocumentAsyncTaskType;
+import com.yoswell.agenticrag.retrieval.document.reliability.service.DocumentAsyncTaskService;
+import com.yoswell.agenticrag.retrieval.document.reliability.service.DocumentOutboxService;
 
 /**
  * 文档上传链路的业务编排服务。
@@ -35,18 +38,21 @@ public class DocumentService {
 
     private final MinioStorageService minioStorageService;
     private final DocumentMetadataMapper documentMetadataMapper;
-    private final DocumentMessageProducer documentMessageProducer;
+    private final DocumentOutboxService documentOutboxService;
+    private final DocumentAsyncTaskService documentAsyncTaskService;
     private final DocumentKafkaProperties kafkaProperties;
     private final org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
 
     public DocumentService(MinioStorageService minioStorageService,
                            DocumentMetadataMapper documentMetadataMapper,
-                           DocumentMessageProducer documentMessageProducer,
+                           DocumentOutboxService documentOutboxService,
+                           DocumentAsyncTaskService documentAsyncTaskService,
                            DocumentKafkaProperties kafkaProperties,
                            org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate) {
         this.minioStorageService = minioStorageService;
         this.documentMetadataMapper = documentMetadataMapper;
-        this.documentMessageProducer = documentMessageProducer;
+        this.documentOutboxService = documentOutboxService;
+        this.documentAsyncTaskService = documentAsyncTaskService;
         this.kafkaProperties = kafkaProperties;
         this.redisTemplate = redisTemplate;
     }
@@ -119,19 +125,37 @@ public class DocumentService {
         log.info("[Upload Pipeline][METADATA] 元数据落库完成: documentId={}, tenantId={}, status={}, extension={}",
             documentId, tenantId, metadata.getStatus(), extension);
 
-        documentMessageProducer.sendDocParseRequest(new DocumentParseRequestDTO(
+        DocumentAsyncTaskDO parseTask = documentAsyncTaskService.createTask(
                 documentId,
                 tenantId,
-                metadata.getKbId(),
-                fileName,
-                minioUrl,
-                extension,
-                DEFAULT_ALLOWED_ROLES,
-                System.currentTimeMillis()
-        ));
+                DocumentAsyncTaskType.DOCUMENT_PARSE,
+                kafkaProperties.getTopics().getParseRequest(),
+                documentId
+        );
 
-        log.info("[Upload Pipeline][DISPATCH] 已投递解析任务: topic={}, documentId={}, tenantId={}",
-                kafkaProperties.getTopics().getParseRequest(), documentId, tenantId);
+        String messageId = "msg-" + UUID.randomUUID();
+        documentOutboxService.enqueue(
+                "DOCUMENT",
+                documentId,
+                parseTask.getTaskId(),
+                "DOCUMENT_PARSE_REQUEST",
+                kafkaProperties.getTopics().getParseRequest(),
+                documentId,
+                new DocumentParseRequestDTO(
+                        documentId,
+                        tenantId,
+                        metadata.getKbId(),
+                        fileName,
+                        minioUrl,
+                        extension,
+                        DEFAULT_ALLOWED_ROLES,
+                        parseTask.getTaskId(),
+                        messageId,
+                        System.currentTimeMillis()
+                ));
+
+        log.info("[Upload Pipeline][OUTBOX] 已登记解析任务: topic={}, documentId={}, tenantId={}, taskId={}, messageId={}",
+                kafkaProperties.getTopics().getParseRequest(), documentId, tenantId, parseTask.getTaskId(), messageId);
 
         return metadata;
     }
@@ -267,11 +291,30 @@ public class DocumentService {
         }
         
         // 4. 异步向 Kafka 发送文档已被删除的消息，供 ES 等下游组件完成向量删除
-        documentMessageProducer.sendDocumentDeletedRequest(new DocumentDeleteRequestDTO(
+        DocumentAsyncTaskDO deleteTask = documentAsyncTaskService.createTask(
                 documentId,
                 tenantId,
-                System.currentTimeMillis()
-        ));
+                DocumentAsyncTaskType.DOCUMENT_DELETE,
+                kafkaProperties.getTopics().getDeleteRequest(),
+                documentId
+        );
+        String messageId = "msg-" + UUID.randomUUID();
+        documentOutboxService.enqueue(
+                "DOCUMENT",
+                documentId,
+                deleteTask.getTaskId(),
+                "DOCUMENT_DELETE_REQUEST",
+                kafkaProperties.getTopics().getDeleteRequest(),
+                documentId,
+                new DocumentDeleteRequestDTO(
+                        documentId,
+                        tenantId,
+                        deleteTask.getTaskId(),
+                        messageId,
+                        System.currentTimeMillis()
+                ));
+        log.info("[Document Service] Delete outbox recorded. documentId={}, tenantId={}, taskId={}, messageId={}",
+                documentId, tenantId, deleteTask.getTaskId(), messageId);
     }
 
     /**
