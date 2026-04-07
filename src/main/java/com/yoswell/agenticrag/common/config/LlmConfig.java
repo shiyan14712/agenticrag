@@ -18,7 +18,6 @@ import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
 import dev.langchain4j.http.client.jdk.JdkHttpClient;
 import java.net.http.HttpClient;
-import java.util.Map;
 
 @Configuration
 public class LlmConfig {
@@ -70,7 +69,6 @@ public class LlmConfig {
     public ChatModel chatLanguageModel(JdkHttpClientBuilder jdkHttpClientBuilder) {
         return OpenAiChatModel.builder()
                 .httpClientBuilder(jdkHttpClientBuilder)
-                .customHeaders(Map.of("Connection", "close"))
                 .baseUrl(llmBaseUrl)
                 .apiKey(llmApiKey)
                 .modelName(llmModelName)
