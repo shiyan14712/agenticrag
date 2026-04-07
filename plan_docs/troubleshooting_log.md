@@ -369,3 +369,70 @@ org.springframework.security.authorization.AuthorizationDeniedException: Access 
 2. **重构 RAG 工具的异常外溢与日志体系**：
     - **异常精准定级**：移除 `IllegalStateException` 和直接覆盖的 `RuntimeException`，修改为直接抛出封装好的 `BusinessException(ErrorCode.UNAUTHORIZED_ERROR)` 和 `BusinessException(ErrorCode.SYSTEM_ERROR)`。完美对接 `GlobalExceptionHandler` 进行一致化的 JSON （含 HttpCode）响应。
     - **节点打点追踪**：系统性地补足了跨渠召回（BM25 & KNN）、RRF 倒排融合算法和 Cross-Attention 大模型重排所有三个维度的执行性能及命中数据埋点日志（Logs），提升链路可观测度。
+---
+
+## 🐞 [2026-04-07] 会话 Title 异步生成失败：非法请求头与重试锁未释放
+
+### 现象描述 (Symptom)
+每次流式对话结束后，`ChatOrchestrator.asyncTitleGenerationIfNeeded()` 都会异步触发 title 生成。但实际运行时，session title 始终无法落库，后台日志反复出现如下错误：
+
+```text
+java.lang.IllegalArgumentException: restricted header name: "Connection"
+	at java.net.http/jdk.internal.net.http.HttpRequestBuilderImpl.checkNameAndValue(HttpRequestBuilderImpl.java:110)
+	at dev.langchain4j.http.client.jdk.JdkHttpClient.toJdkRequest(JdkHttpClient.java:104)
+	at dev.langchain4j.model.openai.OpenAiChatModel.doChat(OpenAiChatModel.java:153)
+	at com.yoswell.agenticrag.core.agent.service.ChatService.generateTitle(ChatService.java:40)
+	at com.yoswell.agenticrag.core.agent.service.ChatService.generateTitleAndSave(ChatService.java:80)
+```
+
+同时，即使后续再次发送消息，title 也不会再尝试生成，表现为“首次失败后长时间无法重试”。
+
+### 根因分析 (Root Cause Analysis)
+这次故障实际上是两层问题叠加导致的：
+
+1. **Title 生成请求在 HTTP 请求构建阶段就失败了**
+   - `SimpleChatAgent` 使用的是 `ChatModel -> OpenAiChatModel -> JdkHttpClient` 这条链路。
+   - 在 `LlmConfig.chatLanguageModel()` 中，给模型手动注入了 `customHeaders(Map.of("Connection", "close"))`。
+   - 但在 Java 21 的 JDK HTTP Client 中，`Connection` 属于受限请求头，应用代码不允许手动设置。因此在 `HttpRequestBuilderImpl.header(...)` 阶段直接抛出 `IllegalArgumentException`，导致 LLM 请求根本没有发出去。
+
+2. **Title 生成失败后，Redis 生成锁没有被正确释放**
+   - `asyncTitleGenerationIfNeeded()` 使用 Redis `setIfAbsent` 做了一个 24 小时的生成锁，用于避免重复生成。
+   - 原实现中 `ChatService.generateTitleAndSave()` 内部用 `try/catch` 吞掉了异常，只记录 `log.error(...)`，没有继续向外抛出。
+   - 这导致 `ChatOrchestrator` 外层拿不到失败信号，自然也不会 `delete(titleGenKey)`，最终形成“title 没生成成功，但锁已经被占住 24 小时”的假成功状态。
+
+3. **为什么这个问题只在 title 生成时暴露**
+   - `EnterpriseAgent` 走的是 `StreamingChatModel`，而 title 生成走的是 `SimpleChatAgent -> ChatModel`。
+   - 非法 `Connection` header 只被配置到了 `chatLanguageModel()`，没有配置到 `streamingChatLanguageModel()`，所以流式对话本身正常，但 title 生成单独失败。
+
+### 解决方案 (Resolution)
+1. **移除非法 HTTP Header**
+   - 修改 `LlmConfig.java`，删除 `OpenAiChatModel.builder()` 上的：
+   ```java
+   .customHeaders(Map.of("Connection", "close"))
+   ```
+   - 交由 JDK HTTP Client 自己管理连接行为，避免再次触发受限请求头异常。
+
+2. **让 title 生成失败能够继续向外传播**
+   - 重构 `ChatService.generateTitleAndSave()`，不再吞掉异常。
+   - 当生成结果为空，或数据库更新行数为 0 时，直接抛出异常，让编排层感知失败。
+
+3. **修复 Redis 生成锁的重试机制**
+   - 在 `ChatOrchestrator.asyncTitleGenerationIfNeeded()` 中明确区分：
+     - 已有生成锁：直接跳过并记录 `info`
+     - session 不存在：删除锁并记录 `warn`
+     - title 生成失败：删除锁，允许后续消息再次触发重试
+
+4. **补充可观测性日志**
+   - `ChatService` 增加：
+     - title 生成开始
+     - title 生成完成
+     - 生成结果为空
+     - 落库成功 / 跳过更新
+   - `ChatOrchestrator` 增加：
+     - 跳过 title 生成的原因
+     - 异步 title 生成开始
+     - 失败后锁释放
+
+5. **验证结果**
+   - 已执行 `mvnw.cmd -DskipTests compile`，构建通过。
+   - 修复后，title 生成请求可以正常进入 LLM 调用链路；即使后续再次失败，Redis 锁也会被回收，不会再出现会话长时间无法重试的问题。
