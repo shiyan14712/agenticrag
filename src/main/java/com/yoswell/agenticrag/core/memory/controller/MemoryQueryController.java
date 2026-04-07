@@ -2,6 +2,7 @@ package com.yoswell.agenticrag.core.memory.controller;
 
 import java.util.List;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -19,16 +20,11 @@ import com.yoswell.agenticrag.core.memory.service.UserGlobalMemoryService;
  */
 @RestController
 @RequestMapping("/api/v1/memory")
+@RequiredArgsConstructor
 public class MemoryQueryController {
 
     private final UserGlobalMemoryService userGlobalMemoryService;
     private final SessionMemoryService sessionMemoryService;
-
-    public MemoryQueryController(UserGlobalMemoryService userGlobalMemoryService,
-            SessionMemoryService sessionMemoryService) {
-        this.userGlobalMemoryService = userGlobalMemoryService;
-        this.sessionMemoryService = sessionMemoryService;
-    }
 
     @GetMapping("/global/{userId}")
     public ApiResponse<List<UserGlobalMemoryDTO>> getUserGlobalMemories(
