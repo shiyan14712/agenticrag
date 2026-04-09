@@ -11,7 +11,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import jakarta.validation.Valid;
+
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.yoswell.agenticrag.common.result.ApiResponse;
 import com.yoswell.agenticrag.platform.session.dto.request.DeleteSessionRequestDTO;
 import com.yoswell.agenticrag.platform.session.dto.request.SessionCreateRequestDTO;
@@ -61,7 +63,7 @@ public class SessionController {
      * @return 包含会话分页结果的统一响应
      */
     @GetMapping
-    public ApiResponse<Page<ChatSession>> getSessions(@ModelAttribute SessionListQueryRequestDTO reqDTO) {
+    public ApiResponse<IPage<ChatSession>> getSessions(@ModelAttribute SessionListQueryRequestDTO reqDTO) {
         String userId = SecurityUtils.getCurrentUserId();
         return ApiResponse.success(sessionService.getSessions(
                 userId,
@@ -80,7 +82,7 @@ public class SessionController {
     @GetMapping("/{sessionId}/messages")
     public ApiResponse<SessionDetailsRespDTO> getSessionMessages(
             @PathVariable String sessionId,
-            @ModelAttribute SessionMessageQueryRequestDTO request) {
+            @Valid @ModelAttribute SessionMessageQueryRequestDTO request) {
         String userId = SecurityUtils.getCurrentUserId();
         return ApiResponse.success(sessionService.getSessionDetails(
                 sessionId,

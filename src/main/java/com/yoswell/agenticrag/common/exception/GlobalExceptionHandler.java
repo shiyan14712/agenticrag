@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.validation.BindException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -52,6 +53,15 @@ public class GlobalExceptionHandler {
                 .map(ConstraintViolation::getMessage)
                 .collect(Collectors.joining(", "));
         log.warn("[Global Exception] 方法参数校验异常: {}", errorMsg);
+        return ApiResponse.error("BAD_REQUEST", errorMsg);
+    }
+
+    @ExceptionHandler(BindException.class)
+    public ApiResponse<Void> handleBindException(BindException e) {
+        String errorMsg = e.getBindingResult().getFieldErrors().stream()
+                .map(DefaultMessageSourceResolvable::getDefaultMessage)
+                .collect(Collectors.joining(", "));
+        log.warn("[Global Exception] 请求参数绑定校验异常: {}", errorMsg);
         return ApiResponse.error("BAD_REQUEST", errorMsg);
     }
 

@@ -1,6 +1,6 @@
 package com.yoswell.agenticrag.platform.session.dto.response;
 
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.yoswell.agenticrag.platform.session.entity.ChatMessage;
 import com.yoswell.agenticrag.platform.session.entity.ChatSession;
 
@@ -26,5 +26,5 @@ public class SessionDetailsRespDTO {
     /**
      * 消息列表分页数据
      */
-    private Page<ChatMessage> messages;
+    private IPage<ChatMessage> messages;
 }

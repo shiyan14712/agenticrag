@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.yoswell.agenticrag.common.exception.BusinessException;
 import com.yoswell.agenticrag.common.exception.ErrorCode;
@@ -81,12 +82,12 @@ public class SessionService {
      * @param size 每页大小
      * @return 会话分页结果
      */
-    public Page<ChatSession> getSessions(String userId, SessionStatusConstants status, int page, int size) {
+    public IPage<ChatSession> getSessions(String userId, SessionStatusConstants status, int page, int size) {
         int targetStatusCode = SessionStatusConstants.ACTIVE.getCode();
         if (status != null) {
             targetStatusCode = status.getCode();
         }
-        Page<ChatSession> p = new Page<>(page, size);
+        Page<ChatSession> p = new Page<>(toMybatisCurrentPage(page), size);
         return sessionMapper.selectPage(p, new LambdaQueryWrapper<ChatSession>()
                 .eq(ChatSession::getUserId, userId)
                 .eq(ChatSession::getStatus, targetStatusCode)
@@ -125,14 +126,16 @@ public class SessionService {
      * @param size 每页大小
      * @return 消息分页结果
      */
-    public Page<ChatMessage> getSessionMessages(String sessionId, String userId, int page, int size) {
+    public IPage<ChatMessage> getSessionMessages(String sessionId, String userId, int page, int size) {
         getSessionBySessionId(sessionId, userId);
-        // TODO(session-messages-cache): 接入 Redis 读缓存（先查缓存，未命中回源 DB，再回填缓存）。
-        // TODO(session-messages-cache): 缓存 key 需包含 sessionId + page + size，避免分页数据串读。
-        Page<ChatMessage> p = new Page<>(page, size);
+        Page<ChatMessage> p = new Page<>(toMybatisCurrentPage(page), size);
         return messageMapper.selectPage(p, new LambdaQueryWrapper<ChatMessage>()
                 .eq(ChatMessage::getSessionId, sessionId)
                 .orderByAsc(ChatMessage::getCreatedAt));
+    }
+
+    private long toMybatisCurrentPage(int zeroBasedPage) {
+        return Math.max(1L, (long) zeroBasedPage + 1L);
     }
 
     /**
@@ -162,7 +165,7 @@ public class SessionService {
      */
     public SessionDetailsRespDTO getSessionDetails(String sessionId, String userId, int page, int size) {
         ChatSession session = getSessionBySessionId(sessionId, userId);
-        Page<ChatMessage> messages = getSessionMessages(sessionId, userId, page, size);
+        IPage<ChatMessage> messages = getSessionMessages(sessionId, userId, page, size);
         return new SessionDetailsRespDTO(session, messages);
     }
 
