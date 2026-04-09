@@ -1,4 +1,4 @@
-package com.yoswell.agenticrag.retrieval.document.service;
+package com.yoswell.agenticrag.retrieval.document.config;
 
 import java.util.List;
 

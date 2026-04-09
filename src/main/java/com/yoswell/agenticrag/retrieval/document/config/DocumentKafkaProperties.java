@@ -1,4 +1,4 @@
-package com.yoswell.agenticrag.retrieval.document.mq;
+package com.yoswell.agenticrag.retrieval.document.config;
 
 import lombok.Getter;
 import lombok.Setter;

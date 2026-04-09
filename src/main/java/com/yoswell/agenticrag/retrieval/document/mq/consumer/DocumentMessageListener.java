@@ -1,4 +1,4 @@
-package com.yoswell.agenticrag.retrieval.document.mq;
+package com.yoswell.agenticrag.retrieval.document.mq.consumer;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
@@ -20,12 +20,13 @@ import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentParseReques
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentVectorizeRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
+import com.yoswell.agenticrag.retrieval.document.config.DocumentKafkaProperties;
+import com.yoswell.agenticrag.retrieval.document.model.DocumentVectorizationExecutionResult;
 import com.yoswell.agenticrag.retrieval.document.reliability.entity.DocumentAsyncTaskDO;
 import com.yoswell.agenticrag.retrieval.document.reliability.model.DocumentAsyncTaskType;
 import com.yoswell.agenticrag.retrieval.document.reliability.service.DocumentAsyncTaskService;
 import com.yoswell.agenticrag.retrieval.document.reliability.service.MqConsumeLogService;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentParsePipelineService;
-import com.yoswell.agenticrag.retrieval.document.service.DocumentVectorizationExecutionResult;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentVectorizationService;
 import com.yoswell.agenticrag.retrieval.document.service.KnowledgeChunkIndexService;
 

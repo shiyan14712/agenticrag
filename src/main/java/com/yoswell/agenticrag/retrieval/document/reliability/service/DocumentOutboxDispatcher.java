@@ -10,8 +10,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import com.yoswell.agenticrag.retrieval.document.mq.DocumentKafkaProperties;
-import com.yoswell.agenticrag.retrieval.document.mq.DocumentMessageProducer;
+import com.yoswell.agenticrag.retrieval.document.config.DocumentKafkaProperties;
+import com.yoswell.agenticrag.retrieval.document.mq.producer.DocumentMessageProducer;
 import com.yoswell.agenticrag.retrieval.document.reliability.entity.MessageOutboxDO;
 
 @Component

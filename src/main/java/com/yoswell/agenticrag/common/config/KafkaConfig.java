@@ -1,5 +1,6 @@
 package com.yoswell.agenticrag.common.config;
 
+import com.yoswell.agenticrag.retrieval.document.config.DocumentKafkaProperties;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.springframework.context.annotation.Bean;
@@ -11,8 +12,6 @@ import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.support.ExponentialBackOffWithMaxRetries;
-
-import com.yoswell.agenticrag.retrieval.document.mq.DocumentKafkaProperties;
 
 /**
  * 文档异步链路的 Kafka 基础配置。

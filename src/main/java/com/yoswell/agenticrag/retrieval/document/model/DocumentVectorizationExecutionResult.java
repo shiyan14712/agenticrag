@@ -1,5 +1,8 @@
-package com.yoswell.agenticrag.retrieval.document.service;
+package com.yoswell.agenticrag.retrieval.document.model;
 
+/**
+ * 文档向量化执行结果
+ */
 public record DocumentVectorizationExecutionResult(boolean skipped, String detail) {
 
     public static DocumentVectorizationExecutionResult success(String detail) {

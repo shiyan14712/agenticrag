@@ -1,4 +1,4 @@
-package com.yoswell.agenticrag.retrieval.document.mq;
+package com.yoswell.agenticrag.retrieval.document.mq.producer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
