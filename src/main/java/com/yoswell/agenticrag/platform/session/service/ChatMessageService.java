@@ -2,6 +2,7 @@ package com.yoswell.agenticrag.platform.session.service;
 
 import java.util.UUID;
 
+import com.yoswell.agenticrag.core.memory.constants.MemoryStoreConstants;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -55,6 +56,7 @@ public class ChatMessageService {
         msg.setSessionId(sessionId);
         msg.setRole("user");
         msg.setContent(content);
+        msg.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L1);
         messageMapper.insert(msg);
         incrementSessionMessageCount(sessionId, 1);
     }
@@ -73,6 +75,7 @@ public class ChatMessageService {
         msg.setSessionId(sessionId);
         msg.setRole("assistant");
         msg.setContent(content);
+        msg.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L1);
 
         if (metadata != null) {
             try {

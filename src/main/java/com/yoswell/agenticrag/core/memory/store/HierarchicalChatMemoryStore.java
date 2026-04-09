@@ -8,6 +8,7 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.yoswell.agenticrag.platform.session.entity.ChatMessageDO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,27 +36,32 @@ import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 /**
  * 分层聊天内存存储器
  * 
- * <p>实现三级分层内存管理策略，平衡对话质量与存储效率：</p>
+ * <p>
+ * 实现三级分层内存管理策略，平衡对话质量与存储效率：
+ * </p>
+ * <p>
+ * 扮演了一个**适配器（Adapter）**的核心枢纽角色。它的职责恰恰就是在两种形态之间做“翻译”和“组装”。
+ * </p>
  * 
  * <h3>内存层级架构：</h3>
  * <ul>
- *     <li><strong>L1 级（热数据层）</strong>：存储最近 N 条原始对话消息（Redis），保持最高精度</li>
- *     <li><strong>L2 级（温数据层）</strong>：存储中期对话摘要（Redis），平衡精度与容量</li>
- *     <li><strong>L3 级（冷数据层）</strong>：存储长期对话核心摘要（Redis + DB），保留最关键信息</li>
+ * <li><strong>L1 级（热数据层）</strong>：存储最近 N 条原始对话消息（Redis），保持最高精度</li>
+ * <li><strong>L2 级（温数据层）</strong>：存储中期对话摘要（Redis），平衡精度与容量</li>
+ * <li><strong>L3 级（冷数据层）</strong>：存储长期对话核心摘要（Redis + DB），保留最关键信息</li>
  * </ul>
  * 
  * <h3>核心特性：</h3>
  * <ul>
- *     <li>支持用户全局偏好注入（从数据库加载）</li>
- *     <li>智能消息序列化/反序列化（兼容多种数据格式）</li>
- *     <li>虚拟线程异步摘要生成（不阻塞主流程）</li>
- *     <li>压缩状态持久化（DB 记录每段消息的压缩级别）</li>
+ * <li>支持用户全局偏好注入（从数据库加载）</li>
+ * <li>智能消息序列化/反序列化（兼容多种数据格式）</li>
+ * <li>虚拟线程异步摘要生成（不阻塞主流程）</li>
+ * <li>压缩状态持久化（DB 记录每段消息的压缩级别）</li>
  * </ul>
  * 
  * <h3>工作流程：</h3>
  * <ol>
- *     <li>{@code getMessages()}：组装 L3 摘要 → L2 摘要 → L1 原始消息 → 用户偏好</li>
- *     <li>{@code updateMessages()}：更新 L1 缓存 → 触发虚拟线程生成 L2/L3 摘要 → 持久化压缩状态</li>
+ * <li>{@code getMessages()}：组装 L3 摘要 → L2 摘要 → L1 原始消息 → 用户偏好</li>
+ * <li>{@code updateMessages()}：更新 L1 缓存 → 触发虚拟线程生成 L2/L3 摘要 → 持久化压缩状态</li>
  * </ol>
  * 
  * @author AgenticRAG Team
@@ -123,7 +129,7 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     /**
      * 构造函数
      * 
-     * @param redisTemplate         Redis 操作模板
+     * @param redisTemplate          Redis 操作模板
      * @param userGlobalMemoryMapper 用户全局记忆 Mapper
      * @param chatSessionMapper      会话 Mapper
      * @param chatMessageMapper      消息 Mapper
@@ -133,13 +139,13 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
      * @param l2Limit                L2 级缓存上限（默认 30 条）
      */
     public HierarchicalChatMemoryStore(RedisTemplate<String, Object> redisTemplate,
-                                       UserGlobalMemoryMapper userGlobalMemoryMapper,
-                                       ChatSessionMapper chatSessionMapper,
-                                       ChatMessageMapper chatMessageMapper,
-                                       ChatModel chatLanguageModel,
-                                       @Value("${rag.memory.max-messages:40}") int maxMessages,
-                                       @Value("${rag.memory.l1-limit:10}") int l1Limit,
-                                       @Value("${rag.memory.l2-limit:30}") int l2Limit) {
+            UserGlobalMemoryMapper userGlobalMemoryMapper,
+            ChatSessionMapper chatSessionMapper,
+            ChatMessageMapper chatMessageMapper,
+            ChatModel chatLanguageModel,
+            @Value("${rag.memory.max-messages:40}") int maxMessages,
+            @Value("${rag.memory.l1-limit:10}") int l1Limit,
+            @Value("${rag.memory.l2-limit:30}") int l2Limit) {
         this.redisTemplate = redisTemplate;
         this.userGlobalMemoryMapper = userGlobalMemoryMapper;
         this.chatSessionMapper = chatSessionMapper;
@@ -154,12 +160,14 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     /**
      * 获取指定会话的聊天消息列表
      * 
-     * <p>按照 L3 → L2 → L1 的顺序组装消息：</p>
+     * <p>
+     * 按照 L3 → L2 → L1 的顺序组装消息：
+     * </p>
      * <ol>
-     *     <li>注入用户全局偏好（作为 SystemMessage）</li>
-     *     <li>注入 L3 长期摘要（如果有）</li>
-     *     <li>注入 L2 中期摘要（如果有）</li>
-     *     <li>注入 L1 原始消息（从 Redis 读取）</li>
+     * <li>注入用户全局偏好（作为 SystemMessage）</li>
+     * <li>注入 L3 长期摘要（如果有）</li>
+     * <li>注入 L2 中期摘要（如果有）</li>
+     * <li>注入 L1 原始消息（从 Redis 读取）</li>
      * </ol>
      * 
      * @param memoryId 内存标识符（即 session ID）
@@ -170,10 +178,9 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
      * @see MemoryStoreConstants#REDIS_PREFIX_L1
      */
     @Override
-    @SuppressWarnings("unchecked")
     public List<ChatMessage> getMessages(Object memoryId) {
         String sessionId = memoryId.toString();
-        log.info("Retrieving memory for session: {}", sessionId);
+        log.info("[Hierarchical Chat Memory Store] Retrieving memory for session: {}", sessionId);
 
         // 将动态上下文和持久化 system 指令合并为单条 SystemMessage，兼容只接受单 system 的模型后端
         ArrayList<String> systemSegments = new ArrayList<>();
@@ -192,8 +199,11 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
             }
         }
 
+        // 获取全局偏好组装后 注入系统提示词List
         injectUserPreferences(sessionId, systemSegments);
+        // 获取L3摘要组装后 注入系统提示词List
         injectSummary(sessionId, "session:memory:l3:", "Long-range session summary", systemSegments);
+        // 获取L2摘要组装后 注入系统提示词List
         injectSummary(sessionId, "session:memory:l2:", "Medium-range session summary", systemSegments);
 
         ArrayList<ChatMessage> messages = new ArrayList<>();
@@ -205,16 +215,18 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     /**
      * 更新指定会话的聊天消息列表（基于滑动窗口机制）
      * 
-     * <p>执行以下操作：</p>
+     * <p>
+     * 执行以下操作：
+     * </p>
      * <ol>
-     *     <li>过滤出真实的对话消息，排除内部合成的系统上下文中枢指令</li>
-     *     <li>检查活跃窗口大小：若非系统消息数超出 {@code l1Limit}，则触发滑动，驱逐（evict）最旧的消息</li>
-     *     <li>将滑动后剩余的、最新的 {@code l1Limit} 条消息覆盖存入 Redis L1 高速缓存</li>
-     *     <li>若发生了滑动，把遭驱逐的旧消息交由虚拟线程，异步触发 L2/L3 层级的滚动摘要与提炼</li>
+     * <li>过滤出真实的对话消息，排除内部合成的系统上下文中枢指令</li>
+     * <li>检查活跃窗口大小：若非系统消息数超出 {@code l1Limit}，则触发滑动，驱逐（evict）最旧的消息</li>
+     * <li>将滑动后剩余的、最新的 {@code l1Limit} 条消息覆盖存入 Redis L1 高速缓存</li>
+     * <li>若发生了滑动，把遭驱逐的旧消息交由虚拟线程，异步触发 L2/L3 层级的滚动摘要与提炼</li>
      * </ol>
      * 
-     * @param memoryId  内存标识符（即 session ID）
-     * @param messages  当前会话已存在的全量消息列表（由前端与大模型生成追加组合而来）
+     * @param memoryId 内存标识符（即 session ID）
+     * @param messages 当前会话已存在的全量消息列表（由前端与大模型生成追加组合而来）
      * 
      * @see MemoryStoreConstants#REDIS_PREFIX_L1
      * @see MemoryStoreConstants#L1_CACHE_TTL_HOURS
@@ -225,10 +237,12 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
 
         // 1. Filter out synthetic system messages
         List<ChatMessage> pureMessages = messages.stream()
-                .filter(msg -> !(msg instanceof SystemMessage sm && sm.text() != null && sm.text().startsWith(SYNTHETIC_SYSTEM_MESSAGE_MARKER)))
+                .filter(msg -> !(msg instanceof SystemMessage sm && sm.text() != null
+                        && sm.text().startsWith(SYNTHETIC_SYSTEM_MESSAGE_MARKER)))
                 .collect(Collectors.toList());
 
-        log.info("Updating memory for session: {}. Pure messages count: {}", sessionId, pureMessages.size());
+        log.info("[Hierarchical Chat Memory Store] Updating memory for session: {}. Pure messages count: {}", sessionId,
+                pureMessages.size());
 
         List<ChatMessage> l1Messages = pureMessages;
         List<ChatMessage> evictedMessages = new ArrayList<>();
@@ -239,20 +253,22 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
             evictedMessages = pureMessages.subList(0, evictCount);
             l1Messages = pureMessages.subList(evictCount, pureMessages.size());
         }
-        
+
         // 确保至少保存一条消息
         if (l1Messages.isEmpty() && !pureMessages.isEmpty()) {
             l1Messages = new ArrayList<>(pureMessages);
         }
-        
-        log.debug("Saving {} messages to Redis L1 cache", l1Messages.size());
+
+        log.debug("[Hierarchical Chat Memory Store] Saving {} messages to Redis L1 cache", l1Messages.size());
         // 3. 将 L1 存入 Redis
         try {
             String l1Json = dev.langchain4j.data.message.ChatMessageSerializer.messagesToJson(l1Messages);
-            redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L1 + sessionId, l1Json, MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
+            redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L1 + sessionId, l1Json,
+                    MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
         } catch (Exception e) {
-            log.warn("Failed to serialize recent messages to JSON: ", e);
-            redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L1 + sessionId, l1Messages, MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
+            log.warn("[Hierarchical Chat Memory Store] Failed to serialize recent messages to JSON: ", e);
+            redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L1 + sessionId, l1Messages,
+                    MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
         }
 
         // 4. 触发异步滑动窗口摘要刷新
@@ -265,9 +281,11 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     /**
      * 删除指定会话的所有内存数据
      * 
-     * <p>清理 Redis 中的 L1、L2、L3 三级缓存</p>
+     * <p>
+     * 清理 Redis 中的 L1、L2、L3 三级缓存
+     * </p>
      * 
-     * @param memoryId  内存标识符（即 session ID）
+     * @param memoryId 内存标识符（即 session ID）
      * 
      * @see MemoryStoreConstants#REDIS_PREFIX_L1
      * @see MemoryStoreConstants#REDIS_PREFIX_L2
@@ -276,7 +294,7 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     @Override
     public void deleteMessages(Object memoryId) {
         String sessionId = memoryId.toString();
-        log.info("Deleting memory for session: {}", sessionId);
+        log.info("[Hierarchical Chat Memory Store] Deleting memory for session: {}", sessionId);
         redisTemplate.delete(MemoryStoreConstants.REDIS_PREFIX_L1 + sessionId);
         redisTemplate.delete(MemoryStoreConstants.REDIS_PREFIX_L2 + sessionId);
         redisTemplate.delete(MemoryStoreConstants.REDIS_PREFIX_L3 + sessionId);
@@ -285,11 +303,15 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     /**
      * 注入用户全局偏好设置
      * 
-     * <p>从数据库加载用户的全局记忆/偏好，构造成 SystemMessage 注入到对话上下文中。</p>
-     * <p>这些偏好会永久影响 AI 的回复风格和内容。</p>
+     * <p>
+     * 从数据库加载用户的全局记忆/偏好，构造成 SystemMessage 注入到对话上下文中。
+     * </p>
+     * <p>
+     * 这些偏好会永久影响 AI 的回复风格和内容。
+     * </p>
      * 
-     * @param sessionId  会话 ID
-     * @param target     目标消息列表（用于添加 SystemMessage）
+     * @param sessionId 会话 ID
+     * @param target    目标消息列表（用于添加 SystemMessage）
      * 
      * @see MemoryStoreConstants#GLOBAL_MEMORY_PREFIX
      * @see MemoryStoreConstants#GLOBAL_MEMORY_ITEM_PREFIX
@@ -301,16 +323,16 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
             return;
         }
 
+        // 偏好条目组装
         List<UserGlobalMemory> preferences = userGlobalMemoryMapper.selectList(
-                new QueryWrapper<UserGlobalMemory>().eq("user_id", session.getUserId())
-        );
+                new LambdaQueryWrapper<UserGlobalMemory>().eq(UserGlobalMemory::getUserId, session.getUserId()));
         if (!preferences.isEmpty()) {
             String globalMemStr = MemoryStoreConstants.GLOBAL_MEMORY_PREFIX +
                     preferences.stream()
-                            .map(p -> MemoryStoreConstants.GLOBAL_MEMORY_ITEM_PREFIX + 
-                                      p.getPreferenceKey() + 
-                                      MemoryStoreConstants.GLOBAL_MEMORY_KV_SEPARATOR + 
-                                      p.getPreferenceValue())
+                            .map(p -> MemoryStoreConstants.GLOBAL_MEMORY_ITEM_PREFIX +
+                                    p.getPreferenceKey() +
+                                    MemoryStoreConstants.GLOBAL_MEMORY_KV_SEPARATOR +
+                                    p.getPreferenceValue())
                             .collect(Collectors.joining("\n"));
             target.add(globalMemStr);
         }
@@ -319,12 +341,14 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     /**
      * 注入会话摘要
      * 
-     * <p>从 Redis 读取指定前缀的摘要内容，构造成 SystemMessage 注入到对话上下文中。</p>
+     * <p>
+     * 从 Redis 读取指定前缀的摘要内容，构造成 SystemMessage 注入到对话上下文中。
+     * </p>
      * 
-     * @param sessionId  会话 ID
-     * @param prefix     Redis 键前缀（如 "session:memory:l2:"）
-     * @param title      摘要标题（用于构建 SystemMessage）
-     * @param target     目标消息列表
+     * @param sessionId 会话 ID
+     * @param prefix    Redis 键前缀（如 "session:memory:l2:"）
+     * @param title     摘要标题（用于构建 SystemMessage）
+     * @param target    目标消息列表
      * 
      * @see MemoryStoreConstants#REDIS_PREFIX_L2
      * @see MemoryStoreConstants#REDIS_PREFIX_L3
@@ -339,10 +363,13 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     /**
      * 提取持久化的 SystemMessage 文本
      * 
-     * <p>从 Redis L1 缓存的历史消息中提取有效的系统指令片段，过滤掉由本类合成的复合 SystemMessage（以 {@code SYNTHETIC_SYSTEM_MESSAGE_MARKER} 开头），
-     * 避免重复注入导致上下文膨胀。</p>
+     * <p>
+     * 从 Redis L1 缓存的历史消息中提取有效的系统指令片段，过滤掉由本类合成的复合 SystemMessage（以
+     * {@code SYNTHETIC_SYSTEM_MESSAGE_MARKER} 开头），
+     * 避免重复注入导致上下文膨胀。
+     * </p>
      * 
-     * @param systemMessage  待检查的系统消息对象
+     * @param systemMessage 待检查的系统消息对象
      * @return 提取后的文本片段（空表示应忽略）
      * 
      * @see #SYNTHETIC_SYSTEM_MESSAGE_MARKER
@@ -362,13 +389,18 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     /**
      * 构建复合 SystemMessage
      * 
-     * <p>将多个系统指令片段（用户偏好、L2/L3 摘要、历史系统消息）合并为单条 SystemMessage，
-     * 确保 {@code getMessages()} 只返回一条 SystemMessage，避免与 {@code EnterpriseAgent} 方法上的 {@code @SystemMessage} 
-     * 叠加后产生多条 system message，触发 OpenAI 兼容接口的校验失败。</p>
+     * <p>
+     * 将多个系统指令片段（用户偏好、L2/L3 摘要、历史系统消息）合并为单条 SystemMessage，
+     * 确保 {@code getMessages()} 只返回一条 SystemMessage，避免与 {@code EnterpriseAgent} 方法上的
+     * {@code @SystemMessage}
+     * 叠加后产生多条 system message，触发 OpenAI 兼容接口的校验失败。
+     * </p>
      * 
-     * <p>处理流程：去重 → 过滤空值 → 添加内部标记头 → 双换行分隔符拼接。</p>
+     * <p>
+     * 处理流程：去重 → 过滤空值 → 添加内部标记头 → 双换行分隔符拼接。
+     * </p>
      * 
-     * @param systemSegments  系统指令片段集合
+     * @param systemSegments 系统指令片段集合
      * @return 合成后的 SystemMessage（无有效片段时返回空）
      * 
      * @see #SYNTHETIC_SYSTEM_MESSAGE_MARKER
@@ -392,14 +424,16 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     /**
      * 基于滑动窗口的摘要刷新（在虚拟线程中执行）
      *
-     * <p>核心业务流程：</p>
+     * <p>
+     * 核心业务流程：
+     * </p>
      * <ol>
-     *     <li>读取现有 L2（中期存储）滚动摘要，并结合新踢出 L1 的消息生成新滚动摘要</li>
-     *     <li>统计 L2 已合并的消息数量。如果总数 > l2Limit，则触发 L3 升维摘要</li>
-     *     <li>将 L2 凝练至 L3，然后保留最新对话意图摘要，持久化状态</li>
+     * <li>读取现有 L2（中期存储）滚动摘要，并结合新踢出 L1 的消息生成新滚动摘要</li>
+     * <li>统计 L2 已合并的消息数量。如果总数 > l2Limit，则触发 L3 升维摘要</li>
+     * <li>将 L2 凝练至 L3，然后保留最新对话意图摘要，持久化状态</li>
      * </ol>
      *
-     * @param sessionId 会话 ID
+     * @param sessionId       会话 ID
      * @param evictedMessages 该轮滑动窗口被强制踢出的消息列表
      */
     private void refreshSummariesSlidingWindow(String sessionId, List<ChatMessage> evictedMessages) {
@@ -410,7 +444,8 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
 
             // 2. 将被剔除的消息滚入 L2
             String newL2Summary = summarizeRollingL2(currentL2, evictedMessages);
-            redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L2 + sessionId, newL2Summary, MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
+            redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L2 + sessionId, newL2Summary,
+                    MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
 
             // 3. 增加 L2 滑动计数（用于判定何时生成 L3）
             String countKey = "session:memory:l2_count:" + sessionId;
@@ -420,11 +455,12 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
             String curL3 = null;
             Object l3Obj = redisTemplate.opsForValue().get(MemoryStoreConstants.REDIS_PREFIX_L3 + sessionId);
             String currentL3 = l3Obj instanceof String ? (String) l3Obj : "";
-            
+
             if (count != null && count >= l2Limit) {
                 // 压缩长线意图，提取 Durable facts & entities 到 L3
                 curL3 = distillL3(currentL3, newL2Summary);
-                redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L3 + sessionId, curL3, MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
+                redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L3 + sessionId, curL3,
+                        MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
 
                 // LLM 会把所有的事实转移到 L3。L2 的历史滚动量清盘重置。
                 redisTemplate.delete(countKey);
@@ -435,14 +471,17 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
             // 5. 持久化层级记录到 DB
             persistCompressionState(sessionId, newL2Summary, curL3);
         } catch (Exception exception) {
-            log.warn("Failed to refresh hierarchical sliding summaries for session {}", sessionId, exception);
+            log.warn("[Hierarchical Chat Memory Store] Failed to refresh hierarchical sliding summaries for session {}",
+                    sessionId, exception);
         }
     }
 
     /**
      * 生成 L2 滚动叙事摘要
      *
-     * <p>使用 LLM 将刚从 L1 滑出的旧消息无缝融合到当前的 L2 摘要中，形成连贯的中期上下文叙事。</p>
+     * <p>
+     * 使用 LLM 将刚从 L1 滑出的旧消息无缝融合到当前的 L2 摘要中，形成连贯的中期上下文叙事。
+     * </p>
      *
      * @param currentL2       当前的 L2 滚动摘要（由于新会话开启可能为空）
      * @param evictedMessages 此轮从 L1 活跃窗口中由于滑块越界、被“淘汰”出局的原始消息列表
@@ -470,8 +509,10 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     /**
      * 提炼 L3 长期核心事实（知识大蒸馏）
      *
-     * <p>当系统判断 L2 吸收的碎片化消息量过于冗长（达到提炼阈值）时触发本方法。利用 LLM 的总结能力 
-     * 从中期摘要中仅抽取最具耐久度的核心客观事实和核心实体，并排除日常闲聊与瞬时冗余。</p>
+     * <p>
+     * 当系统判断 L2 吸收的碎片化消息量过于冗长（达到提炼阈值）时触发本方法。利用 LLM 的总结能力
+     * 从中期摘要中仅抽取最具耐久度的核心客观事实和核心实体，并排除日常闲聊与瞬时冗余。
+     * </p>
      *
      * @param currentL3 现有的 L3 长期核心事实资料库描述
      * @param l2Summary 等待被“挤干水分”提纯压缩的当前 L2 滚动上下文
@@ -492,10 +533,14 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     /**
      * 格式化单条消息
      * 
-     * <p>将 ChatMessage 对象转换为可读的文本格式，用于 LLM 摘要生成。</p>
-     * <p>根据消息类型添加不同的前缀标识。</p>
+     * <p>
+     * 将 ChatMessage 对象转换为可读的文本格式，用于 LLM 摘要生成。
+     * </p>
+     * <p>
+     * 根据消息类型添加不同的前缀标识。
+     * </p>
      * 
-     * @param message  聊天消息对象
+     * @param message 聊天消息对象
      * @return 格式化后的文本
      * 
      * @see MemoryStoreConstants#USER_MESSAGE_PREFIX
@@ -522,17 +567,21 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     /**
      * 持久化压缩状态到数据库
      * 
-     * <p>为每条历史消息标记压缩级别并保存：</p>
+     * <p>
+     * 为每条历史消息标记压缩级别并保存：
+     * </p>
      * <ul>
-     *     <li><strong>L1</strong>：最近消息，无压缩，compressedContent = null</li>
-     *     <li><strong>L2</strong>：中期消息，使用 L2 摘要压缩</li>
-     *     <li><strong>L3</strong>：长期消息，使用 L3 摘要压缩</li>
+     * <li><strong>L1</strong>：最近消息，无压缩，compressedContent = null</li>
+     * <li><strong>L2</strong>：中期消息，使用 L2 摘要压缩</li>
+     * <li><strong>L3</strong>：长期消息，使用 L3 摘要压缩</li>
      * </ul>
-     * <p>同时更新会话表的 summary 字段（如果有 L3 摘要）。</p>
+     * <p>
+     * 同时更新会话表的 summary 字段（如果有 L3 摘要）。
+     * </p>
      * 
-     * @param sessionId   会话 ID
-     * @param l2Summary   L2 级摘要内容
-     * @param l3Summary   L3 级摘要内容（可为 null）
+     * @param sessionId 会话 ID
+     * @param l2Summary L2 级摘要内容
+     * @param l3Summary L3 级摘要内容（可为 null）
      * 
      * @see MemoryStoreConstants#COMPRESSION_LEVEL_L1
      * @see MemoryStoreConstants#COMPRESSION_LEVEL_L2
@@ -540,28 +589,43 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
      */
     private void persistCompressionState(String sessionId, String l2Summary, String l3Summary) {
         List<ChatMessageDO> persistedMessages = chatMessageMapper.selectList(
-                new QueryWrapper<ChatMessageDO>()
-                        .eq("session_id", sessionId)
-                        .orderByAsc("created_at")
-        );
+                new LambdaQueryWrapper<ChatMessageDO>()
+                        .eq(ChatMessageDO::getSessionId, sessionId)
+                        .orderByAsc(ChatMessageDO::getCreatedAt));
 
         int total = persistedMessages.size();
+        if (total == 0) {
+            return;
+        }
+
         int l1Start = Math.max(0, total - l1Limit);
         int l2Start = Math.max(0, total - l1Limit - l2Limit);
 
-        for (int index = 0; index < total; index++) {
-            ChatMessageDO persistedMsg = persistedMessages.get(index);
-            if (index >= l1Start) {
-                persistedMsg.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L1);
-                persistedMsg.setCompressedContent(null);
-            } else if (index >= l2Start || l3Summary == null || l3Summary.isBlank()) {
-                persistedMsg.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L2);
-                persistedMsg.setCompressedContent(l2Summary);
-            } else {
-                persistedMsg.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L3);
-                persistedMsg.setCompressedContent(l3Summary);
+        // 批量归档更新 L2 中期摘要（包括刚刚从 L1 跌落的和原本就在 L2 的这批消息）
+        if (l1Start > 0) {
+            List<Long> l2Ids = persistedMessages.subList(l2Start, l1Start).stream()
+                    .map(ChatMessageDO::getId)
+                    .collect(Collectors.toList());
+            if (!l2Ids.isEmpty()) {
+                ChatMessageDO updateL2Template = new ChatMessageDO();
+                updateL2Template.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L1); // Dummy reset
+                updateL2Template.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L2);
+                updateL2Template.setCompressedContent(l2Summary);
+                chatMessageMapper.update(updateL2Template, new LambdaQueryWrapper<ChatMessageDO>().in(ChatMessageDO::getId, l2Ids));
             }
-            chatMessageMapper.updateById(persistedMsg);
+        }
+
+        // 批量归档更新 L3 长期事实（包括刚刚升维降级的以及最古老的这批消息）
+        if (l2Start > 0 && l3Summary != null && !l3Summary.isBlank()) {
+            List<Long> l3Ids = persistedMessages.subList(0, l2Start).stream()
+                    .map(ChatMessageDO::getId)
+                    .collect(Collectors.toList());
+            if (!l3Ids.isEmpty()) {
+                ChatMessageDO updateL3Template = new ChatMessageDO();
+                updateL3Template.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L3);
+                updateL3Template.setCompressedContent(l3Summary);
+                chatMessageMapper.update(updateL3Template, new LambdaQueryWrapper<ChatMessageDO>().in(ChatMessageDO::getId, l3Ids));
+            }
         }
 
         if (l3Summary != null && !l3Summary.isBlank()) {
@@ -574,28 +638,32 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     }
 
     private ChatSessionDO findSession(String sessionId) {
-        return chatSessionMapper.selectOne(new QueryWrapper<ChatSessionDO>().eq("session_id", sessionId));
+        return chatSessionMapper.selectOne(new LambdaQueryWrapper<ChatSessionDO>().eq(ChatSessionDO::getSessionId, sessionId));
     }
 
     /**
      * 智能反序列化聊天消息列表
      * 
-     * <p>解决 Redis 序列化不一致问题的核心方法。支持三种数据源：</p>
+     * <p>
+     * 解决 Redis 序列化不一致问题的核心方法。支持三种数据源：
+     * </p>
      * <ol>
-     *     <li><strong>List&lt;?&gt;</strong>：检查元素类型，直接返回或转换</li>
-     *     <li><strong>String（JSON）</strong>：使用 ObjectMapper 反序列化</li>
-     *     <li><strong>其他类型</strong>：记录警告并返回空列表</li>
+     * <li><strong>List&lt;?&gt;</strong>：检查元素类型，直接返回或转换</li>
+     * <li><strong>String（JSON）</strong>：使用 ObjectMapper 反序列化</li>
+     * <li><strong>其他类型</strong>：记录警告并返回空列表</li>
      * </ol>
      * 
-     * <p><strong>容错机制：</strong></p>
+     * <p>
+     * <strong>容错机制：</strong>
+     * </p>
      * <ul>
-     *     <li>JSON 解析失败时返回空列表而非抛异常</li>
-     *     <li>未知类型优雅降级，不影响主流程</li>
-     *     <li>详细日志记录，便于问题排查</li>
-     *     <li>空列表或无效数据直接过滤</li>
+     * <li>JSON 解析失败时返回空列表而非抛异常</li>
+     * <li>未知类型优雅降级，不影响主流程</li>
+     * <li>详细日志记录，便于问题排查</li>
+     * <li>空列表或无效数据直接过滤</li>
      * </ul>
      * 
-     * @param data  Redis 中读取的原始数据
+     * @param data Redis 中读取的原始数据
      * @return 反序列化后的 ChatMessage 列表
      * 
      * @see #convertToChatMessage(Object)
@@ -605,7 +673,7 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
         if (data == null) {
             return new ArrayList<>();
         }
-        
+
         if (data instanceof String jsonString) {
             // 如果是 JSON 字符串，使用 Langchain4j 反序列化
             try {
@@ -621,13 +689,13 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
                 log.debug("Received empty list from Redis, returning empty ChatMessage list");
                 return new ArrayList<>();
             }
-            
+
             // 如果已经是 ChatMessage 列表，直接返回
             if (list.get(0) instanceof ChatMessage) {
                 log.debug("Data is already a List<ChatMessage>, returning directly");
                 return (List<ChatMessage>) list;
             }
-            
+
             // 如果是其他类型的列表，尝试逐个转换并过滤无效数据
             log.debug("Converting List of {} to List<ChatMessage>", list.get(0).getClass().getSimpleName());
             return list.stream()
@@ -635,8 +703,8 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
                     .filter(msg -> msg != null)
                     .collect(Collectors.toList());
         } else {
-            log.warn("Unexpected data type for ChatMessage list: {} (class: {})", 
-                data, data.getClass().getName());
+            log.warn("Unexpected data type for ChatMessage list: {} (class: {})",
+                    data, data.getClass().getName());
             return new ArrayList<>();
         }
     }
@@ -644,22 +712,26 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     /**
      * 将任意对象转换为 ChatMessage
      * 
-     * <p>支持多种输入类型的智能转换：</p>
+     * <p>
+     * 支持多种输入类型的智能转换：
+     * </p>
      * <ul>
-     *     <li><strong>ChatMessage 子类</strong>：直接返回原对象</li>
-     *     <li><strong>String</strong>：包装为 UserMessage（纯文本输入）</li>
-     *     <li><strong>Map<?,?></strong>：检查是否包含消息字段，有则转换</li>
-     *     <li><strong>其他类型</strong>：记录警告并返回 null</li>
+     * <li><strong>ChatMessage 子类</strong>：直接返回原对象</li>
+     * <li><strong>String</strong>：包装为 UserMessage（纯文本输入）</li>
+     * <li><strong>Map<?,?></strong>：检查是否包含消息字段，有则转换</li>
+     * <li><strong>其他类型</strong>：记录警告并返回 null</li>
      * </ul>
      * 
-     * <p><strong>典型应用场景：</strong></p>
+     * <p>
+     * <strong>典型应用场景：</strong>
+     * </p>
      * <ol>
-     *     <li>Redis 数据格式不一致时的兜底转换</li>
-     *     <li>历史数据迁移时的格式适配</li>
-     *     <li>第三方系统集成的数据兼容</li>
+     * <li>Redis 数据格式不一致时的兜底转换</li>
+     * <li>历史数据迁移时的格式适配</li>
+     * <li>第三方系统集成的数据兼容</li>
      * </ol>
      * 
-     * @param item  待转换的对象
+     * @param item 待转换的对象
      * @return 转换后的 ChatMessage，失败返回 null
      * 
      * @see UserMessage#from(String)
@@ -669,7 +741,7 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
             log.debug("Cannot convert null to ChatMessage, returning null");
             return null;
         }
-        
+
         if (item instanceof ChatMessage chatMessage) {
             return chatMessage;
         } else if (item instanceof String text) {
@@ -686,7 +758,7 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
                 log.debug("Skipping empty Map, returning null");
                 return null;
             }
-            
+
             // 如果是 Map，先检查是否包含消息类型信息
             try {
                 String json = objectMapper.writeValueAsString(map);
@@ -697,8 +769,8 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
                 return null;
             }
         } else {
-            log.warn("Cannot convert object to ChatMessage: {} (class: {})", 
-                item, item.getClass().getName());
+            log.warn("Cannot convert object to ChatMessage: {} (class: {})",
+                    item, item.getClass().getName());
             return null;
         }
     }
