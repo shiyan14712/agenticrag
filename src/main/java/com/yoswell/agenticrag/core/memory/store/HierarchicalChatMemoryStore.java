@@ -203,18 +203,18 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     }
 
     /**
-     * 更新指定会话的聊天消息列表
+     * 更新指定会话的聊天消息列表（基于滑动窗口机制）
      * 
      * <p>执行以下操作：</p>
      * <ol>
-     *     <li>截取最近 N 条消息（不超过 maxMessages）</li>
-     *     <li>将最新 L1_LIMIT 条消息存入 Redis L1 缓存</li>
-     *     <li>如果总消息数超过 L1_LIMIT，启动虚拟线程异步生成 L2/L3 摘要</li>
-     *     <li>如果未达阈值，删除旧的 L2/L3 摘要</li>
+     *     <li>过滤出真实的对话消息，排除内部合成的系统上下文中枢指令</li>
+     *     <li>检查活跃窗口大小：若非系统消息数超出 {@code l1Limit}，则触发滑动，驱逐（evict）最旧的消息</li>
+     *     <li>将滑动后剩余的、最新的 {@code l1Limit} 条消息覆盖存入 Redis L1 高速缓存</li>
+     *     <li>若发生了滑动，把遭驱逐的旧消息交由虚拟线程，异步触发 L2/L3 层级的滚动摘要与提炼</li>
      * </ol>
      * 
      * @param memoryId  内存标识符（即 session ID）
-     * @param messages  完整的聊天消息列表
+     * @param messages  当前会话已存在的全量消息列表（由前端与大模型生成追加组合而来）
      * 
      * @see MemoryStoreConstants#REDIS_PREFIX_L1
      * @see MemoryStoreConstants#L1_CACHE_TTL_HOURS
@@ -222,32 +222,43 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     @Override
     public void updateMessages(Object memoryId, List<ChatMessage> messages) {
         String sessionId = memoryId.toString();
-        log.info("Updating memory for session: {}. Messages count: {}", sessionId, messages.size());
 
-        List<ChatMessage> snapshot = limitToRecent(messages);
-        List<ChatMessage> recentMessages = new ArrayList<>(snapshot.subList(Math.max(0, snapshot.size() - l1Limit), snapshot.size()));
-        
-        // 关键修复：确保至少保存一条消息，避免空列表导致 OpenAI API 错误
-        if (recentMessages.isEmpty() && !messages.isEmpty()) {
-            log.warn("Messages list is empty after limiting (limit={}, snapshot={}), saving original messages instead", l1Limit, snapshot.size());
-            recentMessages = new ArrayList<>(messages);
+        // 1. Filter out synthetic system messages
+        List<ChatMessage> pureMessages = messages.stream()
+                .filter(msg -> !(msg instanceof SystemMessage sm && sm.text() != null && sm.text().startsWith(SYNTHETIC_SYSTEM_MESSAGE_MARKER)))
+                .collect(Collectors.toList());
+
+        log.info("Updating memory for session: {}. Pure messages count: {}", sessionId, pureMessages.size());
+
+        List<ChatMessage> l1Messages = pureMessages;
+        List<ChatMessage> evictedMessages = new ArrayList<>();
+
+        // 2. Sliding Window Logic: evict oldest messages that exceed the L1 capacity
+        if (pureMessages.size() > l1Limit) {
+            int evictCount = pureMessages.size() - l1Limit;
+            evictedMessages = pureMessages.subList(0, evictCount);
+            l1Messages = pureMessages.subList(evictCount, pureMessages.size());
         }
         
-        log.debug("Saving {} messages to Redis L1 cache", recentMessages.size());
-        // 将最新 L1_LIMIT 条消息存入 Redis，设置 12 小时过期时间
+        // 确保至少保存一条消息
+        if (l1Messages.isEmpty() && !pureMessages.isEmpty()) {
+            l1Messages = new ArrayList<>(pureMessages);
+        }
+        
+        log.debug("Saving {} messages to Redis L1 cache", l1Messages.size());
+        // 3. 将 L1 存入 Redis
         try {
-            String l1Json = dev.langchain4j.data.message.ChatMessageSerializer.messagesToJson(recentMessages);
+            String l1Json = dev.langchain4j.data.message.ChatMessageSerializer.messagesToJson(l1Messages);
             redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L1 + sessionId, l1Json, MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
         } catch (Exception e) {
             log.warn("Failed to serialize recent messages to JSON: ", e);
-            redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L1 + sessionId, recentMessages, MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
+            redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L1 + sessionId, l1Messages, MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
         }
 
-        if (snapshot.size() > l1Limit) {
-            Thread.startVirtualThread(() -> refreshSummaries(sessionId, snapshot));
-        } else {
-            redisTemplate.delete(MemoryStoreConstants.REDIS_PREFIX_L2 + sessionId);
-            redisTemplate.delete(MemoryStoreConstants.REDIS_PREFIX_L3 + sessionId);
+        // 4. 触发异步滑动窗口摘要刷新
+        if (!evictedMessages.isEmpty()) {
+            final List<ChatMessage> finalEvicted = new ArrayList<>(evictedMessages);
+            Thread.startVirtualThread(() -> refreshSummariesSlidingWindow(sessionId, finalEvicted));
         }
     }
 
@@ -379,80 +390,102 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     }
 
     /**
-     * 截取最近的消息
-     * 
-     * <p>如果消息总数超过最大值，则只保留最近的 maxMessages 条</p>
-     * 
-     * @param messages  原始消息列表
-     * @return 截取后的消息列表
-     */
-    private List<ChatMessage> limitToRecent(List<ChatMessage> messages) {
-        if (messages.size() <= maxMessages) {
-            return List.copyOf(messages);
-        }
-        return List.copyOf(messages.subList(messages.size() - maxMessages, messages.size()));
-    }
-
-    /**
-     * 刷新分层摘要（在虚拟线程中执行）
-     * 
+     * 基于滑动窗口的摘要刷新（在虚拟线程中执行）
+     *
      * <p>核心业务流程：</p>
      * <ol>
-     *     <li>对 L1_LIMIT 之前的消息生成 L2 摘要（中期压缩）</li>
-     *     <li>对 L2_LIMIT 之前的消息生成 L3 摘要（长期压缩）</li>
-     *     <li>将摘要存入 Redis 对应层级</li>
-     *     <li>调用 {@code persistCompressionState()} 持久化压缩状态到数据库</li>
+     *     <li>读取现有 L2（中期存储）滚动摘要，并结合新踢出 L1 的消息生成新滚动摘要</li>
+     *     <li>统计 L2 已合并的消息数量。如果总数 > l2Limit，则触发 L3 升维摘要</li>
+     *     <li>将 L2 凝练至 L3，然后保留最新对话意图摘要，持久化状态</li>
      * </ol>
-     * 
-     * @param sessionId  会话 ID
-     * @param messages   完整的历史消息列表
-     * 
-     * @see MemoryStoreConstants#L2_SUMMARY_PROMPT
-     * @see MemoryStoreConstants#L3_SUMMARY_PROMPT
-     * @see MemoryStoreConstants#REDIS_PREFIX_L2
-     * @see MemoryStoreConstants#REDIS_PREFIX_L3
+     *
+     * @param sessionId 会话 ID
+     * @param evictedMessages 该轮滑动窗口被强制踢出的消息列表
      */
-    private void refreshSummaries(String sessionId, List<ChatMessage> messages) {
+    private void refreshSummariesSlidingWindow(String sessionId, List<ChatMessage> evictedMessages) {
         try {
-            String l2Summary = summarize(messages.subList(0, Math.max(0, messages.size() - l1Limit)),
-                    MemoryStoreConstants.L2_SUMMARY_PROMPT);
-            redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L2 + sessionId, l2Summary, MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
+            // 1. 获取现有 L2 滚动摘要
+            Object l2Obj = redisTemplate.opsForValue().get(MemoryStoreConstants.REDIS_PREFIX_L2 + sessionId);
+            String currentL2 = l2Obj instanceof String ? (String) l2Obj : "";
 
-            String l3Summary = null;
-            if (messages.size() > l2Limit) {
-                l3Summary = summarize(messages.subList(0, Math.max(0, messages.size() - l2Limit)), MemoryStoreConstants.L3_SUMMARY_PROMPT);
-                redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L3 + sessionId, l3Summary, MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
+            // 2. 将被剔除的消息滚入 L2
+            String newL2Summary = summarizeRollingL2(currentL2, evictedMessages);
+            redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L2 + sessionId, newL2Summary, MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
+
+            // 3. 增加 L2 滑动计数（用于判定何时生成 L3）
+            String countKey = "session:memory:l2_count:" + sessionId;
+            Long count = redisTemplate.opsForValue().increment(countKey, evictedMessages.size());
+
+            // 4. 判断是否触达 L3 获取条件
+            String curL3 = null;
+            Object l3Obj = redisTemplate.opsForValue().get(MemoryStoreConstants.REDIS_PREFIX_L3 + sessionId);
+            String currentL3 = l3Obj instanceof String ? (String) l3Obj : "";
+            
+            if (count != null && count >= l2Limit) {
+                // 压缩长线意图，提取 Durable facts & entities 到 L3
+                curL3 = distillL3(currentL3, newL2Summary);
+                redisTemplate.opsForValue().set(MemoryStoreConstants.REDIS_PREFIX_L3 + sessionId, curL3, MemoryStoreConstants.L1_CACHE_TTL_HOURS, TimeUnit.HOURS);
+
+                // LLM 会把所有的事实转移到 L3。L2 的历史滚动量清盘重置。
+                redisTemplate.delete(countKey);
+            } else {
+                curL3 = currentL3; // 保留现有的 L3
             }
 
-            persistCompressionState(sessionId, l2Summary, l3Summary);
+            // 5. 持久化层级记录到 DB
+            persistCompressionState(sessionId, newL2Summary, curL3);
         } catch (Exception exception) {
-            log.warn("Failed to refresh hierarchical summaries for session {}", sessionId, exception);
+            log.warn("Failed to refresh hierarchical sliding summaries for session {}", sessionId, exception);
         }
     }
 
     /**
-     * 生成对话摘要
-     * 
-     * <p>使用 LLM 对给定消息生成指定指令的摘要。</p>
-     * <p>摘要 Prompt 由 instruction + 对话转录组成。</p>
-     * 
-     * @param messages     需要总结的消息列表
-     * @param instruction  摘要生成指令（如 L2/L3 专用 Prompt）
-     * @return 生成的摘要文本
-     * 
+     * 生成 L2 滚动叙事摘要
+     *
+     * <p>使用 LLM 将刚从 L1 滑出的旧消息无缝融合到当前的 L2 摘要中，形成连贯的中期上下文叙事。</p>
+     *
+     * @param currentL2       当前的 L2 滚动摘要（由于新会话开启可能为空）
+     * @param evictedMessages 此轮从 L1 活跃窗口中由于滑块越界、被“淘汰”出局的原始消息列表
+     * @return 智能融合历史与新增信息生成的新 L2 滚动摘要
+     *
      * @see MemoryStoreConstants#L2_SUMMARY_PROMPT
-     * @see MemoryStoreConstants#L3_SUMMARY_PROMPT
      */
-    private String summarize(List<ChatMessage> messages, String instruction) {
-        if (messages == null || messages.isEmpty()) {
-            return "";
+    private String summarizeRollingL2(String currentL2, List<ChatMessage> evictedMessages) {
+        if (evictedMessages == null || evictedMessages.isEmpty()) {
+            return currentL2;
         }
-
-        String transcript = messages.stream()
+        String transcript = evictedMessages.stream()
                 .map(this::formatMessage)
                 .collect(Collectors.joining("\n"));
 
-        String prompt = instruction + "\n\nConversation:\n" + transcript;
+        String prompt = "Please update the conversation summary seamlessly. Merge the current summary context with the newly evicted messages to form a unified, continuous narrative.\n\n";
+        if (currentL2 != null && !currentL2.isBlank()) {
+            prompt += "Current Medium-term Summary:\n" + currentL2 + "\n\n";
+        }
+        prompt += "Newly Evicted Messages to incorporate:\n" + transcript + "\n\n";
+        prompt += "Instruction: " + MemoryStoreConstants.L2_SUMMARY_PROMPT;
+        return chatLanguageModel.chat(prompt).trim();
+    }
+
+    /**
+     * 提炼 L3 长期核心事实（知识大蒸馏）
+     *
+     * <p>当系统判断 L2 吸收的碎片化消息量过于冗长（达到提炼阈值）时触发本方法。利用 LLM 的总结能力 
+     * 从中期摘要中仅抽取最具耐久度的核心客观事实和核心实体，并排除日常闲聊与瞬时冗余。</p>
+     *
+     * @param currentL3 现有的 L3 长期核心事实资料库描述
+     * @param l2Summary 等待被“挤干水分”提纯压缩的当前 L2 滚动上下文
+     * @return 提炼后生成的更高浓度维度、长期记忆 L3（此结果将替换或追加至以往核心知识体系中）
+     *
+     * @see MemoryStoreConstants#L3_SUMMARY_PROMPT
+     */
+    private String distillL3(String currentL3, String l2Summary) {
+        String prompt = "Extract durable, long-term facts, core entities, and key global user decisions from the medium-term summary to build a persistent memory profile. Discard all transient or unresolved topic discussions.\n\n";
+        if (currentL3 != null && !currentL3.isBlank()) {
+            prompt += "Existing Durable Facts (L3):\n" + currentL3 + "\n\n";
+        }
+        prompt += "Medium-term Summary to Distill (L2):\n" + l2Summary + "\n\n";
+        prompt += "Instruction: " + MemoryStoreConstants.L3_SUMMARY_PROMPT;
         return chatLanguageModel.chat(prompt).trim();
     }
 
@@ -514,21 +547,21 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
 
         int total = persistedMessages.size();
         int l1Start = Math.max(0, total - l1Limit);
-        int l2Start = Math.max(0, total - l2Limit);
+        int l2Start = Math.max(0, total - l1Limit - l2Limit);
 
         for (int index = 0; index < total; index++) {
-            ChatMessageDO persisted = persistedMessages.get(index);
+            ChatMessageDO persistedMsg = persistedMessages.get(index);
             if (index >= l1Start) {
-                persisted.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L1);
-                persisted.setCompressedContent(null);
+                persistedMsg.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L1);
+                persistedMsg.setCompressedContent(null);
             } else if (index >= l2Start || l3Summary == null || l3Summary.isBlank()) {
-                persisted.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L2);
-                persisted.setCompressedContent(l2Summary);
+                persistedMsg.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L2);
+                persistedMsg.setCompressedContent(l2Summary);
             } else {
-                persisted.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L3);
-                persisted.setCompressedContent(l3Summary);
+                persistedMsg.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L3);
+                persistedMsg.setCompressedContent(l3Summary);
             }
-            chatMessageMapper.updateById(persisted);
+            chatMessageMapper.updateById(persistedMsg);
         }
 
         if (l3Summary != null && !l3Summary.isBlank()) {
