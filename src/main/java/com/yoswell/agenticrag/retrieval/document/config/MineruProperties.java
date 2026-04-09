@@ -8,6 +8,7 @@ import org.springframework.validation.annotation.Validated;
 
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -22,35 +23,36 @@ import lombok.Setter;
 public class MineruProperties {
 
     @NotBlank
-    private String baseUrl = "http://10.60.23.4:8000";
+    private String baseUrl;
 
-    private boolean asyncEnabled = true;
-
-    @NotBlank
-    private String backend = "hybrid-auto-engine";
+    private boolean asyncEnabled;
 
     @NotBlank
-    private String parseMethod = "auto";
+    private String backend;
 
-    private boolean formulaEnable = true;
+    @NotBlank
+    private String parseMethod;
 
-    private boolean tableEnable = true;
+    private boolean formulaEnable;
 
-    private boolean returnMd = true;
+    private boolean tableEnable;
 
-    private List<String> langList = List.of("ch");
+    private boolean returnMd;
+
+    @NotEmpty
+    private List<String> langList;
 
     private String serverUrl;
 
     @Min(500)
-    private long connectTimeoutMs = 5_000L;
+    private long connectTimeoutMs;
 
     @Min(1_000)
-    private long requestTimeoutMs = 180_000L;
+    private long requestTimeoutMs;
 
     @Min(200)
-    private long pollIntervalMs = 3_000L;
+    private long pollIntervalMs;
 
     @Min(1)
-    private int maxPollAttempts = 120;
+    private int maxPollAttempts;
 }
