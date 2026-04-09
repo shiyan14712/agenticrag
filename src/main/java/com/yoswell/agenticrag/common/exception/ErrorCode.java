@@ -1,8 +1,13 @@
 package com.yoswell.agenticrag.common.exception;
 
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
+
 /**
  * 全局通用错误码枚举
  */
+@Getter
+@RequiredArgsConstructor
 public enum ErrorCode {
 
     // 基础错误
@@ -29,6 +34,8 @@ public enum ErrorCode {
     SESSION_ALREADY_IN_TARGET_STATUS("S30004", "会话已处于目标状态，请勿重复操作"),
     ARCHIVED_OR_DELETED_SESSION_CANNOT_BE_ACTIVATED("S30005", "已归档或已删除的会话不能被激活"),
     INVALID_SESSION_STATUS_TRANSITION("S30006", "会话状态向上转型（如从 ARCHIVED 转换到 ACTIVE）是不允许的"),
+    MISSING_SESSION_MESSAGE_QUERY_PARAM("S30007", "缺少会话消息分页参数"),
+    INVALID_SESSION_MESSAGE_QUERY_PARAM("S30008", "会话消息分页参数不合法"),
 
     // 上传与 multipart 处理错误
     UPLOAD_SIZE_EXCEEDED("D40001", "上传文件超过大小限制"),
@@ -51,16 +58,4 @@ public enum ErrorCode {
     private final String code;
     private final String message;
 
-    ErrorCode(String code, String message) {
-        this.code = code;
-        this.message = message;
-    }
-
-    public String getCode() {
-        return code;
-    }
-
-    public String getMessage() {
-        return message;
-    }
 }
