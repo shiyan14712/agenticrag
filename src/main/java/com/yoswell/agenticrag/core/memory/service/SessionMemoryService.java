@@ -5,6 +5,9 @@ import java.util.List;
 import com.yoswell.agenticrag.core.memory.dto.ChatMessageDTO;
 import com.yoswell.agenticrag.core.memory.dto.SessionMemoryViewDTO;
 
+/**
+ * 会话记忆服务接口层
+ */
 public interface SessionMemoryService {
 
     /**
