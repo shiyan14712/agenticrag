@@ -15,12 +15,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.yoswell.agenticrag.retrieval.document.config.DocumentKafkaProperties;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentDeleteRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentParseRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentVectorizeRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
-import com.yoswell.agenticrag.retrieval.document.config.DocumentKafkaProperties;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentVectorizationExecutionResult;
 import com.yoswell.agenticrag.retrieval.document.reliability.entity.DocumentAsyncTaskDO;
 import com.yoswell.agenticrag.retrieval.document.reliability.model.DocumentAsyncTaskType;
@@ -116,6 +116,11 @@ public class DocumentMessageListener {
         } catch (RetryLaterException retryLaterException) {
             throw retryLaterException;
         } catch (Exception exception) {
+            log.error("[Offline RAG][PARSE_CONSUMER] Parse failed. topic={}, key={}, rootCause={}",
+                    record.topic(),
+                    record.key(),
+                    resolveRootCauseMessage(exception),
+                    exception);
             handleParseFailure(record, message, exception);
             throw new RuntimeException("document parse processing failed", exception);
         }
@@ -178,14 +183,26 @@ public class DocumentMessageListener {
                 record.topic(), record.partition(), record.offset(), record.key());
         try {
             DocumentDeleteRequestDTO request = objectMapper.readValue(message, DocumentDeleteRequestDTO.class);
+            requireDocumentId(request.documentId());
+
             DocumentAsyncTaskDO task = StringUtils.hasText(request.taskId())
                     ? documentAsyncTaskService.findByTaskId(request.taskId())
-                    : documentAsyncTaskService.getOrCreateTask(
-                            request.documentId(),
-                            request.tenantId(),
-                            DocumentAsyncTaskType.DOCUMENT_DELETE,
-                            record.topic(),
-                            record.key());
+                    : null;
+            if (task == null) {
+                task = documentAsyncTaskService.findByDocumentAndType(
+                        request.documentId(),
+                        DocumentAsyncTaskType.DOCUMENT_DELETE);
+            }
+
+            String deleteTenantId = resolveDeleteTenantId(request.tenantId(), task);
+            if (task == null && StringUtils.hasText(deleteTenantId)) {
+                task = documentAsyncTaskService.getOrCreateTask(
+                        request.documentId(),
+                        deleteTenantId,
+                        DocumentAsyncTaskType.DOCUMENT_DELETE,
+                        record.topic(),
+                        record.key());
+            }
             String messageIdentity = mqConsumeLogService.resolveMessageIdentity(
                     request.messageId(),
                     record.key(),
@@ -193,10 +210,25 @@ public class DocumentMessageListener {
             assertCanProcess(record.topic(), messageIdentity, record.key(), message,
                     task == null ? null : task.getTaskId(), request.documentId());
 
+            if (!StringUtils.hasText(deleteTenantId)) {
+                String reason = "skip delete because tenantId is missing in delete message";
+                log.warn("[Offline RAG][DELETE_CONSUMER] Skip delete. topic={}, key={}, documentId={}, reason={}",
+                        record.topic(),
+                        record.key(),
+                        request.documentId(),
+                        reason);
+                if (task != null) {
+                    documentAsyncTaskService.markSkipped(task.getTaskId(), messageIdentity, reason);
+                }
+                mqConsumeLogService.markSkipped(consumerGroupId, record.topic(), messageIdentity, reason);
+                acknowledgment.acknowledge();
+                return;
+            }
+
             if (task != null) {
                 documentAsyncTaskService.markRunning(task.getTaskId(), messageIdentity);
             }
-            knowledgeChunkIndexService.deleteByDocumentId(request.documentId(), request.tenantId());
+            knowledgeChunkIndexService.deleteByDocumentId(request.documentId(), deleteTenantId);
             if (task != null) {
                 documentAsyncTaskService.markSucceeded(task.getTaskId(), messageIdentity);
             }
@@ -207,6 +239,11 @@ public class DocumentMessageListener {
         } catch (RetryLaterException retryLaterException) {
             throw retryLaterException;
         } catch (Exception exception) {
+            log.error("[Offline RAG][DELETE_CONSUMER] Delete failed. topic={}, key={}, rootCause={}",
+                    record.topic(),
+                    record.key(),
+                    resolveRootCauseMessage(exception),
+                    exception);
             handleDeleteFailure(record, message, exception);
             throw new RuntimeException("document delete processing failed", exception);
         }
@@ -264,18 +301,19 @@ public class DocumentMessageListener {
                     request.messageId(),
                     record.key(),
                     message);
+            String errorSummary = resolveRootCauseMessage(exception);
             DocumentAsyncTaskDO task = StringUtils.hasText(request.taskId())
                     ? documentAsyncTaskService.findByTaskId(request.taskId())
                     : documentAsyncTaskService.findByDocumentAndType(
                             request.documentId(),
                             DocumentAsyncTaskType.DOCUMENT_PARSE);
             if (task != null) {
-                documentAsyncTaskService.markFailed(task.getTaskId(), messageIdentity, exception.getMessage());
+                documentAsyncTaskService.markFailed(task.getTaskId(), messageIdentity, errorSummary);
             }
             if (StringUtils.hasText(request.documentId())) {
                 documentVectorizationService.markFailed(request.documentId());
             }
-            mqConsumeLogService.markFailed(consumerGroupId, record.topic(), messageIdentity, exception.getMessage());
+            mqConsumeLogService.markFailed(consumerGroupId, record.topic(), messageIdentity, errorSummary);
         } catch (Exception nestedException) {
             log.warn("[Offline RAG][PARSE_CONSUMER] Failed to record consume failure", nestedException);
         }
@@ -312,10 +350,11 @@ public class DocumentMessageListener {
                     request.messageId(),
                     record.key(),
                     message);
+            String errorSummary = resolveRootCauseMessage(exception);
             if (task != null) {
-                documentAsyncTaskService.markFailed(task.getTaskId(), messageIdentity, exception.getMessage());
+                documentAsyncTaskService.markFailed(task.getTaskId(), messageIdentity, errorSummary);
             }
-            mqConsumeLogService.markFailed(consumerGroupId, record.topic(), messageIdentity, exception.getMessage());
+            mqConsumeLogService.markFailed(consumerGroupId, record.topic(), messageIdentity, errorSummary);
         } catch (Exception nestedException) {
             log.warn("[Offline RAG][DELETE_CONSUMER] Failed to record consume failure", nestedException);
         }
@@ -375,10 +414,32 @@ public class DocumentMessageListener {
         return metadata == null ? null : metadata.getTenantId();
     }
 
+    private String resolveDeleteTenantId(String tenantId, DocumentAsyncTaskDO task) {
+        if (StringUtils.hasText(tenantId)) {
+            return tenantId;
+        }
+        if (task != null && StringUtils.hasText(task.getTenantId())) {
+            return task.getTenantId();
+        }
+        return null;
+    }
+
     private void requireDocumentId(String documentId) {
         if (!StringUtils.hasText(documentId)) {
             throw new IllegalArgumentException("documentId must not be blank");
         }
+    }
+
+    private String resolveRootCauseMessage(Throwable throwable) {
+        Throwable root = throwable;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        String message = root.getMessage();
+        if (StringUtils.hasText(message)) {
+            return message;
+        }
+        return root.getClass().getSimpleName();
     }
 
     private static final class RetryLaterException extends RuntimeException {

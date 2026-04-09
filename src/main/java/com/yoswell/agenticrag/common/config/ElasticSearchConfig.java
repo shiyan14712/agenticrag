@@ -1,7 +1,9 @@
 package com.yoswell.agenticrag.common.config;
 
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Base64;
 
 import org.apache.http.Header;
 import org.apache.http.HttpHost;
@@ -38,6 +40,12 @@ public class ElasticSearchConfig {
     @Value("${spring.elasticsearch.api-key:}")
     private String apiKey;
 
+    @Value("${spring.elasticsearch.id:}")
+    private String apiKeyId;
+
+    @Value("${spring.elasticsearch.encoded:}")
+    private String encodedApiKey;
+
     @Bean(destroyMethod = "close")
     public RestClient restClient() {
         log.info("正在初始化 Elasticsearch 连接...");
@@ -51,10 +59,11 @@ public class ElasticSearchConfig {
 
         RestClientBuilder builder = RestClient.builder(hosts);
 
-        if (StringUtils.hasText(apiKey)) {
+        String authorizationApiKey = resolveAuthorizationApiKey();
+        if (StringUtils.hasText(authorizationApiKey)) {
             log.info("使用 API Key 方式认证 Elasticsearch");
             builder.setDefaultHeaders(new Header[]{
-                    new BasicHeader("Authorization", "ApiKey " + apiKey)
+                    new BasicHeader("Authorization", "ApiKey " + authorizationApiKey)
             });
         } else if (StringUtils.hasText(username) && StringUtils.hasText(password)) {
             log.info("使用账号密码方式认证 Elasticsearch，用户名：{}", username);
@@ -68,6 +77,35 @@ public class ElasticSearchConfig {
 
         log.info("Elasticsearch 连接地址：{}", elasticsearchUris);
         return builder.build();
+    }
+
+    private String resolveAuthorizationApiKey() {
+        if (StringUtils.hasText(encodedApiKey)) {
+            return encodedApiKey.trim();
+        }
+
+        if (StringUtils.hasText(apiKeyId) && StringUtils.hasText(apiKey)) {
+            String combined = apiKeyId.trim() + ":" + apiKey.trim();
+            return Base64.getEncoder().encodeToString(combined.getBytes(StandardCharsets.UTF_8));
+        }
+
+        if (StringUtils.hasText(apiKey) && isLikelyEncodedApiKey(apiKey.trim())) {
+            return apiKey.trim();
+        }
+
+        if (StringUtils.hasText(apiKey)) {
+            log.warn("spring.elasticsearch.api-key 不是可用的 encoded ApiKey（缺少 encoded 或 id），将回退账号密码认证");
+        }
+        return null;
+    }
+
+    private boolean isLikelyEncodedApiKey(String value) {
+        try {
+            String decoded = new String(Base64.getDecoder().decode(value), StandardCharsets.UTF_8);
+            return decoded.contains(":");
+        } catch (IllegalArgumentException exception) {
+            return false;
+        }
     }
 
     @Bean

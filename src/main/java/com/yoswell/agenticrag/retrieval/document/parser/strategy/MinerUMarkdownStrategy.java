@@ -16,7 +16,7 @@ import com.yoswell.agenticrag.retrieval.document.parser.model.ParsedDocumentChun
 /**
  * 面向 Markdown 风格文本的分块（Chunking）策略。
  *
- * <p>【架构说明 TODO】：</p>
+ * <p>【架构说明】：</p>
  * <p>它优先保留标题层级信息，再在每个 section 内按长度切块，
  * 这样检索结果能兼顾结构语义和 chunk 粒度。</p>
  * <p>注意：真正的 MinerU / 深度学习 PDF 解析引擎不在当前模块和 Java 项目中执行！

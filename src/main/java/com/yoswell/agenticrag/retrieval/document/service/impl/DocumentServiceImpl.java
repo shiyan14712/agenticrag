@@ -124,7 +124,7 @@ public class DocumentServiceImpl implements DocumentService {
         metadata.setMinioUrl(minioUrl);
         metadata.setFileExtension(extension);
         metadata.setAllowedRoles(String.join(",", DEFAULT_ALLOWED_ROLES));
-        metadata.setStatus(DocumentProcessingStatus.UPLOADED.value());
+        metadata.setStatus(DocumentProcessingStatus.UPLOADED);
 
         int rowsAffected = documentMetadataMapper.insert(metadata);
         if (rowsAffected != 1) {
@@ -214,15 +214,15 @@ public class DocumentServiceImpl implements DocumentService {
         DocumentDO metadata = getDocumentStatus(documentId, tenantId);
         java.util.Map<String, String> statusMap = java.util.Map.of(
                 "documentId", metadata.getDocumentId(),
-                "status", metadata.getStatus(),
+                "status", metadata.getStatus().value(),
                 "fileName", metadata.getFileName() != null ? metadata.getFileName() : ""
         );
         
         try {
             // 动态设置缓存时间：终态缓存较长，进行中状态缩短为 2 秒以保证前端轮询能较快拿到最新状态
             long cacheSeconds = 2;
-            String status = metadata.getStatus();
-            if ("VECTORIZED".equals(status) || "FAILED".equals(status)) {
+            DocumentProcessingStatus status = metadata.getStatus();
+            if (status == DocumentProcessingStatus.VECTORIZED || status == DocumentProcessingStatus.FAILED) {
                 cacheSeconds = 60;
             }
             redisTemplate.opsForValue().set(cacheKey, statusMap, java.time.Duration.ofSeconds(cacheSeconds));
