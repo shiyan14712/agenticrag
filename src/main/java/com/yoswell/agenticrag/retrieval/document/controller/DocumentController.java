@@ -14,6 +14,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.yoswell.agenticrag.common.result.ApiResponse;
 import com.yoswell.agenticrag.retrieval.document.dto.DocumentDTO;
+import com.yoswell.agenticrag.retrieval.document.dto.response.DocumentUploadResponseDTO;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentService;
 import com.yoswell.agenticrag.web.security.util.SecurityUtils;
 
@@ -49,14 +50,17 @@ public class DocumentController {
      * @throws Exception 文件读取或上传链路异常
      */
     @PostMapping(value = "/upload", consumes = "multipart/form-data")
-    public ApiResponse<Map<String, String>> uploadDocument(@RequestParam("file") MultipartFile file) throws Exception {
+    public ApiResponse<DocumentUploadResponseDTO> uploadDocument(@RequestParam("file") MultipartFile file) throws Exception {
         String tenantId = SecurityUtils.getCurrentTenantId();
         var metadata = documentService.handleUpload(file, tenantId);
-        return ApiResponse.success(Map.of(
-                "documentId", metadata.getDocumentId(),
-                "status", metadata.getStatus(),
-                "minioUrl", metadata.getMinioUrl()
-        ));
+        
+        DocumentUploadResponseDTO response = new DocumentUploadResponseDTO(
+                metadata.getDocumentId(),
+                metadata.getStatus().value(),
+                metadata.getMinioUrl()
+        );
+        
+        return ApiResponse.success(response);
     }
 
     /**
