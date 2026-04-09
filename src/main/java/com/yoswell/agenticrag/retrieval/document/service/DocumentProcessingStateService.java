@@ -15,5 +15,5 @@ public interface DocumentProcessingStateService {
 
     void updateStatus(String documentId, DocumentProcessingStatus targetStatus);
 
-    String getCurrentStatus(String documentId);
+    DocumentProcessingStatus getCurrentStatus(String documentId);
 }

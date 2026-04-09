@@ -87,7 +87,7 @@ public class DocumentVectorizationServiceImpl implements DocumentVectorizationSe
                 List.of(DocumentProcessingStatus.UPLOADED, DocumentProcessingStatus.FAILED)
         );
         if (!claimed) {
-            String currentStatus = documentProcessingStateService.getCurrentStatus(metadata.getDocumentId());
+            DocumentProcessingStatus currentStatus = documentProcessingStateService.getCurrentStatus(metadata.getDocumentId());
             if (DocumentProcessingStatus.PARSING.value().equals(currentStatus)
                     || DocumentProcessingStatus.VECTORIZED.value().equals(currentStatus)) {
                 log.info("[Offline RAG][VECTORIZE] 检测到重复或并发中的向量化任务，直接跳过: documentId={}, currentStatus={}",

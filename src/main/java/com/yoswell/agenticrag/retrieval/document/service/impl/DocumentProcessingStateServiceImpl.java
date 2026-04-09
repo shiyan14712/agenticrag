@@ -65,7 +65,7 @@ public class DocumentProcessingStateServiceImpl implements DocumentProcessingSta
     }
 
     @Override
-    public String getCurrentStatus(String documentId) {
+    public DocumentProcessingStatus getCurrentStatus(String documentId) {
         DocumentDO metadata = documentMetadataMapper.selectOne(
                 new LambdaQueryWrapper<DocumentDO>()
                         .eq(DocumentDO::getDocumentId, documentId)
