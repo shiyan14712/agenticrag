@@ -17,7 +17,7 @@ import java.time.LocalDateTime;
  */
 @Data
 @TableName("chat_message")
-public class ChatMessage {
+public class ChatMessageDO {
 
     /**
      * 主键 ID

@@ -19,7 +19,7 @@ import com.yoswell.agenticrag.core.agent.dto.RagSearchResultDTO;
 import com.yoswell.agenticrag.core.agent.dto.SseEventType;
 import com.yoswell.agenticrag.core.agent.dto.ToolEventDTO;
 import com.yoswell.agenticrag.core.agent.service.ChatService;
-import com.yoswell.agenticrag.platform.session.entity.ChatSession;
+import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
 import com.yoswell.agenticrag.platform.session.mapper.ChatSessionMapper;
 import com.yoswell.agenticrag.platform.session.service.ChatMessageService;
 import com.yoswell.agenticrag.web.security.model.TenantUser;
@@ -232,9 +232,9 @@ public class ChatOrchestrator {
             return;
         }
 
-        ChatSession session = chatSessionMapper.selectOne(new LambdaQueryWrapper<ChatSession>()
-                .eq(ChatSession::getSessionId, sessionId)
-                .select(ChatSession::getSessionId, ChatSession::getTitle));
+        ChatSessionDO session = chatSessionMapper.selectOne(new LambdaQueryWrapper<ChatSessionDO>()
+                .eq(ChatSessionDO::getSessionId, sessionId)
+                .select(ChatSessionDO::getSessionId, ChatSessionDO::getTitle));
         if (session == null) {
             log.warn("[ReAct] 跳过异步标题生成，会话不存在: session={}", sessionId);
             stringRedisTemplate.delete(titleGenKey);

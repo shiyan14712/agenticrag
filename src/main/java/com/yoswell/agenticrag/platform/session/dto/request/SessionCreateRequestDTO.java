@@ -1,5 +1,6 @@
 package com.yoswell.agenticrag.platform.session.dto.request;
 
+import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
 import lombok.Data;
 
 /**
@@ -9,7 +10,7 @@ import lombok.Data;
  * 该 DTO 封装了用户初始化对话会话时可配置的参数，支持绑定特定 AI 模型。
  * </p>
  *
- * @see com.yoswell.agenticrag.platform.session.entity.ChatSession
+ * @see ChatSessionDO
  * @since 2026-03-30
  */
 @Data

@@ -8,6 +8,7 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import com.yoswell.agenticrag.platform.session.entity.ChatMessageDO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,7 +20,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yoswell.agenticrag.core.memory.constants.MemoryStoreConstants;
 import com.yoswell.agenticrag.core.memory.entity.UserGlobalMemory;
 import com.yoswell.agenticrag.core.memory.mapper.UserGlobalMemoryMapper;
-import com.yoswell.agenticrag.platform.session.entity.ChatSession;
+import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
 import com.yoswell.agenticrag.platform.session.mapper.ChatMessageMapper;
 import com.yoswell.agenticrag.platform.session.mapper.ChatSessionMapper;
 
@@ -284,7 +285,7 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
      * @see MemoryStoreConstants#GLOBAL_MEMORY_KV_SEPARATOR
      */
     private void injectUserPreferences(String sessionId, List<String> target) {
-        ChatSession session = findSession(sessionId);
+        ChatSessionDO session = findSession(sessionId);
         if (session == null) {
             return;
         }
@@ -505,8 +506,8 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
      * @see MemoryStoreConstants#COMPRESSION_LEVEL_L3
      */
     private void persistCompressionState(String sessionId, String l2Summary, String l3Summary) {
-        List<com.yoswell.agenticrag.platform.session.entity.ChatMessage> persistedMessages = chatMessageMapper.selectList(
-                new QueryWrapper<com.yoswell.agenticrag.platform.session.entity.ChatMessage>()
+        List<ChatMessageDO> persistedMessages = chatMessageMapper.selectList(
+                new QueryWrapper<ChatMessageDO>()
                         .eq("session_id", sessionId)
                         .orderByAsc("created_at")
         );
@@ -516,7 +517,7 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
         int l2Start = Math.max(0, total - l2Limit);
 
         for (int index = 0; index < total; index++) {
-            com.yoswell.agenticrag.platform.session.entity.ChatMessage persisted = persistedMessages.get(index);
+            ChatMessageDO persisted = persistedMessages.get(index);
             if (index >= l1Start) {
                 persisted.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L1);
                 persisted.setCompressedContent(null);
@@ -531,7 +532,7 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
         }
 
         if (l3Summary != null && !l3Summary.isBlank()) {
-            ChatSession session = findSession(sessionId);
+            ChatSessionDO session = findSession(sessionId);
             if (session != null) {
                 session.setSummary(l3Summary);
                 chatSessionMapper.updateById(session);
@@ -539,8 +540,8 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
         }
     }
 
-    private ChatSession findSession(String sessionId) {
-        return chatSessionMapper.selectOne(new QueryWrapper<ChatSession>().eq("session_id", sessionId));
+    private ChatSessionDO findSession(String sessionId) {
+        return chatSessionMapper.selectOne(new QueryWrapper<ChatSessionDO>().eq("session_id", sessionId));
     }
 
     /**

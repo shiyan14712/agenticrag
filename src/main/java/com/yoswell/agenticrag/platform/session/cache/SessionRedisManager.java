@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 import com.yoswell.agenticrag.common.constants.SessionCacheConstants;
 import com.yoswell.agenticrag.common.exception.BusinessException;
 import com.yoswell.agenticrag.common.exception.ErrorCode;
-import com.yoswell.agenticrag.platform.session.entity.ChatSession;
+import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -47,7 +47,7 @@ public class SessionRedisManager {
      *
      * @param session 会话实体
      */
-    public void cacheSessionMeta(ChatSession session) {
+    public void cacheSessionMeta(ChatSessionDO session) {
         if (session == null || session.getSessionId() == null || session.getSessionId().isBlank()) {
             throw new BusinessException(ErrorCode.INVALID_SESSION_ID.getCode(), ErrorCode.INVALID_SESSION_ID.getMessage());
         }
@@ -68,13 +68,13 @@ public class SessionRedisManager {
      * @param fallback 缓存未命中时的回源函数
      * @return 会话实体，若不存在则返回 null
      */
-    public ChatSession getSessionMetaOrFallback(String sessionId, Supplier<ChatSession> fallback) {
+    public ChatSessionDO getSessionMetaOrFallback(String sessionId, Supplier<ChatSessionDO> fallback) {
         String key = getSessionMetaKey(sessionId);
         String value = redisTemplate.opsForValue().get(key);
         if (value != null) {
             try {
                 redisTemplate.expire(key, SessionCacheConstants.SESSION_CACHE_TTL);
-                return objectMapper.readValue(value, ChatSession.class);
+                return objectMapper.readValue(value, ChatSessionDO.class);
             } catch (JacksonException e) {
                 // 缓存内容损坏时删除坏数据，转为回源读取
                 log.warn("[SessionRedisManager] 会话元数据反序列化失败，改为回源: sessionId={}", sessionId, e);
@@ -82,7 +82,7 @@ public class SessionRedisManager {
             }
         }
 
-        ChatSession fallbackSession = fallback.get();
+        ChatSessionDO fallbackSession = fallback.get();
         if (fallbackSession != null) {
             cacheSessionMeta(fallbackSession);
         }

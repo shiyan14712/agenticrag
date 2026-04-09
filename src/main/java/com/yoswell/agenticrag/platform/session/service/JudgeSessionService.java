@@ -5,7 +5,7 @@ import org.springframework.stereotype.Service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.yoswell.agenticrag.common.exception.BusinessException;
 import com.yoswell.agenticrag.common.exception.ErrorCode;
-import com.yoswell.agenticrag.platform.session.entity.ChatSession;
+import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
 import com.yoswell.agenticrag.platform.session.mapper.ChatSessionMapper;
 
 import lombok.RequiredArgsConstructor;
@@ -25,8 +25,8 @@ public class JudgeSessionService {
         }
 
         Long count = chatSessionMapper.selectCount(
-                new LambdaQueryWrapper<ChatSession>()
-                .eq(ChatSession::getSessionId, sessionId)
+                new LambdaQueryWrapper<ChatSessionDO>()
+                .eq(ChatSessionDO::getSessionId, sessionId)
         );
 
         return count != null && count > 0;

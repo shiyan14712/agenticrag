@@ -8,7 +8,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.yoswell.agenticrag.common.exception.BusinessException;
 import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.platform.session.cache.SessionRedisManager;
-import com.yoswell.agenticrag.platform.session.entity.ChatSession;
+import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
 import com.yoswell.agenticrag.platform.session.event.SessionSwitchedEvent;
 import com.yoswell.agenticrag.platform.session.mapper.ChatSessionMapper;
 
@@ -42,11 +42,11 @@ public class SessionContextSwitcher {
      * @return 目标会话实体
      * @throws BusinessException 会话不存在或无权访问
      */
-    public ChatSession activateSessionInRedis(String sessionId, String userId) {
-        LambdaQueryWrapper<ChatSession> queryWrapper = new LambdaQueryWrapper<>();
-        queryWrapper.eq(ChatSession::getSessionId, sessionId)
-                .eq(ChatSession::getUserId, userId);
-        ChatSession newSession = sessionMapper.selectOne(queryWrapper);
+    public ChatSessionDO activateSessionInRedis(String sessionId, String userId) {
+        LambdaQueryWrapper<ChatSessionDO> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(ChatSessionDO::getSessionId, sessionId)
+                .eq(ChatSessionDO::getUserId, userId);
+        ChatSessionDO newSession = sessionMapper.selectOne(queryWrapper);
         
         if (newSession == null) {
             throw new BusinessException(

@@ -4,22 +4,30 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.yoswell.agenticrag.platform.session.entity.ChatMessageDO;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.yoswell.agenticrag.core.memory.constants.MemoryStoreConstants;
 import com.yoswell.agenticrag.core.memory.dto.ChatMessageDTO;
 import com.yoswell.agenticrag.core.memory.dto.SessionMemoryViewDTO;
 import com.yoswell.agenticrag.core.memory.service.SessionMemoryService;
 import com.yoswell.agenticrag.core.memory.store.HierarchicalChatMemoryStore;
+import com.yoswell.agenticrag.platform.session.mapper.ChatMessageMapper;
 import com.yoswell.agenticrag.platform.session.service.JudgeSessionService;
 
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ChatMessageDeserializer;
+import dev.langchain4j.data.message.ChatMessageSerializer;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
@@ -34,7 +42,11 @@ public class SessionMemoryServiceImpl implements SessionMemoryService {
     private final RedisTemplate<String, Object> redisTemplate;
     private final HierarchicalChatMemoryStore chatMemoryStore;
     private final JudgeSessionService judgeSessionService;
+    private final ChatMessageMapper chatMessageMapper;
     private final ObjectMapper objectMapper;
+
+    @Value("${rag.memory.l1-limit:10}")
+    private int l1Limit;
 
     @Override
     public SessionMemoryViewDTO getSessionMemoryLayers(String sessionId) {
@@ -51,6 +63,15 @@ public class SessionMemoryServiceImpl implements SessionMemoryService {
         Object l1Data = redisTemplate.opsForValue().get(MemoryStoreConstants.REDIS_PREFIX_L1 + sessionId);
         log.info("[SessionMemoryService] 读取 L1 原始记忆: sessionId={}, dataType={}", sessionId, describeType(l1Data));
         List<ChatMessage> l1Messages = parseL1Messages(sessionId, l1Data);
+        if (l1Messages.isEmpty()) {
+            List<ChatMessage> dbFallbackMessages = loadL1MessagesFromDatabase(sessionId);
+            if (!dbFallbackMessages.isEmpty()) {
+                l1Messages = dbFallbackMessages;
+                warmUpL1Redis(sessionId, dbFallbackMessages);
+                log.info("[SessionMemoryService] L1 Redis 未命中，数据库回源成功: sessionId={}, messageCount={}",
+                        sessionId, dbFallbackMessages.size());
+            }
+        }
         dto.setL1Messages(l1Messages.stream().map(ChatMessageDTO::from).collect(Collectors.toList()));
 
         log.info("[SessionMemoryService] 查询会话分层记忆完成: sessionId={}, l1Count={}, hasL2={}, hasL3={}",
@@ -63,6 +84,88 @@ public class SessionMemoryServiceImpl implements SessionMemoryService {
         }
 
         return dto;
+    }
+
+    private List<ChatMessage> loadL1MessagesFromDatabase(String sessionId) {
+        int pageSize = Math.max(1, l1Limit);
+
+        LambdaQueryWrapper<ChatMessageDO> l1QueryWrapper = new LambdaQueryWrapper<>();
+        l1QueryWrapper.eq(ChatMessageDO::getSessionId, sessionId)
+                .eq(ChatMessageDO::getCompressionLevel, MemoryStoreConstants.COMPRESSION_LEVEL_L1)
+                .orderByDesc(ChatMessageDO::getCreatedAt)
+                .orderByDesc(ChatMessageDO::getId);
+        List<ChatMessageDO> records = chatMessageMapper.selectPage(new Page<>(1, pageSize, false), l1QueryWrapper).getRecords();
+
+        if (records.isEmpty()) {
+            QueryWrapper<ChatMessageDO> latestWrapper =
+                    new QueryWrapper<ChatMessageDO>()
+                            .eq("session_id", sessionId)
+                            .orderByDesc("created_at")
+                            .orderByDesc("id");
+            records = chatMessageMapper.selectPage(new Page<>(1, pageSize, false), latestWrapper).getRecords();
+            if (!records.isEmpty()) {
+                log.info("[SessionMemoryService] 数据库未找到 compression_level=L1，按最近消息回源: sessionId={}, rawCount={}",
+                        sessionId, records.size());
+            }
+        }
+
+        if (records.isEmpty()) {
+            log.warn("[SessionMemoryService] 数据库回源无消息: sessionId={}", sessionId);
+            return new ArrayList<>();
+        }
+
+        List<ChatMessage> fallbackMessages = new ArrayList<>();
+        for (int index = records.size() - 1; index >= 0; index--) {
+            ChatMessage converted = convertPersistedMessageToMemoryMessage(sessionId, records.get(index), records.size() - 1 - index);
+            if (converted != null) {
+                fallbackMessages.add(converted);
+            }
+        }
+        return fallbackMessages;
+    }
+
+    private ChatMessage convertPersistedMessageToMemoryMessage(
+            String sessionId,
+            ChatMessageDO persisted,
+            int index) {
+        if (persisted == null) {
+            return null;
+        }
+        String content = persisted.getContent();
+        if (!hasText(content)) {
+            log.warn("[SessionMemoryService] 数据库消息内容为空，跳过: sessionId={}, index={}, role={}",
+                    sessionId, index, persisted.getRole());
+            return null;
+        }
+
+        String role = defaultString(persisted.getRole(), "user").trim().toUpperCase(Locale.ROOT);
+        return switch (role) {
+            case "SYSTEM" -> SystemMessage.from(content);
+            case "USER" -> UserMessage.from(content);
+            case "AI", "ASSISTANT" -> AiMessage.from(content);
+            case "TOOL" -> ToolExecutionResultMessage.from("", "unknown", content);
+            default -> {
+                log.warn("[SessionMemoryService] 数据库消息角色未知，按 user 降级: sessionId={}, index={}, role={}",
+                        sessionId, index, persisted.getRole());
+                yield UserMessage.from(content);
+            }
+        };
+    }
+
+    private void warmUpL1Redis(String sessionId, List<ChatMessage> messages) {
+        try {
+            String json = ChatMessageSerializer.messagesToJson(messages);
+            redisTemplate.opsForValue().set(
+                    MemoryStoreConstants.REDIS_PREFIX_L1 + sessionId,
+                    json,
+                    MemoryStoreConstants.L1_CACHE_TTL_HOURS,
+                    TimeUnit.HOURS);
+            log.info("[SessionMemoryService] 数据库回源结果已回填 Redis: sessionId={}, messageCount={}",
+                    sessionId, messages.size());
+        } catch (RuntimeException exception) {
+            log.warn("[SessionMemoryService] 回填 Redis 失败: sessionId={}, messageCount={}",
+                    sessionId, messages.size(), exception);
+        }
     }
 
     @Override
@@ -106,7 +209,7 @@ public class SessionMemoryServiceImpl implements SessionMemoryService {
                 log.info("[SessionMemoryService] L1 JSON 反序列化成功: sessionId={}, messageCount={}",
                         sessionId, messages.size());
                 return messages;
-            } catch (Exception exception) {
+            } catch (RuntimeException exception) {
                 log.warn("[SessionMemoryService] L1 JSON 反序列化失败: sessionId={}, payloadLength={}",
                         sessionId, jsonString.length(), exception);
                 return new ArrayList<>();
@@ -173,7 +276,7 @@ public class SessionMemoryServiceImpl implements SessionMemoryService {
             }
             try {
                 return ChatMessageDeserializer.messageFromJson(text);
-            } catch (Exception exception) {
+            } catch (RuntimeException exception) {
                 log.warn("[SessionMemoryService] L1 字符串元素不是标准消息 JSON，按用户消息降级: sessionId={}, index={}",
                         sessionId, index, exception);
                 return UserMessage.from(text);
@@ -193,7 +296,7 @@ public class SessionMemoryServiceImpl implements SessionMemoryService {
         try {
             String json = objectMapper.writeValueAsString(map);
             return ChatMessageDeserializer.messageFromJson(json);
-        } catch (Exception exception) {
+        } catch (RuntimeException exception) {
             ChatMessage fallbackMessage = convertSimplifiedMapToChatMessage(map);
             if (fallbackMessage != null) {
                 log.warn("[SessionMemoryService] L1 Map 元素按简化结构兼容转换: sessionId={}, index={}, keys={}",

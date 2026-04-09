@@ -18,8 +18,8 @@ import com.yoswell.agenticrag.platform.session.constants.SessionStatusConstants;
 import com.yoswell.agenticrag.platform.session.dto.request.SessionCreateRequestDTO;
 import com.yoswell.agenticrag.platform.session.dto.request.SessionUpdateRequestDTO;
 import com.yoswell.agenticrag.platform.session.dto.response.SessionDetailsRespDTO;
-import com.yoswell.agenticrag.platform.session.entity.ChatMessage;
-import com.yoswell.agenticrag.platform.session.entity.ChatSession;
+import com.yoswell.agenticrag.platform.session.entity.ChatMessageDO;
+import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
 import com.yoswell.agenticrag.platform.session.event.SessionCreatedEvent;
 import com.yoswell.agenticrag.platform.session.mapper.ChatMessageMapper;
 import com.yoswell.agenticrag.platform.session.mapper.ChatSessionMapper;
@@ -52,8 +52,8 @@ public class SessionService {
      * @return 新建后的会话实体
      */
     @Transactional
-    public ChatSession createSession(String userId, SessionCreateRequestDTO request) {
-        ChatSession session = new ChatSession();
+    public ChatSessionDO createSession(String userId, SessionCreateRequestDTO request) {
+        ChatSessionDO session = new ChatSessionDO();
         session.setSessionId(UUID.randomUUID().toString());
         session.setUserId(userId);
         session.setStatus(SessionStatusConstants.ACTIVE.getCode());
@@ -82,16 +82,16 @@ public class SessionService {
      * @param size 每页大小
      * @return 会话分页结果
      */
-    public IPage<ChatSession> getSessions(String userId, SessionStatusConstants status, int page, int size) {
+    public IPage<ChatSessionDO> getSessions(String userId, SessionStatusConstants status, int page, int size) {
         int targetStatusCode = SessionStatusConstants.ACTIVE.getCode();
         if (status != null) {
             targetStatusCode = status.getCode();
         }
-        Page<ChatSession> p = new Page<>(toMybatisCurrentPage(page), size);
-        return sessionMapper.selectPage(p, new LambdaQueryWrapper<ChatSession>()
-                .eq(ChatSession::getUserId, userId)
-                .eq(ChatSession::getStatus, targetStatusCode)
-                .orderByDesc(ChatSession::getUpdatedAt, ChatSession::getPinned));
+        Page<ChatSessionDO> p = new Page<>(toMybatisCurrentPage(page), size);
+        return sessionMapper.selectPage(p, new LambdaQueryWrapper<ChatSessionDO>()
+                .eq(ChatSessionDO::getUserId, userId)
+                .eq(ChatSessionDO::getStatus, targetStatusCode)
+                .orderByDesc(ChatSessionDO::getUpdatedAt, ChatSessionDO::getPinned));
     }
 
     /**
@@ -104,9 +104,9 @@ public class SessionService {
      * @return 会话实体
      * @throws BusinessException 会话不存在或无权访问
      */
-    public ChatSession getSessionBySessionId(String sessionId, String userId) {
-        ChatSession session = redisManager.getSessionMetaOrFallback(sessionId, () ->
-            sessionMapper.selectOne(new LambdaQueryWrapper<ChatSession>().eq(ChatSession::getSessionId, sessionId))
+    public ChatSessionDO getSessionBySessionId(String sessionId, String userId) {
+        ChatSessionDO session = redisManager.getSessionMetaOrFallback(sessionId, () ->
+            sessionMapper.selectOne(new LambdaQueryWrapper<ChatSessionDO>().eq(ChatSessionDO::getSessionId, sessionId))
         );
 
         if (session == null || !userId.equals(session.getUserId())) {
@@ -126,14 +126,17 @@ public class SessionService {
      * @param size 每页大小
      * @return 消息分页结果
      */
-    public IPage<ChatMessage> getSessionMessages(String sessionId, String userId, int page, int size) {
+    public IPage<ChatMessageDO> getSessionMessages(String sessionId, String userId, int page, int size) {
         getSessionBySessionId(sessionId, userId);
-        Page<ChatMessage> p = new Page<>(toMybatisCurrentPage(page), size);
-        return messageMapper.selectPage(p, new LambdaQueryWrapper<ChatMessage>()
-                .eq(ChatMessage::getSessionId, sessionId)
-                .orderByAsc(ChatMessage::getCreatedAt));
+        Page<ChatMessageDO> p = new Page<>(toMybatisCurrentPage(page), size);
+        return messageMapper.selectPage(p, new LambdaQueryWrapper<ChatMessageDO>()
+                .eq(ChatMessageDO::getSessionId, sessionId)
+                .orderByAsc(ChatMessageDO::getCreatedAt));
     }
 
+    /**
+     * 将前端传入的 0-based 页码转换为 MyBatis Plus 的 1-based 页码
+     */
     private long toMybatisCurrentPage(int zeroBasedPage) {
         return Math.max(1L, (long) zeroBasedPage + 1L);
     }
@@ -164,8 +167,8 @@ public class SessionService {
      * @return 详情聚合响应
      */
     public SessionDetailsRespDTO getSessionDetails(String sessionId, String userId, int page, int size) {
-        ChatSession session = getSessionBySessionId(sessionId, userId);
-        IPage<ChatMessage> messages = getSessionMessages(sessionId, userId, page, size);
+        ChatSessionDO session = getSessionBySessionId(sessionId, userId);
+        IPage<ChatMessageDO> messages = getSessionMessages(sessionId, userId, page, size);
         return new SessionDetailsRespDTO(session, messages);
     }
 
@@ -180,8 +183,8 @@ public class SessionService {
      * @return 更新后的会话实体
      */
     @Transactional
-    public ChatSession updateSession(String sessionId, String userId, SessionUpdateRequestDTO request) {
-        ChatSession session = getSessionBySessionId(sessionId, userId);
+    public ChatSessionDO updateSession(String sessionId, String userId, SessionUpdateRequestDTO request) {
+        ChatSessionDO session = getSessionBySessionId(sessionId, userId);
 
         boolean updated = false;
         if (request.getTitle() != null) {
@@ -212,7 +215,7 @@ public class SessionService {
      */
     @Transactional
     public void deleteSession(String sessionId, String userId, SessionStatusConstants targetStatus) {
-        ChatSession session = getSessionBySessionId(sessionId, userId);
+        ChatSessionDO session = getSessionBySessionId(sessionId, userId);
 
         // 0 ACTIVE, 1 ARCHIVED, 2 DELETED
         if (targetStatus.getCode() < session.getStatus()) {
@@ -237,11 +240,11 @@ public class SessionService {
         // Update user's current active session if necessary
 
         if (sessionId.equals(redisManager.getActiveSession(userId))) {
-            List<ChatSession> activeSessions = sessionMapper.selectList(
-                new LambdaQueryWrapper<ChatSession>()
-                    .eq(ChatSession::getUserId, userId)
-                    .eq(ChatSession::getStatus, SessionStatusConstants.ACTIVE.getCode())
-                    .orderByDesc(ChatSession::getUpdatedAt)
+            List<ChatSessionDO> activeSessions = sessionMapper.selectList(
+                new LambdaQueryWrapper<ChatSessionDO>()
+                    .eq(ChatSessionDO::getUserId, userId)
+                    .eq(ChatSessionDO::getStatus, SessionStatusConstants.ACTIVE.getCode())
+                    .orderByDesc(ChatSessionDO::getUpdatedAt)
             );
             if (!activeSessions.isEmpty()) {
                 redisManager.setActiveSession(userId, activeSessions.getFirst().getSessionId());

@@ -1,8 +1,8 @@
 package com.yoswell.agenticrag.platform.session.dto.response;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
-import com.yoswell.agenticrag.platform.session.entity.ChatMessage;
-import com.yoswell.agenticrag.platform.session.entity.ChatSession;
+import com.yoswell.agenticrag.platform.session.entity.ChatMessageDO;
+import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -21,10 +21,10 @@ public class SessionDetailsRespDTO {
     /**
      * 会话基本信息
      */
-    private ChatSession session;
+    private ChatSessionDO session;
 
     /**
      * 消息列表分页数据
      */
-    private IPage<ChatMessage> messages;
+    private IPage<ChatMessageDO> messages;
 }

@@ -1,5 +1,6 @@
 package com.yoswell.agenticrag.platform.session.dto.request;
 
+import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
 import lombok.Data;
 
 /**
@@ -14,7 +15,7 @@ import lombok.Data;
  *     <li>未来可扩展：归档、删除等操作</li>
  * </ul>
  *
- * @see com.yoswell.agenticrag.platform.session.entity.ChatSession
+ * @see ChatSessionDO
  * @since 2026-03-30
  */
 @Data

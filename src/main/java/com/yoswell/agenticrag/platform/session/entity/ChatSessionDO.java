@@ -22,7 +22,7 @@ import lombok.Data;
  */
 @Data
 @TableName("chat_session")
-public class ChatSession {
+public class ChatSessionDO {
 
     /**
      * 主键 ID

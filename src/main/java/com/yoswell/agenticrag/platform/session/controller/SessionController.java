@@ -21,7 +21,7 @@ import com.yoswell.agenticrag.platform.session.dto.request.SessionListQueryReque
 import com.yoswell.agenticrag.platform.session.dto.request.SessionMessageQueryRequestDTO;
 import com.yoswell.agenticrag.platform.session.dto.request.SessionUpdateRequestDTO;
 import com.yoswell.agenticrag.platform.session.dto.response.SessionDetailsRespDTO;
-import com.yoswell.agenticrag.platform.session.entity.ChatSession;
+import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
 import com.yoswell.agenticrag.platform.session.service.SessionContextSwitcher;  
 import com.yoswell.agenticrag.platform.session.service.SessionService;
 import com.yoswell.agenticrag.web.security.util.SecurityUtils;
@@ -51,7 +51,7 @@ public class SessionController {
      * @return 包含新建会话实体的统一响应
      */
     @PostMapping
-    public ApiResponse<ChatSession> createSession(@RequestBody(required = false) SessionCreateRequestDTO request) {
+    public ApiResponse<ChatSessionDO> createSession(@RequestBody(required = false) SessionCreateRequestDTO request) {
         String userId = SecurityUtils.getCurrentUserId();
         return ApiResponse.success(sessionService.createSession(userId, request));
     }
@@ -63,7 +63,7 @@ public class SessionController {
      * @return 包含会话分页结果的统一响应
      */
     @GetMapping
-    public ApiResponse<IPage<ChatSession>> getSessions(@ModelAttribute SessionListQueryRequestDTO reqDTO) {
+    public ApiResponse<IPage<ChatSessionDO>> getSessions(@ModelAttribute SessionListQueryRequestDTO reqDTO) {
         String userId = SecurityUtils.getCurrentUserId();
         return ApiResponse.success(sessionService.getSessions(
                 userId,
@@ -98,7 +98,7 @@ public class SessionController {
      * @return 包含激活后会话实体的统一响应
      */
     @PutMapping("/{sessionId}/activate")
-    public ApiResponse<ChatSession> activateSession(@PathVariable String sessionId) {
+    public ApiResponse<ChatSessionDO> activateSession(@PathVariable String sessionId) {
         String userId = SecurityUtils.getCurrentUserId();
         return ApiResponse.success(sessionSwitcher.activateSessionInRedis(sessionId, userId));
     }
@@ -111,7 +111,7 @@ public class SessionController {
      * @return 包含更新后会话实体的统一响应
      */
     @PatchMapping("/{sessionId}")
-    public ApiResponse<ChatSession> updateSession(
+    public ApiResponse<ChatSessionDO> updateSession(
             @PathVariable String sessionId,
             @RequestBody SessionUpdateRequestDTO request) {
         String userId = SecurityUtils.getCurrentUserId();

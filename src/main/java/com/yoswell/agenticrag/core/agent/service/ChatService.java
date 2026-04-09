@@ -7,7 +7,7 @@ import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.yoswell.agenticrag.common.exception.BusinessException;
 import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.core.agent.ai.SimpleChatAgent;
-import com.yoswell.agenticrag.platform.session.entity.ChatSession;
+import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
 import com.yoswell.agenticrag.platform.session.mapper.ChatSessionMapper;
 
 import lombok.RequiredArgsConstructor;
@@ -40,11 +40,11 @@ public class ChatService {
     }
 
     public String getSessionTitle(String sessionId, String userId) {
-        LambdaQueryWrapper<ChatSession> queryWrapper = new LambdaQueryWrapper<>();
-        queryWrapper.eq(ChatSession::getSessionId, sessionId)
-                .eq(ChatSession::getUserId, userId)
-                .select(ChatSession::getTitle);
-        ChatSession session = chatSessionMapper.selectOne(queryWrapper);
+        LambdaQueryWrapper<ChatSessionDO> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(ChatSessionDO::getSessionId, sessionId)
+                .eq(ChatSessionDO::getUserId, userId)
+                .select(ChatSessionDO::getTitle);
+        ChatSessionDO session = chatSessionMapper.selectOne(queryWrapper);
         if (session == null) {
             throw new BusinessException(ErrorCode.SESSION_NOT_FOUND);
         }
@@ -60,10 +60,10 @@ public class ChatService {
             throw new IllegalStateException("Generated title is blank");
         }
 
-        ChatSession sessionUpdate = new ChatSession();
+        ChatSessionDO sessionUpdate = new ChatSessionDO();
         sessionUpdate.setTitle(title);
 
-        UpdateWrapper<ChatSession> wrapper = new UpdateWrapper<>();
+        UpdateWrapper<ChatSessionDO> wrapper = new UpdateWrapper<>();
         wrapper.eq("session_id", sessionId)
                 .isNull("title");
 

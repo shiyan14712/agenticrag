@@ -9,8 +9,8 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.yoswell.agenticrag.common.exception.BusinessException;
 import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.platform.session.cache.SessionRedisManager;
-import com.yoswell.agenticrag.platform.session.entity.ChatMessage;
-import com.yoswell.agenticrag.platform.session.entity.ChatSession;
+import com.yoswell.agenticrag.platform.session.entity.ChatMessageDO;
+import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
 import com.yoswell.agenticrag.platform.session.mapper.ChatMessageMapper;
 import com.yoswell.agenticrag.platform.session.mapper.ChatSessionMapper;
 
@@ -50,7 +50,7 @@ public class ChatMessageService {
      */
     @Transactional
     public void saveUserMessage(String sessionId, String content) {
-        ChatMessage msg = new ChatMessage();
+        ChatMessageDO msg = new ChatMessageDO();
         msg.setMessageId(UUID.randomUUID().toString());
         msg.setSessionId(sessionId);
         msg.setRole("user");
@@ -68,7 +68,7 @@ public class ChatMessageService {
      */
     @Transactional
     public void saveAssistantMessage(String sessionId, String content, Object metadata) {
-        ChatMessage msg = new ChatMessage();
+        ChatMessageDO msg = new ChatMessageDO();
         msg.setMessageId(UUID.randomUUID().toString());
         msg.setSessionId(sessionId);
         msg.setRole("assistant");
@@ -88,8 +88,8 @@ public class ChatMessageService {
     }
 
     private void incrementSessionMessageCount(String sessionId, int delta) {
-        ChatSession session = sessionMapper.selectOne(
-                new QueryWrapper<ChatSession>().eq("session_id", sessionId)
+        ChatSessionDO session = sessionMapper.selectOne(
+                new QueryWrapper<ChatSessionDO>().eq("session_id", sessionId)
         );
         if (session == null) {
             throw new BusinessException(
