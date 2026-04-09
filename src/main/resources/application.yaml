@@ -121,6 +121,21 @@ agenticrag:
       dispatch-timeout-ms: 5000
     consume:
       processing-timeout-ms: 60000
+  mineru:
+    base-url: http://10.60.23.4:8000
+    async-enabled: true
+    backend: hybrid-auto-engine
+    parse-method: auto
+    formula-enable: true
+    table-enable: true
+    return-md: true
+    lang-list:
+      - ch
+    connect-timeout-ms: 5000
+    request-timeout-ms: 180000
+    poll-interval-ms: 3000
+    max-poll-attempts: 120
+    server-url:
 
 logging:
   level:

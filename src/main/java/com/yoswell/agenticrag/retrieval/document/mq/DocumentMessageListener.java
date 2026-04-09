@@ -16,6 +16,7 @@ import org.springframework.util.StringUtils;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentDeleteRequestDTO;
+import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentParseRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentVectorizeRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
@@ -23,6 +24,7 @@ import com.yoswell.agenticrag.retrieval.document.reliability.entity.DocumentAsyn
 import com.yoswell.agenticrag.retrieval.document.reliability.model.DocumentAsyncTaskType;
 import com.yoswell.agenticrag.retrieval.document.reliability.service.DocumentAsyncTaskService;
 import com.yoswell.agenticrag.retrieval.document.reliability.service.MqConsumeLogService;
+import com.yoswell.agenticrag.retrieval.document.service.DocumentParsePipelineService;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentVectorizationExecutionResult;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentVectorizationService;
 import com.yoswell.agenticrag.retrieval.document.service.KnowledgeChunkIndexService;
@@ -35,6 +37,7 @@ public class DocumentMessageListener {
     private static final Logger log = LoggerFactory.getLogger(DocumentMessageListener.class);
 
     private final ObjectMapper objectMapper;
+    private final DocumentParsePipelineService documentParsePipelineService;
     private final DocumentVectorizationService documentVectorizationService;
     private final KnowledgeChunkIndexService knowledgeChunkIndexService;
     private final DocumentKafkaProperties kafkaProperties;
@@ -44,6 +47,7 @@ public class DocumentMessageListener {
     private final String consumerGroupId;
 
     public DocumentMessageListener(ObjectMapper objectMapper,
+                                   DocumentParsePipelineService documentParsePipelineService,
                                    DocumentVectorizationService documentVectorizationService,
                                    KnowledgeChunkIndexService knowledgeChunkIndexService,
                                    DocumentKafkaProperties kafkaProperties,
@@ -52,6 +56,7 @@ public class DocumentMessageListener {
                                    DocumentMetadataMapper documentMetadataMapper,
                                    KafkaProperties springKafkaProperties) {
         this.objectMapper = objectMapper;
+        this.documentParsePipelineService = documentParsePipelineService;
         this.documentVectorizationService = documentVectorizationService;
         this.knowledgeChunkIndexService = knowledgeChunkIndexService;
         this.kafkaProperties = kafkaProperties;
@@ -59,6 +64,60 @@ public class DocumentMessageListener {
         this.mqConsumeLogService = mqConsumeLogService;
         this.documentMetadataMapper = documentMetadataMapper;
         this.consumerGroupId = springKafkaProperties.getConsumer().getGroupId();
+    }
+
+    @KafkaListener(
+            topics = "#{@documentKafkaProperties.topics.parseRequest}",
+            containerFactory = "documentKafkaListenerContainerFactory"
+    )
+    public void listenParseRequest(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
+        String message = record.value();
+        log.info("[Offline RAG][PARSE_CONSUMER] Received Kafka message. topic={}, partition={}, offset={}, key={}",
+                record.topic(), record.partition(), record.offset(), record.key());
+        try {
+            DocumentParseRequestDTO request = objectMapper.readValue(message, DocumentParseRequestDTO.class);
+            requireDocumentId(request.documentId());
+
+            String tenantId = resolveTenantId(request.documentId(), request.tenantId());
+            DocumentAsyncTaskDO task = StringUtils.hasText(request.taskId())
+                    ? documentAsyncTaskService.findByTaskId(request.taskId())
+                    : null;
+            if (task == null) {
+                task = documentAsyncTaskService.getOrCreateTask(
+                        request.documentId(),
+                        tenantId,
+                        DocumentAsyncTaskType.DOCUMENT_PARSE,
+                        record.topic(),
+                        record.key());
+            }
+
+            String messageIdentity = mqConsumeLogService.resolveMessageIdentity(
+                    request.messageId(),
+                    record.key(),
+                    message);
+            assertCanProcess(record.topic(), messageIdentity, record.key(), message, task.getTaskId(), request.documentId());
+
+            documentAsyncTaskService.markRunning(task.getTaskId(), messageIdentity);
+            DocumentParsePipelineService.ParseDispatchResult parseResult =
+                    documentParsePipelineService.parseAndDispatch(request);
+
+            documentAsyncTaskService.markSucceeded(task.getTaskId(), messageIdentity);
+            mqConsumeLogService.markSucceeded(consumerGroupId, record.topic(), messageIdentity);
+            log.info("[Offline RAG][PARSE_CONSUMER] Parse completed and vectorize message dispatched. documentId={}, parseTaskId={}, vectorizeTaskId={}, vectorizeMessageId={}, mineruTaskId={}",
+                    request.documentId(),
+                    task.getTaskId(),
+                    parseResult.vectorizeTaskId(),
+                    parseResult.vectorizeMessageId(),
+                    parseResult.mineruTaskId());
+            acknowledgment.acknowledge();
+        } catch (AlreadyCompletedException alreadyCompletedException) {
+            acknowledgment.acknowledge();
+        } catch (RetryLaterException retryLaterException) {
+            throw retryLaterException;
+        } catch (Exception exception) {
+            handleParseFailure(record, message, exception);
+            throw new RuntimeException("document parse processing failed", exception);
+        }
     }
 
     @KafkaListener(
@@ -178,6 +237,9 @@ public class DocumentMessageListener {
             if (StringUtils.hasText(documentId) && kafkaProperties.getTopics().getVectorizeRequest().equals(originalTopic)) {
                 documentVectorizationService.markFailed(documentId);
             }
+            if (StringUtils.hasText(documentId) && kafkaProperties.getTopics().getParseRequest().equals(originalTopic)) {
+                documentVectorizationService.markFailed(documentId);
+            }
             if (task != null) {
                 documentAsyncTaskService.markFailed(task.getTaskId(), messageIdentity,
                         "moved to dead letter from " + originalTopic);
@@ -191,6 +253,30 @@ public class DocumentMessageListener {
         } catch (Exception exception) {
             log.warn("[Offline RAG][DLQ_CONSUMER] Failed to process dead-letter payload", exception);
             throw new RuntimeException("document dead-letter processing failed", exception);
+        }
+    }
+
+    private void handleParseFailure(ConsumerRecord<String, String> record, String message, Exception exception) {
+        try {
+            DocumentParseRequestDTO request = objectMapper.readValue(message, DocumentParseRequestDTO.class);
+            String messageIdentity = mqConsumeLogService.resolveMessageIdentity(
+                    request.messageId(),
+                    record.key(),
+                    message);
+            DocumentAsyncTaskDO task = StringUtils.hasText(request.taskId())
+                    ? documentAsyncTaskService.findByTaskId(request.taskId())
+                    : documentAsyncTaskService.findByDocumentAndType(
+                            request.documentId(),
+                            DocumentAsyncTaskType.DOCUMENT_PARSE);
+            if (task != null) {
+                documentAsyncTaskService.markFailed(task.getTaskId(), messageIdentity, exception.getMessage());
+            }
+            if (StringUtils.hasText(request.documentId())) {
+                documentVectorizationService.markFailed(request.documentId());
+            }
+            mqConsumeLogService.markFailed(consumerGroupId, record.topic(), messageIdentity, exception.getMessage());
+        } catch (Exception nestedException) {
+            log.warn("[Offline RAG][PARSE_CONSUMER] Failed to record consume failure", nestedException);
         }
     }
 
@@ -266,6 +352,9 @@ public class DocumentMessageListener {
     }
 
     private DocumentAsyncTaskType resolveTaskType(String topic) {
+        if (kafkaProperties.getTopics().getParseRequest().equals(topic)) {
+            return DocumentAsyncTaskType.DOCUMENT_PARSE;
+        }
         if (kafkaProperties.getTopics().getVectorizeRequest().equals(topic)) {
             return DocumentAsyncTaskType.DOCUMENT_VECTORIZATION;
         }
@@ -283,6 +372,12 @@ public class DocumentMessageListener {
                 .eq(DocumentDO::getDocumentId, documentId)
                 .select(DocumentDO::getTenantId));
         return metadata == null ? null : metadata.getTenantId();
+    }
+
+    private void requireDocumentId(String documentId) {
+        if (!StringUtils.hasText(documentId)) {
+            throw new IllegalArgumentException("documentId must not be blank");
+        }
     }
 
     private static final class RetryLaterException extends RuntimeException {
