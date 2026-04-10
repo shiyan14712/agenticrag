@@ -1,7 +1,6 @@
 package com.yoswell.agenticrag.retrieval.document.config;
 
-import lombok.Getter;
-import lombok.Setter;
+import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 import org.springframework.validation.annotation.Validated;
@@ -11,6 +10,8 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import lombok.Getter;
+import lombok.Setter;
 
 /**
  * 文档异步链路的 Kafka 配置收口点。
@@ -46,16 +47,42 @@ public class DocumentKafkaProperties {
     public static class Topics {
 
         @NotBlank
-        private String parseRequest = "doc-parse-request";
+        private String parseRequest = DocumentKafkaTopic.PARSE_REQUEST.defaultTopicName();
 
         @NotBlank
-        private String vectorizeRequest = "doc-vectorize-request";
+        private String vectorizeRequest = DocumentKafkaTopic.VECTORIZATION_REQUEST.defaultTopicName();
 
         @NotBlank
-        private String deleteRequest = "doc-delete-request";
+        private String deleteRequest = DocumentKafkaTopic.DELETE_REQUEST.defaultTopicName();
 
         @NotBlank
-        private String deadLetter = "doc-dlq";
+        private String deadLetter = DocumentKafkaTopic.DEAD_LETTER.defaultTopicName();
+
+        /**
+         * 按 Topic 语义解析当前生效的 Topic 名称。
+         *
+         * @param topic Topic 语义
+         * @return 配置生效值
+         */
+        public String resolve(DocumentKafkaTopic topic) {
+            return switch (topic) {
+                case PARSE_REQUEST -> parseRequest;
+                case VECTORIZATION_REQUEST -> vectorizeRequest;
+                case DELETE_REQUEST -> deleteRequest;
+                case DEAD_LETTER -> deadLetter;
+            };
+        }
+
+        /**
+         * 判断给定 Topic 名称是否匹配指定语义 Topic。
+         *
+         * @param topic Topic 语义
+         * @param value 待比较的 topic 名称
+         * @return true 表示匹配
+         */
+        public boolean matches(DocumentKafkaTopic topic, String value) {
+            return resolve(topic).equals(value);
+        }
 
     }
 

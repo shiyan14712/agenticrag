@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
+import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
 import lombok.Data;
 
 
@@ -48,7 +49,7 @@ public class DocumentAsyncTaskDO {
 
     /** Kafka topic associated with this task, if dispatched through MQ. */
     @TableField("topic")
-    private String topic;
+    private DocumentKafkaTopic topic;
 
     /** Kafka message key used for partition routing and ordering. */
     @TableField("message_key")

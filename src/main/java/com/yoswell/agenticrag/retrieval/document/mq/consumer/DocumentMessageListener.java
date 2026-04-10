@@ -21,6 +21,7 @@ import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentParseReques
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentVectorizeRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
+import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentVectorizationExecutionResult;
 import com.yoswell.agenticrag.retrieval.document.reliability.entity.DocumentAsyncTaskDO;
 import com.yoswell.agenticrag.retrieval.document.reliability.model.DocumentAsyncTaskType;
@@ -73,6 +74,7 @@ public class DocumentMessageListener {
     )
     public void listenParseRequest(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
         String message = record.value();
+        DocumentKafkaTopic consumeTopic = requireKafkaTopic(record.topic());
         log.info("[Offline RAG][PARSE_CONSUMER] Received Kafka message. topic={}, partition={}, offset={}, key={}",
                 record.topic(), record.partition(), record.offset(), record.key());
         try {
@@ -88,7 +90,7 @@ public class DocumentMessageListener {
                         request.documentId(),
                         tenantId,
                         DocumentAsyncTaskType.DOCUMENT_PARSE,
-                        record.topic(),
+                    consumeTopic,
                         record.key());
             }
 
@@ -132,6 +134,7 @@ public class DocumentMessageListener {
     )
     public void listenVectorizeRequest(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
         String message = record.value();
+        DocumentKafkaTopic consumeTopic = requireKafkaTopic(record.topic());
         log.info("[Offline RAG][VECTORIZE_CONSUMER] Received Kafka message. topic={}, partition={}, offset={}, key={}",
                 record.topic(), record.partition(), record.offset(), record.key());
         try {
@@ -140,7 +143,7 @@ public class DocumentMessageListener {
                     request.documentId(),
                     resolveTenantId(request.documentId(), request.tenantId()),
                     DocumentAsyncTaskType.DOCUMENT_VECTORIZATION,
-                    record.topic(),
+                    consumeTopic,
                     record.key());
             String messageIdentity = mqConsumeLogService.resolveMessageIdentity(
                     request.messageId(),
@@ -179,6 +182,7 @@ public class DocumentMessageListener {
     )
     public void listenDocumentDeleteRequest(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
         String message = record.value();
+        DocumentKafkaTopic consumeTopic = requireKafkaTopic(record.topic());
         log.info("[Offline RAG][DELETE_CONSUMER] Received Kafka message. topic={}, partition={}, offset={}, key={}",
                 record.topic(), record.partition(), record.offset(), record.key());
         try {
@@ -200,7 +204,7 @@ public class DocumentMessageListener {
                         request.documentId(),
                         deleteTenantId,
                         DocumentAsyncTaskType.DOCUMENT_DELETE,
-                        record.topic(),
+                    consumeTopic,
                         record.key());
             }
             String messageIdentity = mqConsumeLogService.resolveMessageIdentity(
@@ -272,10 +276,12 @@ public class DocumentMessageListener {
             assertCanProcess(record.topic(), messageIdentity, record.key(), message,
                     task == null ? null : task.getTaskId(), documentId);
 
-            if (StringUtils.hasText(documentId) && kafkaProperties.getTopics().getVectorizeRequest().equals(originalTopic)) {
+            if (StringUtils.hasText(documentId)
+                    && kafkaProperties.getTopics().matches(DocumentKafkaTopic.VECTORIZATION_REQUEST, originalTopic)) {
                 documentVectorizationService.markFailed(documentId);
             }
-            if (StringUtils.hasText(documentId) && kafkaProperties.getTopics().getParseRequest().equals(originalTopic)) {
+            if (StringUtils.hasText(documentId)
+                    && kafkaProperties.getTopics().matches(DocumentKafkaTopic.PARSE_REQUEST, originalTopic)) {
                 documentVectorizationService.markFailed(documentId);
             }
             if (task != null) {
@@ -392,16 +398,36 @@ public class DocumentMessageListener {
     }
 
     private DocumentAsyncTaskType resolveTaskType(String topic) {
-        if (kafkaProperties.getTopics().getParseRequest().equals(topic)) {
-            return DocumentAsyncTaskType.DOCUMENT_PARSE;
+        DocumentKafkaTopic kafkaTopic = tryResolveKafkaTopic(topic);
+        if (kafkaTopic == null) {
+            return null;
         }
-        if (kafkaProperties.getTopics().getVectorizeRequest().equals(topic)) {
-            return DocumentAsyncTaskType.DOCUMENT_VECTORIZATION;
+        return switch (kafkaTopic) {
+            case PARSE_REQUEST -> DocumentAsyncTaskType.DOCUMENT_PARSE;
+            case VECTORIZATION_REQUEST -> DocumentAsyncTaskType.DOCUMENT_VECTORIZATION;
+            case DELETE_REQUEST -> DocumentAsyncTaskType.DOCUMENT_DELETE;
+            case DEAD_LETTER -> null;
+        };
+    }
+
+    private DocumentKafkaTopic tryResolveKafkaTopic(String topicName) {
+        if (!StringUtils.hasText(topicName)) {
+            return null;
         }
-        if (kafkaProperties.getTopics().getDeleteRequest().equals(topic)) {
-            return DocumentAsyncTaskType.DOCUMENT_DELETE;
+        for (DocumentKafkaTopic topic : DocumentKafkaTopic.values()) {
+            if (kafkaProperties.getTopics().matches(topic, topicName)) {
+                return topic;
+            }
         }
         return null;
+    }
+
+    private DocumentKafkaTopic requireKafkaTopic(String topicName) {
+        DocumentKafkaTopic topic = tryResolveKafkaTopic(topicName);
+        if (topic != null) {
+            return topic;
+        }
+        throw new IllegalStateException("Unrecognized Kafka topic: " + topicName);
     }
 
     private String resolveTenantId(String documentId, String tenantId) {

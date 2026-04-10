@@ -7,19 +7,22 @@ import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.yoswell.agenticrag.retrieval.document.config.DocumentKafkaProperties;
+import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentParseRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentVectorizeRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
-import com.yoswell.agenticrag.retrieval.document.config.DocumentKafkaProperties;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
 import com.yoswell.agenticrag.retrieval.document.reliability.entity.DocumentAsyncTaskDO;
 import com.yoswell.agenticrag.retrieval.document.reliability.model.DocumentAsyncTaskType;
+import com.yoswell.agenticrag.retrieval.document.reliability.model.MessageOutboxEventType;
 import com.yoswell.agenticrag.retrieval.document.reliability.service.DocumentAsyncTaskService;
 import com.yoswell.agenticrag.retrieval.document.reliability.service.DocumentOutboxService;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentParsePipelineService;
@@ -27,9 +30,10 @@ import com.yoswell.agenticrag.retrieval.document.service.MineruDocumentParseServ
 import com.yoswell.agenticrag.retrieval.document.service.MinioStorageService;
 
 /**
- * 文档解析编排服务：把 parse 请求转换为可向量化的 Markdown 输入。
+ * 文档解析编排服务：把 parse 请求转换为可向量化的 Markdown 输入
  */
 @Service
+@RequiredArgsConstructor
 public class DocumentParsePipelineServiceImpl implements DocumentParsePipelineService {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentParsePipelineServiceImpl.class);
@@ -41,22 +45,8 @@ public class DocumentParsePipelineServiceImpl implements DocumentParsePipelineSe
     private final DocumentAsyncTaskService documentAsyncTaskService;
     private final DocumentKafkaProperties kafkaProperties;
 
-    public DocumentParsePipelineServiceImpl(MinioStorageService minioStorageService,
-                                            MineruDocumentParseService mineruDocumentParseService,
-                                            DocumentMetadataMapper documentMetadataMapper,
-                                            DocumentOutboxService documentOutboxService,
-                                            DocumentAsyncTaskService documentAsyncTaskService,
-                                            DocumentKafkaProperties kafkaProperties) {
-        this.minioStorageService = minioStorageService;
-        this.mineruDocumentParseService = mineruDocumentParseService;
-        this.documentMetadataMapper = documentMetadataMapper;
-        this.documentOutboxService = documentOutboxService;
-        this.documentAsyncTaskService = documentAsyncTaskService;
-        this.kafkaProperties = kafkaProperties;
-    }
-
     /**
-     * 解析文档并可靠投递向量化请求。
+     * 解析文档并可靠投递向量化请求
      *
      * @param request parse 阶段消息
      * @return 执行结果
@@ -94,7 +84,7 @@ public class DocumentParsePipelineServiceImpl implements DocumentParsePipelineSe
                 request.documentId(),
                 tenantId,
                 DocumentAsyncTaskType.DOCUMENT_VECTORIZATION,
-                kafkaProperties.getTopics().getVectorizeRequest(),
+                DocumentKafkaTopic.VECTORIZATION_REQUEST,
                 request.documentId());
 
         String vectorizeMessageId = buildVectorizeMessageId(request.documentId(), vectorizeTask.getTaskId());
@@ -102,8 +92,8 @@ public class DocumentParsePipelineServiceImpl implements DocumentParsePipelineSe
                 "DOCUMENT",
                 request.documentId(),
                 vectorizeTask.getTaskId(),
-                "DOCUMENT_VECTORIZATION_REQUEST",
-                kafkaProperties.getTopics().getVectorizeRequest(),
+                MessageOutboxEventType.DOCUMENT_VECTORIZATION_REQUEST,
+                DocumentKafkaTopic.VECTORIZATION_REQUEST,
                 request.documentId(),
                 new DocumentVectorizeRequestDTO(
                         request.documentId(),

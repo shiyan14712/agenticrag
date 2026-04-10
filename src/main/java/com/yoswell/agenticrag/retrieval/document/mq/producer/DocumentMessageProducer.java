@@ -1,25 +1,31 @@
 package com.yoswell.agenticrag.retrieval.document.mq.producer;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.kafka.support.SendResult;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.stereotype.Service;
-
 import java.util.concurrent.CompletableFuture;
 
-@Service
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
+import org.springframework.stereotype.Service;
+
+import com.yoswell.agenticrag.retrieval.document.config.DocumentKafkaProperties;
+import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
+
 /**
  * 负责向文档处理相关 Kafka 主题投递消息。
  */
+@Service
 public class DocumentMessageProducer {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentMessageProducer.class);
 
     private final KafkaTemplate<String, String> kafkaTemplate;
+    private final DocumentKafkaProperties kafkaProperties;
 
-    public DocumentMessageProducer(KafkaTemplate<String, String> kafkaTemplate) {
+    public DocumentMessageProducer(KafkaTemplate<String, String> kafkaTemplate,
+                                   DocumentKafkaProperties kafkaProperties) {
         this.kafkaTemplate = kafkaTemplate;
+        this.kafkaProperties = kafkaProperties;
     }
 
     /**
@@ -30,10 +36,11 @@ public class DocumentMessageProducer {
      * @param payload 序列化后的消息体
      * @return Kafka send future
      */
-    public CompletableFuture<SendResult<String, String>> send(String topic, String messageKey, String payload) {
-        log.info("[Kafka Producer] Sending message. topic={}, key={}, payloadSize={} chars",
-                topic, messageKey, payload == null ? 0 : payload.length());
-        return kafkaTemplate.send(topic, messageKey, payload)
+    public CompletableFuture<SendResult<String, String>> send(DocumentKafkaTopic topic, String messageKey, String payload) {
+        String topicName = kafkaProperties.getTopics().resolve(topic);
+        log.info("[Kafka Producer] Sending message. topic={}, topicName={}, key={}, payloadSize={} chars",
+            topic, topicName, messageKey, payload == null ? 0 : payload.length());
+        return kafkaTemplate.send(topicName, messageKey, payload)
                 .whenComplete((result, ex) -> {
                     if (ex == null && result != null && result.getRecordMetadata() != null) {
                         log.info("[Kafka Producer] Message sent. topic={}, key={}, partition={}, offset={}",

@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -11,6 +12,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.yoswell.agenticrag.retrieval.document.reliability.entity.MessageOutboxDO;
 import com.yoswell.agenticrag.retrieval.document.reliability.mapper.MessageOutboxMapper;
+import com.yoswell.agenticrag.retrieval.document.reliability.model.MessageOutboxEventType;
 import com.yoswell.agenticrag.retrieval.document.reliability.model.MessageOutboxStatus;
 
 import tools.jackson.core.JacksonException;
@@ -31,8 +33,8 @@ public class DocumentOutboxService {
     public MessageOutboxDO enqueue(String aggregateType,
                                    String aggregateId,
                                    String taskId,
-                                   String eventType,
-                                   String topic,
+                                   MessageOutboxEventType eventType,
+                                   DocumentKafkaTopic topic,
                                    String messageKey,
                                    Object payload) {
         MessageOutboxDO outbox = new MessageOutboxDO();
@@ -44,7 +46,7 @@ public class DocumentOutboxService {
         outbox.setTopic(topic);
         outbox.setMessageKey(messageKey);
         outbox.setPayload(serialize(payload));
-        outbox.setStatus(MessageOutboxStatus.PENDING.value());
+        outbox.setStatus(MessageOutboxStatus.PENDING);
         outbox.setRetryCount(0);
         outbox.setNextRetryAt(LocalDateTime.now());
         messageOutboxMapper.insert(outbox);
@@ -53,7 +55,7 @@ public class DocumentOutboxService {
 
     public List<MessageOutboxDO> findDueMessages(int limit) {
         return messageOutboxMapper.selectList(new LambdaQueryWrapper<MessageOutboxDO>()
-                .in(MessageOutboxDO::getStatus, MessageOutboxStatus.PENDING.value(), MessageOutboxStatus.FAILED.value())
+                .in(MessageOutboxDO::getStatus, MessageOutboxStatus.PENDING, MessageOutboxStatus.FAILED)
                 .le(MessageOutboxDO::getNextRetryAt, LocalDateTime.now())
                 .orderByAsc(MessageOutboxDO::getId)
                 .last("LIMIT " + limit));
@@ -66,8 +68,8 @@ public class DocumentOutboxService {
         }
         return messageOutboxMapper.update(null, new LambdaUpdateWrapper<MessageOutboxDO>()
                 .eq(MessageOutboxDO::getId, id)
-                .in(MessageOutboxDO::getStatus, MessageOutboxStatus.PENDING.value(), MessageOutboxStatus.FAILED.value())
-                .set(MessageOutboxDO::getStatus, MessageOutboxStatus.DISPATCHING.value())
+                .in(MessageOutboxDO::getStatus, MessageOutboxStatus.PENDING, MessageOutboxStatus.FAILED)
+                .set(MessageOutboxDO::getStatus, MessageOutboxStatus.DISPATCHING)
                 .set(MessageOutboxDO::getLastError, null)) > 0;
     }
 
@@ -75,7 +77,7 @@ public class DocumentOutboxService {
     public void markSent(String outboxId) {
         messageOutboxMapper.update(null, new LambdaUpdateWrapper<MessageOutboxDO>()
                 .eq(MessageOutboxDO::getOutboxId, outboxId)
-                .set(MessageOutboxDO::getStatus, MessageOutboxStatus.SENT.value())
+                .set(MessageOutboxDO::getStatus, MessageOutboxStatus.SENT)
                 .set(MessageOutboxDO::getSentAt, LocalDateTime.now())
                 .set(MessageOutboxDO::getLastError, null));
     }
@@ -84,7 +86,7 @@ public class DocumentOutboxService {
     public void markFailed(String outboxId, String errorSummary, LocalDateTime nextRetryAt) {
         messageOutboxMapper.update(null, new LambdaUpdateWrapper<MessageOutboxDO>()
                 .eq(MessageOutboxDO::getOutboxId, outboxId)
-                .set(MessageOutboxDO::getStatus, MessageOutboxStatus.FAILED.value())
+                .set(MessageOutboxDO::getStatus, MessageOutboxStatus.FAILED)
                 .setSql("retry_count = retry_count + 1")
                 .set(MessageOutboxDO::getNextRetryAt, nextRetryAt)
                 .set(MessageOutboxDO::getLastError, truncate(errorSummary)));

@@ -4,23 +4,25 @@ import java.io.InputStream;
 import java.util.List;
 import java.util.UUID;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.yoswell.agenticrag.retrieval.document.config.DocumentKafkaProperties;
+import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
 import com.yoswell.agenticrag.retrieval.document.dto.DocumentDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentDeleteRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentParseRequestDTO;
-import com.yoswell.agenticrag.retrieval.document.config.DocumentKafkaProperties;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentProcessingStatus;
 import com.yoswell.agenticrag.retrieval.document.reliability.entity.DocumentAsyncTaskDO;
 import com.yoswell.agenticrag.retrieval.document.reliability.model.DocumentAsyncTaskType;
+import com.yoswell.agenticrag.retrieval.document.reliability.model.MessageOutboxEventType;
 import com.yoswell.agenticrag.retrieval.document.reliability.service.DocumentAsyncTaskService;
 import com.yoswell.agenticrag.retrieval.document.reliability.service.DocumentOutboxService;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentService;
@@ -138,7 +140,7 @@ public class DocumentServiceImpl implements DocumentService {
                 documentId,
                 tenantId,
                 DocumentAsyncTaskType.DOCUMENT_PARSE,
-                kafkaProperties.getTopics().getParseRequest(),
+                DocumentKafkaTopic.PARSE_REQUEST,
                 documentId
         );
 
@@ -147,8 +149,8 @@ public class DocumentServiceImpl implements DocumentService {
                 "DOCUMENT",
                 documentId,
                 parseTask.getTaskId(),
-                "DOCUMENT_PARSE_REQUEST",
-                kafkaProperties.getTopics().getParseRequest(),
+                MessageOutboxEventType.DOCUMENT_PARSE_REQUEST,
+                DocumentKafkaTopic.PARSE_REQUEST,
                 documentId,
                 new DocumentParseRequestDTO(
                         documentId,
@@ -164,7 +166,11 @@ public class DocumentServiceImpl implements DocumentService {
                 ));
 
         log.info("[Upload Pipeline][OUTBOX] 已登记解析任务: topic={}, documentId={}, tenantId={}, taskId={}, messageId={}",
-                kafkaProperties.getTopics().getParseRequest(), documentId, tenantId, parseTask.getTaskId(), messageId);
+            kafkaProperties.getTopics().resolve(DocumentKafkaTopic.PARSE_REQUEST),
+            documentId,
+            tenantId,
+            parseTask.getTaskId(),
+            messageId);
 
         return metadata;
     }
@@ -307,7 +313,7 @@ public class DocumentServiceImpl implements DocumentService {
                 documentId,
                 tenantId,
                 DocumentAsyncTaskType.DOCUMENT_DELETE,
-                kafkaProperties.getTopics().getDeleteRequest(),
+                DocumentKafkaTopic.DELETE_REQUEST,
                 documentId
         );
         String messageId = "msg-" + UUID.randomUUID();
@@ -315,8 +321,8 @@ public class DocumentServiceImpl implements DocumentService {
                 "DOCUMENT",
                 documentId,
                 deleteTask.getTaskId(),
-                "DOCUMENT_DELETE_REQUEST",
-                kafkaProperties.getTopics().getDeleteRequest(),
+                MessageOutboxEventType.DOCUMENT_DELETE_REQUEST,
+                DocumentKafkaTopic.DELETE_REQUEST,
                 documentId,
                 new DocumentDeleteRequestDTO(
                         documentId,

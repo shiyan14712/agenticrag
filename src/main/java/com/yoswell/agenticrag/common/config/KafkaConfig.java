@@ -1,6 +1,7 @@
 package com.yoswell.agenticrag.common.config;
 
 import com.yoswell.agenticrag.retrieval.document.config.DocumentKafkaProperties;
+import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.springframework.context.annotation.Bean;
@@ -41,7 +42,9 @@ public class KafkaConfig {
         DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
                 kafkaTemplate,
                 (ConsumerRecord<?, ?> record, Exception ex) ->
-                        new TopicPartition(kafkaProperties.getTopics().getDeadLetter(), -1)
+                        new TopicPartition(
+                                kafkaProperties.getTopics().resolve(DocumentKafkaTopic.DEAD_LETTER),
+                                -1)
         );
 
         ExponentialBackOffWithMaxRetries backOff =

@@ -7,6 +7,9 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
+import com.yoswell.agenticrag.retrieval.document.reliability.model.MessageOutboxEventType;
+import com.yoswell.agenticrag.retrieval.document.reliability.model.MessageOutboxStatus;
 
 import lombok.Data;
 
@@ -44,11 +47,11 @@ public class MessageOutboxDO {
 
     /** Domain event type used by consumers. */
     @TableField("event_type")
-    private String eventType;
+    private MessageOutboxEventType eventType;
 
     /** Destination Kafka topic. */
     @TableField("topic")
-    private String topic;
+    private DocumentKafkaTopic topic;
 
     /** Kafka message key for ordering and partition affinity. */
     @TableField("message_key")
@@ -60,7 +63,7 @@ public class MessageOutboxDO {
 
     /** Dispatch status, for example PENDING, DISPATCHING, SENT, FAILED. */
     @TableField("status")
-    private String status;
+    private MessageOutboxStatus status;
 
     /** Number of failed dispatch retries. */
     @TableField("retry_count")

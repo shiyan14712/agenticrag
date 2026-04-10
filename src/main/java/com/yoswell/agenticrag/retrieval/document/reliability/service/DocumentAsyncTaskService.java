@@ -3,6 +3,7 @@ package com.yoswell.agenticrag.retrieval.document.reliability.service;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
@@ -32,7 +33,7 @@ public class DocumentAsyncTaskService {
     public DocumentAsyncTaskDO createTask(String documentId,
                                           String tenantId,
                                           DocumentAsyncTaskType taskType,
-                                          String topic,
+                                          DocumentKafkaTopic topic,
                                           String messageKey) {
         DocumentAsyncTaskDO task = new DocumentAsyncTaskDO();
         task.setTaskId("task-" + UUID.randomUUID());
@@ -56,7 +57,7 @@ public class DocumentAsyncTaskService {
     public DocumentAsyncTaskDO getOrCreateTask(String documentId,
                                                String tenantId,
                                                DocumentAsyncTaskType taskType,
-                                               String topic,
+                                               DocumentKafkaTopic topic,
                                                String messageKey) {
         DocumentAsyncTaskDO existing = findByDocumentAndType(documentId, taskType);
         if (existing != null) {
