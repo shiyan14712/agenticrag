@@ -50,7 +50,8 @@
     *   **核心 Tool 封装**：定义 `@Tool("search_enterprise_knowledge")`，要求大模型必须传入 `query` 参数。
     *   **混合检索 (Hybrid Search)**：在 ElasticSearch 中通过 Java API 并发执行两路查询：向量相似度匹配 + BM25 全文检索。
     *   **RRF 融合与重排序**：将双路召回的结果（Top 20）使用倒数秩融合（Reciprocal Rank Fusion）合并，随后统一发送至独立的 Reranker 模型进行 Cross-Attention 交叉打分，截取 Top `rerank-top-n`。
-    *   **Context 组装**：将这 Top 5 的 Chunk 组装成带有明确 `[Doc ID]` 标记的文本块，作为 Tool 的返回值（Observation）喂给 Agent。
+    *   **[TODO] Rerank Score Threshold**: 设置一个经验阈值，强行去除低于这个值的 rerank 后的文档 Top-k，再次精简。
+    *   **Context 组装**：将这 Top-k 的 Chunk 组装成带有明确 `[Doc ID]` 标记的文本块，作为 Tool 的返回值（Observation）喂给 Agent。
 *   **工程落地补充（已实现约束）**：
     *   ElasticSearch 连接配置必须从 `spring.elasticsearch.uris / username / password / api-key` 读取，不允许在 Java Config 中写死 `localhost`。
     *   除了给 LLM 的 Observation 文本外，RAG 检索还必须同步生成结构化检索结果（`RetrievedChunk` / `CitationDto`），供 `ChatOrchestrator` 在 SSE 结束时推送 `event: citations`。
