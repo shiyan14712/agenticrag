@@ -1,10 +1,12 @@
 package com.yoswell.agenticrag.core.agent.tool;
 
 import java.time.Duration;
+import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +22,7 @@ import com.yoswell.agenticrag.core.memory.entity.UserGlobalMemory;
 import com.yoswell.agenticrag.core.memory.mapper.UserGlobalMemoryMapper;
 import com.yoswell.agenticrag.web.security.model.TenantUser;
 
+import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 
 @Component
@@ -27,6 +30,8 @@ public class PreferenceTool {
 
     private static final Logger log = LoggerFactory.getLogger(PreferenceTool.class);
     private static final Duration PERSIST_TIMEOUT = Duration.ofSeconds(5);
+    private static final Pattern PREFERENCE_KEY_PATTERN = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");
+    private static final int MAX_PREFERENCE_VALUE_LENGTH = 200;
 
     private final UserGlobalMemoryMapper userGlobalMemoryMapper;
     private final RagRetrievalContextHolder ragRetrievalContextHolder;
@@ -38,17 +43,15 @@ public class PreferenceTool {
     }
 
     @Tool("save_user_preference")
-    public String saveUserPreference(String userId, String preferenceKey, String preferenceValue) {
+    public String saveUserPreference(
+            @P("Preference key in snake_case. Preferred keys: ending_phrase, response_language, response_style, response_length, code_focus. Expressions with clear semantics like these.")
+            String preferenceKey,
+            @P("Preference value for the selected key. Keep concise and concrete, max 200 chars. Example: meow")
+            String preferenceValue) {
         String currentUserId = resolveCurrentUserId();
         if (currentUserId == null || currentUserId.isBlank()) {
             log.warn("[PreferenceTool] Preference persistence rejected: missing authenticated principal");
             return ToolExecutionConstants.markFailed(ErrorCode.UNAUTHORIZED_ERROR.getMessage());
-        }
-
-        if (userId != null && !userId.isBlank() && !currentUserId.equals(userId)) {
-            log.warn("[PreferenceTool] Preference persistence rejected due to user mismatch: requestUserId={}, currentUserId={}",
-                    userId, currentUserId);
-            return ToolExecutionConstants.markFailed("Preference save rejected due to unauthorized user mismatch.");
         }
 
         if (preferenceKey == null || preferenceKey.isBlank() || preferenceValue == null || preferenceValue.isBlank()) {
@@ -57,8 +60,20 @@ public class PreferenceTool {
             return ToolExecutionConstants.markFailed("Preference key/value must not be blank.");
         }
 
-        String normalizedKey = preferenceKey.trim();
+        String normalizedKey = normalizePreferenceKey(preferenceKey);
+        if (normalizedKey == null) {
+            log.warn("[PreferenceTool] Preference persistence rejected due to invalid key format: key={}", preferenceKey);
+            return ToolExecutionConstants.markFailed(
+                    "Invalid preference key format. Use snake_case, e.g. ending_phrase or response_style.");
+        }
+
         String normalizedValue = preferenceValue.trim();
+        if (normalizedValue.length() > MAX_PREFERENCE_VALUE_LENGTH) {
+            log.warn("[PreferenceTool] Preference persistence rejected due to oversized value: key={}, length={}",
+                    normalizedKey, normalizedValue.length());
+            return ToolExecutionConstants.markFailed("Preference value is too long. Maximum length is 200 characters.");
+        }
+
         log.info("[PreferenceTool] Persisting user preference asynchronously: [{}={} for user {}]",
                 normalizedKey, normalizedValue, currentUserId);
 
@@ -151,5 +166,34 @@ public class PreferenceTool {
     private boolean sameIdentity(TenantUser left, TenantUser right) {
         return left.getUserId().equals(right.getUserId())
                 && left.getTenantId().equals(right.getTenantId());
+    }
+
+    private String normalizePreferenceKey(String rawKey) {
+        if (rawKey == null) {
+            return null;
+        }
+        String candidate = rawKey.trim()
+                .toLowerCase(Locale.ROOT)
+                .replace('-', '_')
+                .replace(' ', '_')
+                .replaceAll("_+", "_");
+
+        if (candidate.isBlank()) {
+            return null;
+        }
+
+        candidate = switch (candidate) {
+            case "endingphrase" -> "ending_phrase";
+            case "language" -> "response_language";
+            case "style", "tone" -> "response_style";
+            case "length", "verbosity" -> "response_length";
+            case "codefocus", "focus_code", "core_code_only" -> "code_focus";
+            default -> candidate;
+        };
+
+        if (!PREFERENCE_KEY_PATTERN.matcher(candidate).matches()) {
+            return null;
+        }
+        return candidate;
     }
 }
