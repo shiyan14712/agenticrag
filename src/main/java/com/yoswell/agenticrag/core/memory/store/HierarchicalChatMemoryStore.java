@@ -8,19 +8,21 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.yoswell.agenticrag.platform.session.entity.ChatMessageDO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.yoswell.agenticrag.common.exception.BusinessException;
+import com.yoswell.agenticrag.common.exception.BusinessExceptionMapper;
+import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.core.memory.constants.MemoryStoreConstants;
 import com.yoswell.agenticrag.core.memory.entity.UserGlobalMemory;
 import com.yoswell.agenticrag.core.memory.mapper.UserGlobalMemoryMapper;
+import com.yoswell.agenticrag.platform.session.entity.ChatMessageDO;
 import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
 import com.yoswell.agenticrag.platform.session.mapper.ChatMessageMapper;
 import com.yoswell.agenticrag.platform.session.mapper.ChatSessionMapper;
@@ -471,8 +473,9 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
             // 5. 持久化层级记录到 DB
             persistCompressionState(sessionId, newL2Summary, curL3);
         } catch (Exception exception) {
-            log.warn("[Hierarchical Chat Memory Store] Failed to refresh hierarchical sliding summaries for session {}",
-                    sessionId, exception);
+            BusinessException businessException = BusinessExceptionMapper.map(exception, ErrorCode.SYSTEM_ERROR);
+            log.warn("[Hierarchical Chat Memory Store] Failed to refresh hierarchical sliding summaries for session {}: code={}, message={}",
+                    sessionId, businessException.getCode(), businessException.getMessage(), exception);
         }
     }
 

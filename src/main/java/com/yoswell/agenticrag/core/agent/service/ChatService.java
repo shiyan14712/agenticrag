@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.yoswell.agenticrag.common.exception.BusinessException;
+import com.yoswell.agenticrag.common.exception.BusinessExceptionMapper;
 import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.core.agent.ai.SimpleChatAgent;
 import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
@@ -26,7 +27,16 @@ public class ChatService {
 
     public String generateTitle(String message) {
         log.info("[ChatService Title Generation] Start generating title");
-        String title = simpleChatAgent.generateTitle(message);
+        String title;
+        try {
+            title = simpleChatAgent.generateTitle(message);
+        } catch (Exception exception) {
+            BusinessException businessException = BusinessExceptionMapper.map(exception,
+                    ErrorCode.TITLE_GENERATION_FAILED);
+            log.error("[ChatService Title Generation] Title generation failed: code={}, message={}",
+                    businessException.getCode(), businessException.getMessage(), exception);
+            throw businessException;
+        }
 
         if (title != null) {
             title = title.replaceAll("[\"\'\n\r]", "").trim();
@@ -57,7 +67,7 @@ public class ChatService {
         String title = generateTitle(firstUserQueryContent);
         if (title == null || title.isBlank()) {
             log.warn("[ChatService Title Generation] Generated title is blank for session {}", sessionId);
-            throw new IllegalStateException("Generated title is blank");
+            throw new BusinessException(ErrorCode.TITLE_GENERATION_FAILED.getCode(), "生成标题为空，请稍后重试");
         }
 
         ChatSessionDO sessionUpdate = new ChatSessionDO();
@@ -71,7 +81,7 @@ public class ChatService {
         if (updatedRows <= 0) {
             log.warn("[ChatService Title Generation] Title was not updated because session was missing or title already existed: sessionId={}",
                     sessionId);
-            throw new IllegalStateException("Title update skipped");
+            throw new BusinessException(ErrorCode.TITLE_GENERATION_FAILED.getCode(), "标题写入失败，请稍后重试");
         }
 
         log.info("[ChatService Title Generation] Successfully generated and saved title for session {}: 标题-{}",

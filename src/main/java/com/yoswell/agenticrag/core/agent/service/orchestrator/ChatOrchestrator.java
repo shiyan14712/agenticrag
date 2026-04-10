@@ -1,5 +1,6 @@
 package com.yoswell.agenticrag.core.agent.service.orchestrator;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
@@ -12,7 +13,11 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.yoswell.agenticrag.common.constants.ChatCacheConstants;
+import com.yoswell.agenticrag.common.exception.BusinessException;
+import com.yoswell.agenticrag.common.exception.BusinessExceptionMapper;
+import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.core.agent.ai.EnterpriseAgent;
+import com.yoswell.agenticrag.core.agent.constants.ToolExecutionConstants;
 import com.yoswell.agenticrag.core.agent.context.RagRetrievalContextHolder;
 import com.yoswell.agenticrag.core.agent.dto.CitationDTO;
 import com.yoswell.agenticrag.core.agent.dto.RagSearchResultDTO;
@@ -26,6 +31,7 @@ import com.yoswell.agenticrag.web.security.model.TenantUser;
 
 import dev.langchain4j.service.TokenStream;
 import lombok.RequiredArgsConstructor;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -116,10 +122,18 @@ public class ChatOrchestrator {
                         bindRagContextToCurrentThread(sessionId);
                         long elapsed = System.currentTimeMillis() - toolStartTimestamp.get();
                         String toolName = toolExecution.request().name();
-                        String resultPreview = summarizeToolResult(toolExecution.result());
-                        log.info("[ReAct] Tool 执行完成: tool={}, elapsed={}ms, resultPreview={}",
+                        ToolExecutionOutcome outcome = decodeToolExecutionOutcome(toolExecution.result());
+                        String resultPreview = summarizeToolResult(outcome.message());
+                        if (outcome.failed()) {
+                            log.warn("[ReAct] Tool 执行失败: tool={}, elapsed={}ms, resultPreview={}",
                                 toolName, elapsed, resultPreview);
+                            ToolEventDTO resultEvent = ToolEventDTO.failed(toolName, resultPreview);
+                            emitSseEventJson(emitter, SseEventType.TOOL_RESULT, resultEvent);
+                            return;
+                        }
 
+                        log.info("[ReAct] Tool 执行完成: tool={}, elapsed={}ms, resultPreview={}",
+                            toolName, elapsed, resultPreview);
                         ToolEventDTO resultEvent = ToolEventDTO.completed(toolName, resultPreview, elapsed);
                         emitSseEventJson(emitter, SseEventType.TOOL_RESULT, resultEvent);
                     })
@@ -136,12 +150,19 @@ public class ChatOrchestrator {
                             List<CitationDTO> citations = ragRetrievalContextHolder.consume(sessionId)
                                     .map(RagSearchResultDTO::citations)
                                     .orElse(List.of());
-                            emitCitationsWidget(emitter, citations);
-                            emitSseEvent(emitter, SseEventType.DONE, "{}");
 
                             chatMessageService.saveAssistantMessage(sessionId, fullResponse.toString(), citations);
+                            emitCitationsWidget(emitter, citations);
+                            emitSseEvent(emitter, SseEventType.DONE, "{}");
                             emitter.complete();
                             log.info("[ReAct] Agent 推理循环结束: session={}", sessionId);
+                        } catch (Exception exception) {
+                            BusinessException businessException = BusinessExceptionMapper.map(exception,
+                                ErrorCode.AGENT_STREAM_INTERRUPTED);
+                            log.error("[ReAct] 会话收尾失败: session={}, code={}, message={}",
+                                sessionId, businessException.getCode(), businessException.getMessage(), exception);
+                            emitBusinessErrorAndComplete(emitter, businessException);
+                            ragRetrievalContextHolder.clearSessionResult(sessionId);
                         } finally {
                             closeQuietly(finalRetrievalScope);
                             ragRetrievalContextHolder.clearSessionBindings(sessionId);
@@ -151,10 +172,11 @@ public class ChatOrchestrator {
                     .onError(error -> {
                         bindRagContextToCurrentThread(sessionId);
                         try {
-                            log.error("[ReAct] TokenStream 执行异常", error);
-                            emitSseEventJson(emitter, SseEventType.ERROR,
-                                    new ErrorPayload("AGENT_ERROR", error.getMessage()));
-                            emitter.complete();
+                            BusinessException businessException = BusinessExceptionMapper.map(error,
+                                ErrorCode.AGENT_STREAM_INTERRUPTED);
+                            log.error("[ReAct] TokenStream 执行异常: session={}, code={}, message={}",
+                                sessionId, businessException.getCode(), businessException.getMessage(), error);
+                            emitBusinessErrorAndComplete(emitter, businessException);
                         } finally {
                             closeQuietly(finalRetrievalScope);
                             ragRetrievalContextHolder.clearSessionBindings(sessionId);
@@ -163,10 +185,10 @@ public class ChatOrchestrator {
                     })
                     .start();
         } catch (Exception e) {
-            log.error("[ReAct] 虚拟线程执行异常", e);
-            emitSseEventJson(emitter, SseEventType.ERROR,
-                    new ErrorPayload("AGENT_ERROR", e.getMessage()));
-            emitter.complete();
+                    BusinessException businessException = BusinessExceptionMapper.map(e, ErrorCode.AGENT_STREAM_INTERRUPTED);
+                    log.error("[ReAct] 会话启动失败: session={}, code={}, message={}",
+                        sessionId, businessException.getCode(), businessException.getMessage(), e);
+                    emitBusinessErrorAndComplete(emitter, businessException);
             closeQuietly(retrievalScope);
             ragRetrievalContextHolder.clearSessionBindings(sessionId);
             ragRetrievalContextHolder.clearSessionResult(sessionId);
@@ -184,7 +206,7 @@ public class ChatOrchestrator {
     private void emitSseEvent(SseEmitter emitter, SseEventType eventType, String data) {
         try {
             emitter.send(SseEmitter.event().name(eventType.getValue()).data(data));
-        } catch (Exception e) {
+        } catch (IOException | IllegalStateException e) {
             log.error("[ReAct] SSE 推送失败: event={}", eventType.getValue(), e);
         }
     }
@@ -199,9 +221,19 @@ public class ChatOrchestrator {
         try {
             String json = objectMapper.writeValueAsString(payload);
             emitter.send(SseEmitter.event().name(eventType.getValue()).data(json));
-        } catch (Exception e) {
+        } catch (JacksonException | IOException | IllegalStateException e) {
             log.error("[ReAct] SSE JSON 推送失败: event={}", eventType.getValue(), e);
         }
+    }
+
+    /**
+     * 发送业务错误并结束 SSE
+     */
+    private void emitBusinessErrorAndComplete(SseEmitter emitter, BusinessException businessException) {
+        emitSseEventJson(emitter, SseEventType.ERROR,
+                new ErrorPayload(businessException.getCode(), businessException.getMessage()));
+        emitSseEvent(emitter, SseEventType.DONE, "{}");
+        emitter.complete();
     }
 
     /**
@@ -250,7 +282,9 @@ public class ChatOrchestrator {
             try {
                 chatService.generateTitleAndSave(sessionId, message);
             } catch (Exception e) {
-                log.error("[ReAct] 标题生成失败，移除 Redis 锁以允许重试: session={}", sessionId, e);
+                BusinessException businessException = BusinessExceptionMapper.map(e, ErrorCode.TITLE_GENERATION_FAILED);
+                log.error("[ReAct] 标题生成失败，移除 Redis 锁以允许重试: session={}, code={}, message={}",
+                        sessionId, businessException.getCode(), businessException.getMessage(), e);
                 stringRedisTemplate.delete(titleGenKey);
             }
         });
@@ -285,6 +319,29 @@ public class ChatOrchestrator {
     }
 
     /**
+     * 解码工具执行结果。
+     *
+     * <p>
+     * 约定：Tool 返回 "__TOOL_SUCCESS__ ..." / "__TOOL_FAILED__ ..." 前缀时，
+     * 编排器据此推送 completed / failed 卡片；其余结果默认视为 completed。</p>
+     */
+    private ToolExecutionOutcome decodeToolExecutionOutcome(String rawResult) {
+        if (rawResult == null || rawResult.isBlank()) {
+            return new ToolExecutionOutcome(false, "<无结果>");
+        }
+        String normalizedMessage = ToolExecutionConstants.stripMarker(rawResult);
+        if (ToolExecutionConstants.isFailedResult(rawResult)) {
+            String message = normalizedMessage;
+            return new ToolExecutionOutcome(true, message.isBlank() ? "Tool execution failed" : message);
+        }
+        if (ToolExecutionConstants.isSuccessResult(rawResult)) {
+            String message = normalizedMessage;
+            return new ToolExecutionOutcome(false, message.isBlank() ? "Tool executed successfully" : message);
+        }
+        return new ToolExecutionOutcome(false, normalizedMessage);
+    }
+
+    /**
      * 把当前回调线程重新注册到会话级检索上下文中
      *
      * <p>
@@ -315,6 +372,13 @@ public class ChatOrchestrator {
      * SSE error 事件载荷
      */
     private record ErrorPayload(String code, String message) {
+
+    }
+
+    /**
+     * 工具执行结果解码后的统一视图。
+     */
+    private record ToolExecutionOutcome(boolean failed, String message) {
 
     }
 }
