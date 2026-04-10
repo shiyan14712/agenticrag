@@ -68,8 +68,8 @@ public class RagTool {
                 throw new BusinessException(ErrorCode.UNAUTHORIZED_ERROR);
             }
             
-            // 按照设计要求：本系统中用户ID即为租户级别的隔离单元，确保数据严格隔离（Zero-Trust Tenant Isolation）
-            String tenantId = user.getUserId();
+            // 优先使用鉴权租户标识执行隔离过滤；若历史令牌缺失 tenantId，则兼容回退到 userId。
+            String tenantId = resolveTenantIsolationId(user);
             String role = user.getRole();
 
             log.info("[RAG TOOL] 知识检索鉴权通过, tenantId={}, query={}", tenantId, query);
@@ -83,6 +83,10 @@ public class RagTool {
             List<RetrievedChunkDTO> bm25Hits = knowledgeChunkIndexService.searchByKeyword(query, tenantId, allowedRoles, bm25TopK);
             List<RetrievedChunkDTO> knnHits = knowledgeChunkIndexService.searchByVector(queryVector.vectorAsList(), tenantId, allowedRoles, knnTopK);
             long retrieveCostTime = System.currentTimeMillis() - retrieveStartTime;
+
+            if (bm25Hits.isEmpty() && knnHits.isEmpty()) {
+                log.warn("[RAG TOOL] 双路检索均未命中候选。tenantId={}, role={}, queryPreview={}", tenantId, role, summarizeQuery(query));
+            }
             
             // 第二阶段：倒排融合（Reciprocal Rank Fusion），合并多路召回的结果列表
             List<RetrievedChunkDTO> fusedChunks = calculateRrfFusion(bm25Hits, knnHits);
@@ -154,6 +158,14 @@ public class RagTool {
     private boolean sameIdentity(TenantUser left, TenantUser right) {
         return left.getUserId().equals(right.getUserId())
                 && left.getTenantId().equals(right.getTenantId());
+    }
+
+    private String resolveTenantIsolationId(TenantUser user) {
+        if (user.getTenantId() != null && !user.getTenantId().isBlank()) {
+            return user.getTenantId();
+        }
+        log.warn("[RAG TOOL] 当前鉴权主体缺少 tenantId，回退使用 userId 执行隔离过滤。userId={}", user.getUserId());
+        return user.getUserId();
     }
 
     List<RetrievedChunkDTO> calculateRrfFusion(List<RetrievedChunkDTO> bm25Hits, List<RetrievedChunkDTO> knnHits) {

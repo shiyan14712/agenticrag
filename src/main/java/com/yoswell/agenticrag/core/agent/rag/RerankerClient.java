@@ -1,8 +1,10 @@
 package com.yoswell.agenticrag.core.agent.rag;
 
 import java.io.IOException;
+import java.net.ConnectException;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
@@ -18,6 +20,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+import com.yoswell.agenticrag.common.exception.BusinessException;
+import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.core.agent.dto.RetrievedChunkDTO;
 
 import tools.jackson.databind.JsonNode;
@@ -73,6 +77,12 @@ public class RerankerClient {
             List<RetrievedChunkDTO> reranked = mergeRerankerResponse(chunks, response.body());
             log.info("[Reranker Client] reranker 调用完成: status={}, returnedCount={}", response.statusCode(), reranked.size());
             return reranked;
+        } catch (HttpConnectTimeoutException exception) {
+            log.warn("[Reranker Client] Reranker connection timeout, falling back to fused ordering", exception);
+            throw new BusinessException(ErrorCode.RERANKER_TIMEOUT);
+        } catch (ConnectException exception) {
+            log.warn("[Reranker Client] Reranker service unavailable, falling back to fused ordering", exception);
+            throw new BusinessException(ErrorCode.RERANKER_SERVICE_UNAVAILABLE);
         } catch (IOException exception) {
             log.warn("[Reranker Client] Reranker request failed, falling back to fused ordering", exception);
             return List.copyOf(chunks);

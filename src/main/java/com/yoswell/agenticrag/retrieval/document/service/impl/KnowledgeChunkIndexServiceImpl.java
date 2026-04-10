@@ -2,7 +2,9 @@ package com.yoswell.agenticrag.retrieval.document.service.impl;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.http.util.EntityUtils;
@@ -405,16 +407,67 @@ public class KnowledgeChunkIndexServiceImpl implements KnowledgeChunkIndexServic
      */
     private ArrayNode buildSecurityFilters(String tenantId, List<String> allowedRoles) {
         ArrayNode filters = objectMapper.createArrayNode();
-        filters.addObject()
+        filters.add(buildTenantFilter(tenantId));
+        filters.add(buildAllowedRolesFilter(allowedRoles));
+        return filters;
+    }
+
+    private ObjectNode buildTenantFilter(String tenantId) {
+        ObjectNode tenantFilter = objectMapper.createObjectNode();
+        ObjectNode boolNode = tenantFilter.putObject(KnowledgeChunkIndexConstants.JSON_BOOL);
+        ArrayNode should = boolNode.putArray(KnowledgeChunkIndexConstants.JSON_SHOULD);
+        should.addObject()
                 .putObject(KnowledgeChunkIndexConstants.JSON_TERM)
                 .put(KnowledgeChunkIndexConstants.FIELD_TENANT_ID, tenantId);
+        should.addObject()
+                .putObject(KnowledgeChunkIndexConstants.JSON_TERM)
+                .put(KnowledgeChunkIndexConstants.FIELD_TENANT_ID_DOT_KEYWORD, tenantId);
+        boolNode.put(KnowledgeChunkIndexConstants.JSON_MINIMUM_SHOULD_MATCH, 1);
+        return tenantFilter;
+    }
 
-        ArrayNode rolesArray = objectMapper.createArrayNode();
-        allowedRoles.forEach(rolesArray::add);
-        filters.addObject()
+    private ObjectNode buildAllowedRolesFilter(List<String> allowedRoles) {
+        List<String> normalizedRoles = normalizeRoleFilters(allowedRoles);
+        ObjectNode roleFilter = objectMapper.createObjectNode();
+        ObjectNode boolNode = roleFilter.putObject(KnowledgeChunkIndexConstants.JSON_BOOL);
+        ArrayNode should = boolNode.putArray(KnowledgeChunkIndexConstants.JSON_SHOULD);
+        should.addObject()
                 .putObject(KnowledgeChunkIndexConstants.JSON_TERMS)
-                .set(KnowledgeChunkIndexConstants.FIELD_ALLOWED_ROLES, rolesArray);
-        return filters;
+                .set(KnowledgeChunkIndexConstants.FIELD_ALLOWED_ROLES, toArrayNode(normalizedRoles));
+        should.addObject()
+                .putObject(KnowledgeChunkIndexConstants.JSON_TERMS)
+                .set(KnowledgeChunkIndexConstants.FIELD_ALLOWED_ROLES_DOT_KEYWORD, toArrayNode(normalizedRoles));
+        boolNode.put(KnowledgeChunkIndexConstants.JSON_MINIMUM_SHOULD_MATCH, 1);
+        return roleFilter;
+    }
+
+    private ArrayNode toArrayNode(List<String> values) {
+        ArrayNode arrayNode = objectMapper.createArrayNode();
+        values.forEach(arrayNode::add);
+        return arrayNode;
+    }
+
+    private List<String> normalizeRoleFilters(List<String> allowedRoles) {
+        LinkedHashSet<String> roleFilters = new LinkedHashSet<>();
+        if (allowedRoles != null) {
+            for (String role : allowedRoles) {
+                if (role == null) {
+                    continue;
+                }
+                String trimmed = role.trim();
+                if (trimmed.isEmpty()) {
+                    continue;
+                }
+                roleFilters.add(trimmed);
+                roleFilters.add(trimmed.toLowerCase(Locale.ROOT));
+            }
+        }
+
+        if (roleFilters.isEmpty()) {
+            // Fail closed: no role means no permission for retrieval.
+            roleFilters.add("__NO_ROLE__");
+        }
+        return List.copyOf(roleFilters);
     }
 
     private String indexPath() {

@@ -32,6 +32,8 @@ public final class KnowledgeChunkIndexConstants {
     public static final String JSON_MATCH = "match";
     public static final String JSON_TERM = "term";
     public static final String JSON_TERMS = "terms";
+    public static final String JSON_SHOULD = "should";
+    public static final String JSON_MINIMUM_SHOULD_MATCH = "minimum_should_match";
     public static final String JSON_SIZE = "size";
     public static final String JSON_SOURCE_FIELDS = "_source";
 
@@ -61,6 +63,9 @@ public final class KnowledgeChunkIndexConstants {
     // documentId/tenantId 字段本身就是 keyword 类型，无需 .keyword 子字段
     public static final String FIELD_DOCUMENT_ID_KEYWORD = FIELD_DOCUMENT_ID;
     public static final String FIELD_TENANT_ID_KEYWORD = FIELD_TENANT_ID;
+    // 兼容历史索引中 text + keyword 子字段结构
+    public static final String FIELD_TENANT_ID_DOT_KEYWORD = FIELD_TENANT_ID + ".keyword";
+    public static final String FIELD_ALLOWED_ROLES_DOT_KEYWORD = FIELD_ALLOWED_ROLES + ".keyword";
 
     public static final String TYPE_KEYWORD = "keyword";
     public static final String TYPE_INTEGER = "integer";

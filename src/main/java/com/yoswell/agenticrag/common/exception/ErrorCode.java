@@ -32,6 +32,8 @@ public enum ErrorCode {
     LLM_TIMEOUT("M50002", "大模型响应超时，请稍后重试"),
     AGENT_STREAM_INTERRUPTED("M50003", "智能体执行失败，请稍后重试"),
     TITLE_GENERATION_FAILED("M50004", "会话标题生成失败，请稍后重试"),
+    RERANKER_SERVICE_UNAVAILABLE("R60001", "重排序服务暂时不可用，请稍后重试"),
+    RERANKER_TIMEOUT("R60002", "重排序服务响应超时，请稍后重试"),
     SESSION_NOT_FOUND("S30001", "会话不存在或无权访问"),
     INVALID_SESSION_ID("S30002", "无效的会话ID"),
     MISSING_SESSION_ID("S30003", "缺少会话ID请求头参数"),
