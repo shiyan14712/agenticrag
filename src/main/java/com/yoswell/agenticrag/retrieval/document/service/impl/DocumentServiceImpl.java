@@ -12,13 +12,13 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.yoswell.agenticrag.retrieval.document.config.DocumentKafkaProperties;
-import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
+import com.yoswell.agenticrag.common.config.DocumentKafkaProperties;
 import com.yoswell.agenticrag.retrieval.document.dto.DocumentDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentDeleteRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentParseRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
+import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentProcessingStatus;
 import com.yoswell.agenticrag.retrieval.document.reliability.entity.DocumentAsyncTaskDO;
 import com.yoswell.agenticrag.retrieval.document.reliability.model.DocumentAsyncTaskType;
@@ -28,13 +28,16 @@ import com.yoswell.agenticrag.retrieval.document.reliability.service.DocumentOut
 import com.yoswell.agenticrag.retrieval.document.service.DocumentService;
 import com.yoswell.agenticrag.retrieval.document.service.MinioStorageService;
 
+import lombok.RequiredArgsConstructor;
+
 /**
- * 文档上传链路的业务编排服务。
+ * 文档上传链路的业务编排服务
  *
  * <p>它负责把一次上传请求拆成几个明确步骤：写入 MinIO、写入元数据表、
- * 再向异步处理队列发出后续任务。</p>
+ * 再向异步处理队列发出后续任务</p>
  */
 @Service
+@RequiredArgsConstructor
 public class DocumentServiceImpl implements DocumentService {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentServiceImpl.class);
@@ -48,22 +51,8 @@ public class DocumentServiceImpl implements DocumentService {
     private final DocumentKafkaProperties kafkaProperties;
     private final org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
 
-    public DocumentServiceImpl(MinioStorageService minioStorageService,
-                               DocumentMetadataMapper documentMetadataMapper,
-                               DocumentOutboxService documentOutboxService,
-                               DocumentAsyncTaskService documentAsyncTaskService,
-                               DocumentKafkaProperties kafkaProperties,
-                               org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate) {
-        this.minioStorageService = minioStorageService;
-        this.documentMetadataMapper = documentMetadataMapper;
-        this.documentOutboxService = documentOutboxService;
-        this.documentAsyncTaskService = documentAsyncTaskService;
-        this.kafkaProperties = kafkaProperties;
-        this.redisTemplate = redisTemplate;
-    }
-
     /**
-     * 同步接收上传文件并执行上传编排。
+     * 同步接收上传文件并执行上传编排
      *
      * @param file 上传文件
      * @param tenantId 当前租户 ID
@@ -95,7 +84,7 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     /**
-     * 执行一次完整的“上传并投递后续任务”事务。
+     * 执行一次完整的“上传并投递后续任务”事务
      *
      * @param fileName 原始文件名
      * @param inputStream 文件输入流
@@ -108,6 +97,7 @@ public class DocumentServiceImpl implements DocumentService {
     @Override
     public DocumentDO uploadAndDispatch(String fileName, InputStream inputStream,
                                         long fileSize, String contentType, String tenantId) {
+        // ① 保存文档元数据到 document 表
         String documentId = "doc-" + UUID.randomUUID();
         String extension = extractExtension(fileName);
         String objectName = documentId + "/" + fileName;
@@ -136,6 +126,7 @@ public class DocumentServiceImpl implements DocumentService {
         log.info("[Upload Pipeline][METADATA] 元数据落库完成: documentId={}, tenantId={}, status={}, extension={}",
             documentId, tenantId, metadata.getStatus(), extension);
 
+        // ② 创建异步任务记录
         DocumentAsyncTaskDO parseTask = documentAsyncTaskService.createTask(
                 documentId,
                 tenantId,
@@ -144,6 +135,7 @@ public class DocumentServiceImpl implements DocumentService {
                 documentId
         );
 
+        // ③ 写入 Outbox 表（与①在同一事务中）
         String messageId = "msg-" + UUID.randomUUID();
         documentOutboxService.enqueue(
                 "DOCUMENT",
@@ -176,7 +168,7 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     /**
-     * 查询指定文档在当前租户下的完整元数据。
+     * 查询指定文档在当前租户下的完整元数据
      *
      * @param documentId 文档业务 ID
      * @param tenantId 当前租户 ID
@@ -198,7 +190,7 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     /**
-     * 返回给前端展示用的轻量状态摘要。
+     * 返回给前端展示用的轻量状态摘要
      *
      * @param documentId 文档业务 ID
      * @param tenantId 当前租户 ID
@@ -240,7 +232,7 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     /**
-     * 获取指定租户的所有文档列表。
+     * 获取指定租户的所有文档列表
      *
      * @param tenantId 当前租户 ID
      * @return 文档 DTO 列表
@@ -270,7 +262,7 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     /**
-     * 删除指定文档（包含元数据和 MinIO 文件）。带有粗粒度租户隔离校验。
+     * 删除指定文档（包含元数据和 MinIO 文件）带有粗粒度租户隔离校验
      *
      * @param documentId 文档业务 ID
      * @param tenantId   当前租户 ID
@@ -298,7 +290,7 @@ public class DocumentServiceImpl implements DocumentService {
         documentMetadataMapper.deleteById(metadata.getId());
         log.info("[Document Service] SUCCESS: Document metadata deleted. documentId: {}", documentId);
 
-        // 3. 异步删除 MinIO 上的文件。如果 URL 是合法的 objectName 形式，则可以通过存储服务清理。
+        // 3. 异步删除 MinIO 上的文件如果 URL 是合法的 objectName 形式，则可以通过存储服务清理
         if (metadata.getMinioUrl() != null && !metadata.getMinioUrl().isEmpty()) {
             try {
                 minioStorageService.deleteFile(metadata.getMinioUrl());
@@ -336,7 +328,7 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     /**
-     * 从文件名提取扩展名，未识别时回退为 {@code unknown}。
+     * 从文件名提取扩展名，未识别时回退为 {@code unknown}
      *
      * @param fileName 原始文件名
      * @return 归一化后的扩展名

@@ -13,7 +13,7 @@ package com.yoswell.agenticrag.retrieval.document.reliability.model;
  *                    \-> FAILED (触发指数退避重试，更新 next_retry_at)
  * </pre>
  *
- * @see com.yoswell.agenticrag.retrieval.document.reliability.entity.MessageOutbox
+ * @see com.yoswell.agenticrag.retrieval.document.reliability.entity.MessageOutboxDO
  */
 public enum MessageOutboxStatus {
     /**

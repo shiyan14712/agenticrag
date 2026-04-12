@@ -1,4 +1,4 @@
-package com.yoswell.agenticrag.retrieval.document.config;
+package com.yoswell.agenticrag.common.config;
 
 import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
 import org.springframework.boot.context.properties.ConfigurationProperties;

@@ -14,7 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.yoswell.agenticrag.retrieval.document.config.DocumentKafkaProperties;
+import com.yoswell.agenticrag.common.config.DocumentKafkaProperties;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentParseRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentVectorizeRequestDTO;

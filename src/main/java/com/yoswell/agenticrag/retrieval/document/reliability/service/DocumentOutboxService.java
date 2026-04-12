@@ -4,30 +4,30 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
-import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
 import com.yoswell.agenticrag.retrieval.document.reliability.entity.MessageOutboxDO;
 import com.yoswell.agenticrag.retrieval.document.reliability.mapper.MessageOutboxMapper;
 import com.yoswell.agenticrag.retrieval.document.reliability.model.MessageOutboxEventType;
 import com.yoswell.agenticrag.retrieval.document.reliability.model.MessageOutboxStatus;
 
+import lombok.RequiredArgsConstructor;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
+/**
+ * 文档处理消息出站服务
+ */
 @Service
+@RequiredArgsConstructor
 public class DocumentOutboxService {
 
     private final MessageOutboxMapper messageOutboxMapper;
     private final ObjectMapper objectMapper;
-
-    public DocumentOutboxService(MessageOutboxMapper messageOutboxMapper, ObjectMapper objectMapper) {
-        this.messageOutboxMapper = messageOutboxMapper;
-        this.objectMapper = objectMapper;
-    }
 
     @Transactional
     public MessageOutboxDO enqueue(String aggregateType,
@@ -49,7 +49,10 @@ public class DocumentOutboxService {
         outbox.setStatus(MessageOutboxStatus.PENDING);
         outbox.setRetryCount(0);
         outbox.setNextRetryAt(LocalDateTime.now());
-        messageOutboxMapper.insert(outbox);
+        int rowsAffected = messageOutboxMapper.insert(outbox);
+        if (rowsAffected == 0) {
+            throw new IllegalStateException("Failed to enqueue message");
+        }
         return outbox;
     }
 

@@ -18,7 +18,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
-import com.yoswell.agenticrag.retrieval.document.config.MineruProperties;
+import com.yoswell.agenticrag.common.config.MineruProperties;
 import com.yoswell.agenticrag.retrieval.document.service.MineruDocumentParseService;
 
 import tools.jackson.core.JacksonException;

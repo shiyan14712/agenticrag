@@ -1,6 +1,5 @@
 package com.yoswell.agenticrag.common.config;
 
-import com.yoswell.agenticrag.retrieval.document.config.DocumentKafkaProperties;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.TopicPartition;
