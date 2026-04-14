@@ -34,3 +34,4 @@ build/
 /src/main/resources/application-dev.yaml
 plan_docs/raw_stream_response.json
 /plan_docs/frontend_system_design.md
+/docs/interview.md

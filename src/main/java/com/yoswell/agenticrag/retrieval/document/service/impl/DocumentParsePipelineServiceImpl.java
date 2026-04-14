@@ -67,18 +67,43 @@ public class DocumentParsePipelineServiceImpl implements DocumentParsePipelineSe
             throw new IllegalStateException("Missing source file URL for documentId=" + request.documentId());
         }
 
-        byte[] sourceBytes = minioStorageService.readFile(sourceFileUrl);
-        String sourceContentType = resolveContentType(sourceFileName, sourceFileExtension);
-        log.info("[Offline RAG][PARSE_PIPELINE] Parsing source via MinerU. documentId={}, fileName={}, fileUrl={}",
-                request.documentId(), sourceFileName, sourceFileUrl);
-
-        MineruDocumentParseService.ParseResult parseResult = mineruDocumentParseService.parseToMarkdown(
-                sourceFileName,
-                sourceBytes,
-                sourceContentType);
-
-        String markdownFileUrl = uploadParsedMarkdown(request.documentId(), sourceFileName, parseResult.markdown());
         List<String> allowedRoles = normalizeAllowedRoles(request.allowedRoles(), metadata.getAllowedRoles());
+
+        final String vectorizeFileUrl;
+        final String vectorizeFileExtension;
+        final String mineruTaskId;
+
+        if (requiresMineruParsing(sourceFileExtension)) {
+            // --- 需要 OCR / 结构化解析的格式（pdf / doc / docx / md）---
+            // 由 MinerU Python Worker 将原始文件转换为高精度 Markdown，
+            // 再上传 MinIO，下游向量化阶段读取该 Markdown 文件进行切块。
+            byte[] sourceBytes = minioStorageService.readFile(sourceFileUrl);
+            String sourceContentType = resolveContentType(sourceFileName, sourceFileExtension);
+            log.info("[Offline RAG][PARSE_PIPELINE] Routing to MinerU for structured parsing. documentId={}, fileName={}, extension={}",
+                    request.documentId(), sourceFileName, sourceFileExtension);
+
+            MineruDocumentParseService.ParseResult parseResult = mineruDocumentParseService.parseToMarkdown(
+                    sourceFileName,
+                    sourceBytes,
+                    sourceContentType);
+
+            vectorizeFileUrl = uploadParsedMarkdown(request.documentId(), sourceFileName, parseResult.markdown());
+            vectorizeFileExtension = "md";
+            mineruTaskId = parseResult.mineruTaskId();
+
+            log.info("[Offline RAG][PARSE_PIPELINE] MinerU parsing complete. documentId={}, mineruTaskId={}, markdownUrl={}",
+                    request.documentId(), mineruTaskId, vectorizeFileUrl);
+        } else {
+            // --- 纯文本格式（txt）--- 
+            // 无需经过 MinerU 转换，直接将原始文件 URL 透传给下游向量化阶段。
+            // DocumentVectorizationServiceImpl 会通过 DocumentParserFactory
+            // 选择 StandardTxtStrategy，读取原文直接切块，避免不必要的远程调用。
+            log.info("[Offline RAG][PARSE_PIPELINE] Plain-text file detected, skipping MinerU. documentId={}, fileName={}, extension={}",
+                    request.documentId(), sourceFileName, sourceFileExtension);
+            vectorizeFileUrl = sourceFileUrl;
+            vectorizeFileExtension = sourceFileExtension;
+            mineruTaskId = null;
+        }
 
         DocumentAsyncTaskDO vectorizeTask = documentAsyncTaskService.getOrCreateTask(
                 request.documentId(),
@@ -100,21 +125,41 @@ public class DocumentParsePipelineServiceImpl implements DocumentParsePipelineSe
                         tenantId,
                         kbId,
                         sourceFileName,
-                        markdownFileUrl,
-                        "md",
+                        vectorizeFileUrl,
+                        vectorizeFileExtension,
                         allowedRoles,
                         vectorizeMessageId,
                         System.currentTimeMillis()
                 ));
 
-        log.info("[Offline RAG][PARSE_PIPELINE] Parsed markdown ready and vectorize outbox created. documentId={}, vectorizeTaskId={}, messageId={}, mineruTaskId={}",
-                request.documentId(), vectorizeTask.getTaskId(), vectorizeMessageId, parseResult.mineruTaskId());
+        log.info("[Offline RAG][PARSE_PIPELINE] Vectorize outbox enqueued. documentId={}, vectorizeTaskId={}, messageId={}, mineruTaskId={}",
+                request.documentId(), vectorizeTask.getTaskId(), vectorizeMessageId, mineruTaskId);
 
         return new DocumentParsePipelineService.ParseDispatchResult(
-            markdownFileUrl,
-            parseResult.mineruTaskId(),
+            vectorizeFileUrl,
+            mineruTaskId,
             vectorizeTask.getTaskId(),
             vectorizeMessageId);
+    }
+
+    /**
+     * 判断当前文件类型是否需要经过 MinerU 解析。
+     *
+     * <p>纯文本格式（如 txt）可直接读取原始内容进行切块，无需 MinerU 介入；
+     * 含有结构/排版信息的格式（pdf、doc、docx、md）需要 MinerU 转换为 Markdown 后再处理。</p>
+     *
+     * @param fileExtension 文件扩展名（不含点号），允许为 null
+     * @return 若需要 MinerU 解析则返回 {@code true}
+     */
+    private boolean requiresMineruParsing(String fileExtension) {
+        if (!StringUtils.hasText(fileExtension)) {
+            // 扩展名未知时，保守地走 MinerU 以兜底
+            return true;
+        }
+        return switch (fileExtension.toLowerCase(Locale.ROOT)) {
+            case "txt" -> false;
+            default -> true;
+        };
     }
 
     private DocumentDO requireMetadata(String documentId) {
