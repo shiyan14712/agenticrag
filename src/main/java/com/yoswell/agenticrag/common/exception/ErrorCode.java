@@ -46,6 +46,9 @@ public enum ErrorCode {
     // 上传与 multipart 处理错误
     UPLOAD_SIZE_EXCEEDED("D40001", "上传文件超过大小限制"),
     BAD_MULTIPART_REQUEST("D40002", "文件上传请求格式错误或文件内容不可解析"),
+    DOCUMENT_ILLEGAL_ARGUMENT("D40003", "文档操作参数不完整"),
+    DOCUMENT_NOT_FOUND("D40004", "文档不存在或无访问权限"),
+    DOCUMENT_DELETE_FAILED("D40005", "文档安全删除失败，请稍后重试"),
 
     // =========================================================================
     // 【HTTP 401/403】 鉴权与安全拦截错误码 (Security & Authentication)

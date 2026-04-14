@@ -6,6 +6,7 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -14,7 +15,6 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.yoswell.agenticrag.common.config.DocumentKafkaProperties;
 import com.yoswell.agenticrag.retrieval.document.dto.DocumentDTO;
-import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentDeleteRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentParseRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
@@ -26,7 +26,10 @@ import com.yoswell.agenticrag.retrieval.document.reliability.model.MessageOutbox
 import com.yoswell.agenticrag.retrieval.document.reliability.service.DocumentAsyncTaskService;
 import com.yoswell.agenticrag.retrieval.document.reliability.service.DocumentOutboxService;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentService;
+import com.yoswell.agenticrag.retrieval.document.service.KnowledgeChunkWriteService;
 import com.yoswell.agenticrag.retrieval.document.service.MinioStorageService;
+import com.yoswell.agenticrag.common.exception.BusinessException;
+import com.yoswell.agenticrag.common.exception.ErrorCode;
 
 import lombok.RequiredArgsConstructor;
 
@@ -49,7 +52,8 @@ public class DocumentServiceImpl implements DocumentService {
     private final DocumentOutboxService documentOutboxService;
     private final DocumentAsyncTaskService documentAsyncTaskService;
     private final DocumentKafkaProperties kafkaProperties;
-    private final org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
+    private final RedisTemplate<String, Object> redisTemplate;
+    private final KnowledgeChunkWriteService knowledgeChunkWriteService;
 
     /**
      * 同步接收上传文件并执行上传编排
@@ -262,16 +266,25 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     /**
-     * 删除指定文档（包含元数据和 MinIO 文件）带有粗粒度租户隔离校验
+     * 删除指定文档（彻底无残留跨库清除）
+     *
+     * <p>由于 Agent 场景具有强烈的读写一致性诉求，此处弃用原本的 Kafka 异步彻底清理，转为【同步删除】机制：
+     * </p>
+     * <ol>
+     * <li>MySQL: 移除实体元数据限制用户入口</li>
+     * <li>Redis: 清除轮询状态缓存防止 UI 和接口层读取脏状态</li>
+     * <li>ElasticSearch: 同步执行 deleteByQuery 以阻止 LLM 召回该知识块（关键防止知识泄露和幻觉）</li>
+     * <li>MinIO: 同步销毁原文件防止对象堆积</li>
+     * </ol>
      *
      * @param documentId 文档业务 ID
      * @param tenantId   当前租户 ID
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @Override
     public void deleteDocumentById(String documentId, String tenantId) {
         if (documentId == null || tenantId == null) {
-            throw new IllegalArgumentException("Document ID and Tenant ID must be provided");
+            throw new BusinessException(ErrorCode.DOCUMENT_ILLEGAL_ARGUMENT);
         }
 
         // 1. 查询文档确认是否存在，并强校验 tenantId 防止越权
@@ -283,48 +296,47 @@ public class DocumentServiceImpl implements DocumentService {
 
         if (metadata == null) {
             log.warn("[Document Service] Document not found or access denied for deletion. documentId: {}, tenantId: {}", documentId, tenantId);
-            throw new RuntimeException("Document not found or access denied");
+            throw new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND);
         }
 
-        // 2. 数据库删除元数据
-        documentMetadataMapper.deleteById(metadata.getId());
-        log.info("[Document Service] SUCCESS: Document metadata deleted. documentId: {}", documentId);
+        log.info("[Document Service] 收到文档强同步删除请求，准备依次跨库清理. documentId={}", documentId);
 
-        // 3. 异步删除 MinIO 上的文件如果 URL 是合法的 objectName 形式，则可以通过存储服务清理
+        // 2. MySQL: 数据库删除元数据（一旦此事务成功提交，前端将彻底看不见该文档）
+        documentMetadataMapper.deleteById(metadata.getId());
+        log.info("[Document Service] [1/4] SUCCESS: Document metadata deleted from MySQL. documentId: {}", documentId);
+
+        // 3. Redis: 剔除文档上传轮询机制所依赖的状态缓存，避免缓存读击穿幻象
+        String cacheKey = "doc:status:" + documentId + ":" + tenantId;
+        try {
+            redisTemplate.delete(cacheKey);
+            log.info("[Document Service] [2/4] SUCCESS: Redis status cache cleared. key: {}", cacheKey);
+        } catch (Exception e) {
+            log.error("[Document Service] [2/4] FAILED: Unable to evict Redis cache. key: {}", cacheKey, e);
+            // Redis 删除失败不应阻断硬删除主干，降级容忍
+        }
+
+        // 4. ElasticSearch (关键!): 强同步移除向量碎片，杜绝 LLM Retrieval Context 被污染或旧知识召回
+        // 任何 ES 的调用异常都会冒泡从而引发 @Transactional 事务回滚，确保要么 ES 回归干净要么留着 MySQL
+        try {
+            knowledgeChunkWriteService.deleteByDocumentId(documentId, tenantId);
+            log.info("[Document Service] [3/4] SUCCESS: ElasticSearch chunks hard-deleted synchronously. documentId: {}", documentId);
+        } catch (Exception e) {
+            log.error("[Document Service] [3/4] FAILED: ElasticSearch deletion failed, transaction will be rolled back. documentId: {}", documentId, e);
+            throw new BusinessException(ErrorCode.DOCUMENT_DELETE_FAILED.getCode(), "Failed to delete knowledge chunks securely from Vector Database", e);
+        }
+
+        // 5. MinIO: 同步删除对象存储的物理文件（不重要因此容错处理）
         if (metadata.getMinioUrl() != null && !metadata.getMinioUrl().isEmpty()) {
             try {
                 minioStorageService.deleteFile(metadata.getMinioUrl());
+                log.info("[Document Service] [4/4] SUCCESS: MinIO physical file deleted synchronously. minioUrl: {}", metadata.getMinioUrl());
             } catch (Exception e) {
-                // 这里只记录日志，不让异常打断事务，保证数据库的先删除
-                log.error("[Document Service] Failed to delete document from MinIO. URL: {}", metadata.getMinioUrl(), e);
+                // 对象存储垃圾堆积可以忍受，这里 catch 处理但不妨碍主事务，只是发出警告
+                log.error("[Document Service] [4/4] FAILED: Failed to delete physical object from MinIO. URL: {}", metadata.getMinioUrl(), e);
             }
         }
         
-        // 4. 异步向 Kafka 发送文档已被删除的消息，供 ES 等下游组件完成向量删除
-        DocumentAsyncTaskDO deleteTask = documentAsyncTaskService.createTask(
-                documentId,
-                tenantId,
-                DocumentAsyncTaskType.DOCUMENT_DELETE,
-                DocumentKafkaTopic.DELETE_REQUEST,
-                documentId
-        );
-        String messageId = "msg-" + UUID.randomUUID();
-        documentOutboxService.enqueue(
-                "DOCUMENT",
-                documentId,
-                deleteTask.getTaskId(),
-                MessageOutboxEventType.DOCUMENT_DELETE_REQUEST,
-                DocumentKafkaTopic.DELETE_REQUEST,
-                documentId,
-                new DocumentDeleteRequestDTO(
-                        documentId,
-                        tenantId,
-                        deleteTask.getTaskId(),
-                        messageId,
-                        System.currentTimeMillis()
-                ));
-        log.info("[Document Service] Delete outbox recorded. documentId={}, tenantId={}, taskId={}, messageId={}",
-                documentId, tenantId, deleteTask.getTaskId(), messageId);
+        log.info("[Document Service] 文档 {} 跨组件闭环同步删除成功全部完成.", documentId);
     }
 
     /**
