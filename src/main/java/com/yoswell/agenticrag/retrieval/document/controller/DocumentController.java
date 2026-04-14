@@ -3,6 +3,7 @@ package com.yoswell.agenticrag.retrieval.document.controller;
 import java.util.List;
 import java.util.Map;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -27,18 +28,10 @@ import com.yoswell.agenticrag.web.security.util.SecurityUtils;
  */
 @RestController
 @RequestMapping("/api/v1/documents")
+@RequiredArgsConstructor
 public class DocumentController {
 
     private final DocumentService documentService;
-
-    /**
-     * 构造函数注入文档服务
-     *
-     * @param documentService 文档服务
-     */
-    public DocumentController(DocumentService documentService) {
-        this.documentService = documentService;
-    }
 
     /**
      * 上传文档并创建处理任务
