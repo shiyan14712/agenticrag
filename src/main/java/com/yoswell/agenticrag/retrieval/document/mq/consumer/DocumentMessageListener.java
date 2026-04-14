@@ -29,7 +29,7 @@ import com.yoswell.agenticrag.retrieval.document.reliability.service.DocumentAsy
 import com.yoswell.agenticrag.retrieval.document.reliability.service.MqConsumeLogService;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentParsePipelineService;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentVectorizationService;
-import com.yoswell.agenticrag.retrieval.document.service.KnowledgeChunkIndexService;
+import com.yoswell.agenticrag.retrieval.document.service.KnowledgeChunkWriteService;
 
 import tools.jackson.databind.ObjectMapper;
 
@@ -41,7 +41,7 @@ public class DocumentMessageListener {
     private final ObjectMapper objectMapper;
     private final DocumentParsePipelineService documentParsePipelineService;
     private final DocumentVectorizationService documentVectorizationService;
-    private final KnowledgeChunkIndexService knowledgeChunkIndexService;
+    private final KnowledgeChunkWriteService knowledgeChunkWriteService;
     private final DocumentKafkaProperties kafkaProperties;
     private final DocumentAsyncTaskService documentAsyncTaskService;
     private final MqConsumeLogService mqConsumeLogService;
@@ -51,7 +51,7 @@ public class DocumentMessageListener {
     public DocumentMessageListener(ObjectMapper objectMapper,
                                    DocumentParsePipelineService documentParsePipelineService,
                                    DocumentVectorizationService documentVectorizationService,
-                                   KnowledgeChunkIndexService knowledgeChunkIndexService,
+                                   KnowledgeChunkWriteService knowledgeChunkWriteService,
                                    DocumentKafkaProperties kafkaProperties,
                                    DocumentAsyncTaskService documentAsyncTaskService,
                                    MqConsumeLogService mqConsumeLogService,
@@ -60,7 +60,7 @@ public class DocumentMessageListener {
         this.objectMapper = objectMapper;
         this.documentParsePipelineService = documentParsePipelineService;
         this.documentVectorizationService = documentVectorizationService;
-        this.knowledgeChunkIndexService = knowledgeChunkIndexService;
+        this.knowledgeChunkWriteService = knowledgeChunkWriteService;
         this.kafkaProperties = kafkaProperties;
         this.documentAsyncTaskService = documentAsyncTaskService;
         this.mqConsumeLogService = mqConsumeLogService;
@@ -232,7 +232,7 @@ public class DocumentMessageListener {
             if (task != null) {
                 documentAsyncTaskService.markRunning(task.getTaskId(), messageIdentity);
             }
-            knowledgeChunkIndexService.deleteByDocumentId(request.documentId(), deleteTenantId);
+            knowledgeChunkWriteService.deleteByDocumentId(request.documentId(), deleteTenantId);
             if (task != null) {
                 documentAsyncTaskService.markSucceeded(task.getTaskId(), messageIdentity);
             }

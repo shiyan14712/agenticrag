@@ -2,14 +2,17 @@ package com.yoswell.agenticrag.retrieval.document.service.impl;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.yoswell.agenticrag.retrieval.document.dto.KnowledgeChunkDocumentDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentVectorizeRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
@@ -20,9 +23,8 @@ import com.yoswell.agenticrag.retrieval.document.parser.DocumentParserFactory;
 import com.yoswell.agenticrag.retrieval.document.parser.model.DocumentParseSource;
 import com.yoswell.agenticrag.retrieval.document.parser.model.ParsedDocument;
 import com.yoswell.agenticrag.retrieval.document.parser.strategy.DocumentParserStrategy;
-import com.yoswell.agenticrag.retrieval.document.service.DocumentProcessingStateService;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentVectorizationService;
-import com.yoswell.agenticrag.retrieval.document.service.KnowledgeChunkIndexService;
+import com.yoswell.agenticrag.retrieval.document.service.KnowledgeChunkWriteService;
 import com.yoswell.agenticrag.retrieval.document.service.MinioStorageService;
 
 import dev.langchain4j.data.embedding.Embedding;
@@ -43,21 +45,18 @@ public class DocumentVectorizationServiceImpl implements DocumentVectorizationSe
     private final MinioStorageService minioStorageService;
     private final DocumentParserFactory documentParserFactory;
     private final EmbeddingModel embeddingModel;
-    private final KnowledgeChunkIndexService knowledgeChunkIndexService;
-    private final DocumentProcessingStateService documentProcessingStateService;
+    private final KnowledgeChunkWriteService knowledgeChunkWriteService;
 
     public DocumentVectorizationServiceImpl(DocumentMetadataMapper documentMetadataMapper,
                                             MinioStorageService minioStorageService,
                                             DocumentParserFactory documentParserFactory,
                                             EmbeddingModel embeddingModel,
-                                            KnowledgeChunkIndexService knowledgeChunkIndexService,
-                                            DocumentProcessingStateService documentProcessingStateService) {
+                                            KnowledgeChunkWriteService knowledgeChunkWriteService) {
         this.documentMetadataMapper = documentMetadataMapper;
         this.minioStorageService = minioStorageService;
         this.documentParserFactory = documentParserFactory;
         this.embeddingModel = embeddingModel;
-        this.knowledgeChunkIndexService = knowledgeChunkIndexService;
-        this.documentProcessingStateService = documentProcessingStateService;
+        this.knowledgeChunkWriteService = knowledgeChunkWriteService;
     }
 
     /**
@@ -81,15 +80,15 @@ public class DocumentVectorizationServiceImpl implements DocumentVectorizationSe
             return DocumentVectorizationExecutionResult.skipped("document already vectorized");
         }
 
-        boolean claimed = documentProcessingStateService.transitionStatus(
+        boolean claimed = transitionStatus(
                 metadata.getDocumentId(),
                 DocumentProcessingStatus.PARSING,
                 List.of(DocumentProcessingStatus.UPLOADED, DocumentProcessingStatus.FAILED)
         );
         if (!claimed) {
-            DocumentProcessingStatus currentStatus = documentProcessingStateService.getCurrentStatus(metadata.getDocumentId());
-            if (DocumentProcessingStatus.PARSING.value().equals(currentStatus)
-                    || DocumentProcessingStatus.VECTORIZED.value().equals(currentStatus)) {
+            DocumentProcessingStatus currentStatus = getCurrentStatus(metadata.getDocumentId());
+            if (DocumentProcessingStatus.PARSING.value().equals(currentStatus != null ? currentStatus.value() : null)
+                    || DocumentProcessingStatus.VECTORIZED.value().equals(currentStatus != null ? currentStatus.value() : null)) {
                 log.info("[Offline RAG][VECTORIZE] 检测到重复或并发中的向量化任务，直接跳过: documentId={}, currentStatus={}",
                         metadata.getDocumentId(), currentStatus);
                 return DocumentVectorizationExecutionResult.skipped("document is already processing or vectorized");
@@ -151,17 +150,17 @@ public class DocumentVectorizationServiceImpl implements DocumentVectorizationSe
 
             log.info("[Offline RAG][INDEX] 开始写入 ES 检索索引: documentId={}, chunkCount={}",
                     metadata.getDocumentId(), indexedChunks.size());
-            knowledgeChunkIndexService.deleteByDocumentId(metadata.getDocumentId(), tenantId);
-            knowledgeChunkIndexService.indexChunks(indexedChunks);
+            knowledgeChunkWriteService.deleteByDocumentId(metadata.getDocumentId(), tenantId);
+            knowledgeChunkWriteService.indexChunks(indexedChunks);
 
-            documentProcessingStateService.updateStatus(metadata.getDocumentId(), DocumentProcessingStatus.VECTORIZED);
+            updateStatus(metadata.getDocumentId(), DocumentProcessingStatus.VECTORIZED);
             log.info("[Offline RAG][VECTORIZE] 状态迁移: documentId={}, {} -> {}",
                     metadata.getDocumentId(), DocumentProcessingStatus.PARSING.value(), DocumentProcessingStatus.VECTORIZED.value());
             log.info("[Offline RAG][DONE] 文档向量化完成: documentId={}, chunks={}", metadata.getDocumentId(), indexedChunks.size());
             return DocumentVectorizationExecutionResult.success("vectorized chunks=" + indexedChunks.size());
         } catch (Exception exception) {
             log.error("[Offline RAG][FAILED] 文档向量化失败: documentId={}", metadata.getDocumentId(), exception);
-            documentProcessingStateService.updateStatus(metadata.getDocumentId(), DocumentProcessingStatus.FAILED);
+            updateStatus(metadata.getDocumentId(), DocumentProcessingStatus.FAILED);
             log.warn("[Offline RAG][VECTORIZE] 状态迁移: documentId={}, {} -> {}",
                     metadata.getDocumentId(), DocumentProcessingStatus.PARSING.value(), DocumentProcessingStatus.FAILED.value());
             throw exception;
@@ -175,14 +174,71 @@ public class DocumentVectorizationServiceImpl implements DocumentVectorizationSe
      */
     @Override
     public void markFailed(String documentId) {
-        documentProcessingStateService.updateStatus(documentId, DocumentProcessingStatus.FAILED);
+        updateStatus(documentId, DocumentProcessingStatus.FAILED);
+    }
+
+    /**
+     * 状态 CAS 迁移：仅当文档处于允许的前置状态之一时，才将其推进到目标状态。
+     *
+     * @param documentId              文档业务 ID
+     * @param targetStatus            目标状态
+     * @param expectedCurrentStatuses 前置状态白名单
+     * @return 迁移成功返回 {@code true}，状态不匹配返回 {@code false}
+     */
+    @Transactional
+    private boolean transitionStatus(String documentId,
+                                     DocumentProcessingStatus targetStatus,
+                                     Collection<DocumentProcessingStatus> expectedCurrentStatuses) {
+        if (!StringUtils.hasText(documentId) || targetStatus == null) {
+            return false;
+        }
+        List<String> allowedStatuses = expectedCurrentStatuses == null
+                ? List.of()
+                : expectedCurrentStatuses.stream().map(DocumentProcessingStatus::value).toList();
+        if (allowedStatuses.isEmpty()) {
+            return false;
+        }
+        LambdaUpdateWrapper<DocumentDO> updateWrapper = new LambdaUpdateWrapper<DocumentDO>()
+                .eq(DocumentDO::getDocumentId, documentId)
+                .in(DocumentDO::getStatus, allowedStatuses)
+                .set(DocumentDO::getStatus, targetStatus.value());
+        return documentMetadataMapper.update(null, updateWrapper) > 0;
+    }
+
+    /**
+     * 无条件强制更新文档状态（用于写入终态 VECTORIZED / FAILED）。
+     *
+     * @param documentId   文档业务 ID
+     * @param targetStatus 目标状态
+     */
+    @Transactional
+    private void updateStatus(String documentId, DocumentProcessingStatus targetStatus) {
+        if (!StringUtils.hasText(documentId) || targetStatus == null) {
+            return;
+        }
+        LambdaUpdateWrapper<DocumentDO> updateWrapper = new LambdaUpdateWrapper<DocumentDO>()
+                .eq(DocumentDO::getDocumentId, documentId)
+                .set(DocumentDO::getStatus, targetStatus.value());
+        documentMetadataMapper.update(null, updateWrapper);
+    }
+
+    /**
+     * 读取文档当前状态。
+     *
+     * @param documentId 文档业务 ID
+     * @return 当前状态，文档不存在时返回 {@code null}
+     */
+    private DocumentProcessingStatus getCurrentStatus(String documentId) {
+        DocumentDO metadata = documentMetadataMapper.selectOne(
+                new LambdaQueryWrapper<DocumentDO>()
+                        .eq(DocumentDO::getDocumentId, documentId)
+                        .select(DocumentDO::getStatus)
+        );
+        return metadata == null ? null : metadata.getStatus();
     }
 
     /**
      * 读取文档元数据，不存在时直接抛错终止链路。
-     *
-     * @param documentId 文档业务 ID
-     * @return 对应元数据
      */
     private DocumentDO requireMetadata(String documentId) {
         DocumentDO metadata = documentMetadataMapper.selectOne(

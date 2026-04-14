@@ -18,7 +18,7 @@ import com.yoswell.agenticrag.core.agent.dto.CitationDTO;
 import com.yoswell.agenticrag.core.agent.dto.RagSearchResultDTO;
 import com.yoswell.agenticrag.core.agent.dto.RetrievedChunkDTO;
 import com.yoswell.agenticrag.core.agent.rag.RerankerClient;
-import com.yoswell.agenticrag.retrieval.document.service.KnowledgeChunkIndexService;
+import com.yoswell.agenticrag.retrieval.document.service.KnowledgeSearchService;
 import com.yoswell.agenticrag.web.security.model.TenantUser;
 
 import dev.langchain4j.agent.tool.Tool;
@@ -31,7 +31,7 @@ public class RagTool {
     private static final Logger log = LoggerFactory.getLogger(RagTool.class);
     private static final int RRF_K = 60;
 
-    private final KnowledgeChunkIndexService knowledgeChunkIndexService;
+    private final KnowledgeSearchService knowledgeSearchService;
     private final EmbeddingModel embeddingModel;
     private final RerankerClient rerankerClient;
     private final RagRetrievalContextHolder ragRetrievalContextHolder;
@@ -45,11 +45,11 @@ public class RagTool {
     @Value("${rag.retrieval.rerank-top-n:5}")
     private int rerankTopN;
 
-    public RagTool(KnowledgeChunkIndexService knowledgeChunkIndexService,
+    public RagTool(KnowledgeSearchService knowledgeSearchService,
                    EmbeddingModel embeddingModel,
                    RerankerClient rerankerClient,
                    RagRetrievalContextHolder ragRetrievalContextHolder) {
-        this.knowledgeChunkIndexService = knowledgeChunkIndexService;
+        this.knowledgeSearchService = knowledgeSearchService;
         this.embeddingModel = embeddingModel;
         this.rerankerClient = rerankerClient;
         this.ragRetrievalContextHolder = ragRetrievalContextHolder;
@@ -80,8 +80,8 @@ public class RagTool {
 
             // 第一阶段：多路归召（BM25 关键字 + KNN 向量检索）
             long retrieveStartTime = System.currentTimeMillis();
-            List<RetrievedChunkDTO> bm25Hits = knowledgeChunkIndexService.searchByKeyword(query, tenantId, allowedRoles, bm25TopK);
-            List<RetrievedChunkDTO> knnHits = knowledgeChunkIndexService.searchByVector(queryVector.vectorAsList(), tenantId, allowedRoles, knnTopK);
+            List<RetrievedChunkDTO> bm25Hits = knowledgeSearchService.searchByKeyword(query, tenantId, allowedRoles, bm25TopK);
+            List<RetrievedChunkDTO> knnHits = knowledgeSearchService.searchByVector(queryVector.vectorAsList(), tenantId, allowedRoles, knnTopK);
             long retrieveCostTime = System.currentTimeMillis() - retrieveStartTime;
 
             if (bm25Hits.isEmpty() && knnHits.isEmpty()) {
