@@ -14,14 +14,16 @@ import com.yoswell.agenticrag.retrieval.document.parser.model.ParsedDocument;
 import com.yoswell.agenticrag.retrieval.document.parser.model.ParsedDocumentChunk;
 
 /**
- * 面向 Markdown 风格文本的分块（Chunking）策略。
+ * 面向 Markdown 风格文本的分块（Chunking）策略
+ *
+ * <p>本策略针对<strong>以.md文档为首的结构性强</strong>的文档做chunk</p>
  *
  * <p>【架构说明】：</p>
  * <p>它优先保留标题层级信息，再在每个 section 内按长度切块，
- * 这样检索结果能兼顾结构语义和 chunk 粒度。</p>
- * <p>注意：真正的 MinerU / 深度学习 PDF 解析引擎不在当前模块和 Java 项目中执行！
+ * 这样检索结果能兼顾结构语义和 chunk 粒度</p>
+ * <p>注意：MinerU OCR PDF 解析引擎不在当前模块和 Java 项目中执行！
  * 这个策略类仅负责对 Python Worker 解析出来并存入 MinIO 的高精度 Markdown 文本，
- * 进行离线的语义切块和向量化准备阶段。</p>
+ * 进行离线的语义切块和向量化准备阶段</p>
  */
 @Component
 public class MinerUMarkdownStrategy implements DocumentParserStrategy {
@@ -33,7 +35,7 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
     private static final int DEFAULT_CHUNK_OVERLAP = 200;
 
     /**
-     * 解析 Markdown 文本并生成结构化 chunk。
+     * 解析 Markdown 文本并生成结构化 chunk
      *
      * @param source 解析输入
      * @return 解析结果
@@ -49,7 +51,7 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
     }
 
     /**
-     * 把 Markdown 文本先拆 section，再按长度和重叠窗口切块。
+     * 把 Markdown 文本先拆 section，再按长度和重叠窗口切块
      *
      * @param markdown Markdown 内容
      * @param chunkSize 目标 chunk 长度
@@ -76,7 +78,7 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
     }
 
     /**
-     * 为每个文本块补充稳定 chunkId 和顺序号。
+     * 为每个文本块补充稳定 chunkId 和顺序号
      *
      * @param source 解析输入
      * @param chunks 文本块内容
@@ -95,7 +97,7 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
     }
 
     /**
-     * 通过文件地址、文件名和序号生成稳定的 chunkId。
+     * 通过文件地址、文件名和序号生成稳定的 chunkId
      *
      * @param source 解析输入
      * @param index chunk 顺序
@@ -107,7 +109,7 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
     }
 
     /**
-     * 按标题层级把 Markdown 拆成 section。
+     * 按标题层级把 Markdown 拆成 section
      *
      * @param markdown Markdown 内容
      * @return section 列表
@@ -160,7 +162,7 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
     }
 
     /**
-     * 在单个 section 内按长度切块，并把标题路径前缀拼进 chunk。
+     * 在单个 section 内按长度切块，并把标题路径前缀拼进 chunk
      *
      * @param section 当前 section
      * @param chunkSize 目标 chunk 长度
@@ -206,7 +208,7 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
     }
 
     /**
-     * 把当前累积正文收束成一个 section。
+     * 把当前累积正文收束成一个 section
      *
      * @param sections 输出 section 集合
      * @param headingStack 当前标题栈
@@ -221,7 +223,7 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
     }
 
     /**
-     * 维护标题栈，保证层级路径始终表示当前位置。
+     * 维护标题栈，保证层级路径始终表示当前位置
      *
      * @param headingStack 当前标题栈
      * @param title 新标题文本
@@ -229,13 +231,13 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
      */
     private static void pushHeading(List<Heading> headingStack, String title, int level) {
         while (!headingStack.isEmpty() && headingStack.get(headingStack.size() - 1).level() >= level) {
-            headingStack.remove(headingStack.size() - 1);
+            headingStack.removeLast();
         }
         headingStack.add(new Heading(level, title));
     }
 
     /**
-     * 判断当前行下一行是否构成 setext 风格标题。
+     * 判断当前行下一行是否构成 setext 风格标题
      *
      * @param lines 全部文本行
      * @param index 当前行下标
@@ -257,20 +259,20 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
     }
 
     /**
-     * 向正文缓冲区追加一行文本。
+     * 向正文缓冲区追加一行文本
      *
      * @param body 正文缓冲区
      * @param line 当前文本行
      */
     private static void appendLine(StringBuilder body, String line) {
-        if (body.length() > 0) {
+        if (!body.isEmpty()) {
             body.append('\n');
         }
         body.append(line);
     }
 
     /**
-     * 优先在自然断点上结束当前 chunk。
+     * 优先在自然断点上结束当前 chunk
      *
      * @param body 当前 section 正文
      * @param start chunk 起始位置
@@ -293,7 +295,7 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
     }
 
     /**
-     * 把标题栈格式化成多行 Markdown 标题前缀。
+     * 把标题栈格式化成多行 Markdown 标题前缀
      *
      * @param headings 当前标题路径
      * @return 标题路径文本
@@ -305,7 +307,7 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
 
         StringBuilder builder = new StringBuilder();
         for (Heading heading : headings) {
-            if (builder.length() > 0) {
+            if (!builder.isEmpty()) {
                 builder.append('\n');
             }
             for (int count = 0; count < heading.level(); count++) {
@@ -317,7 +319,7 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
     }
 
     /**
-     * 标题节点。
+     * 标题节点
      *
      * @param level 标题级别
      * @param title 标题文本
@@ -326,7 +328,7 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
     }
 
     /**
-     * section 节点，表示一段标题路径下的正文内容。
+     * section 节点，表示一段标题路径下的正文内容
      *
      * @param headings 标题路径
      * @param body 正文内容

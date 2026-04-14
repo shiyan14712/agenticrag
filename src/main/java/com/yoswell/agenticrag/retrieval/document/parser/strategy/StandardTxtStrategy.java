@@ -12,9 +12,9 @@ import com.yoswell.agenticrag.retrieval.document.parser.model.ParsedDocument;
 import com.yoswell.agenticrag.retrieval.document.parser.model.ParsedDocumentChunk;
 
 /**
- * 面向纯文本文件的解析策略。
+ * 面向纯文本文件的解析策略
  *
- * <p>纯文本没有显式标题结构，因此这里只做长度切块和自然断点收束。</p>
+ * <p>本策略意在针对那些没有显式标题结构的纯文本做处理，因此这里只做长度切块和自然断点收束</p>
  */
 @Component
 public class StandardTxtStrategy implements DocumentParserStrategy {
@@ -23,7 +23,7 @@ public class StandardTxtStrategy implements DocumentParserStrategy {
     private static final int DEFAULT_CHUNK_OVERLAP = 200;
 
     /**
-     * 解析纯文本内容并生成 chunk。
+     * 解析纯文本内容并生成 chunk
      *
      * @param source 解析输入
      * @return 解析结果
@@ -44,7 +44,7 @@ public class StandardTxtStrategy implements DocumentParserStrategy {
     }
 
     /**
-     * 按长度和重叠窗口切分纯文本。
+     * 按长度和重叠窗口切分纯文本
      *
      * @param content 原始文本
      * @param chunkSize 目标 chunk 长度
@@ -92,7 +92,7 @@ public class StandardTxtStrategy implements DocumentParserStrategy {
     }
 
     /**
-     * 优先在自然断点上截断当前 chunk。
+     * 优先在自然断点上截断当前 chunk
      *
      * @param content 规范化后的纯文本
      * @param start chunk 起始位置
