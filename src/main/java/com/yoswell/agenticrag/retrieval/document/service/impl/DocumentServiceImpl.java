@@ -288,11 +288,10 @@ public class DocumentServiceImpl implements DocumentService {
         }
 
         // 1. 查询文档确认是否存在，并强校验 tenantId 防止越权
-        DocumentDO metadata = documentMetadataMapper.selectOne(
-                new QueryWrapper<DocumentDO>()
-                        .eq("document_id", documentId)
-                        .eq("tenant_id", tenantId)
-        );
+        LambdaQueryWrapper<DocumentDO> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(DocumentDO::getDocumentId, documentId)
+                .eq(DocumentDO::getTenantId, tenantId);
+        DocumentDO metadata = documentMetadataMapper.selectOne(queryWrapper);
 
         if (metadata == null) {
             log.warn("[Document Service] Document not found or access denied for deletion. documentId: {}, tenantId: {}", documentId, tenantId);
