@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 
 import com.yoswell.agenticrag.common.exception.BusinessException;
 import com.yoswell.agenticrag.common.exception.ErrorCode;
+import com.yoswell.agenticrag.core.agent.constants.ToolExecutionConstants;
 import com.yoswell.agenticrag.core.agent.context.RagRetrievalContextHolder;
 import com.yoswell.agenticrag.core.agent.dto.CitationDTO;
 import com.yoswell.agenticrag.core.agent.dto.RagSearchResultDTO;
@@ -95,16 +96,24 @@ public class RagTool {
             
             // 第三阶段：调用大模型做交叉打分和倒排（Cross-Attention 重排）
             long rerankStartTime = System.currentTimeMillis();
-            List<RetrievedChunkDTO> rerankedChunks = crossAttentionRerank(fusedChunks, query);
+            RerankerClient.RerankOutcome rerankOutcome = crossAttentionRerank(fusedChunks, query);
+            List<RetrievedChunkDTO> rerankedChunks = rerankOutcome.chunks();
             long rerankCostTime = System.currentTimeMillis() - rerankStartTime;
-            log.info("[RAG TOOL] Cross-Attention 重排完成, 耗时 {}ms", rerankCostTime);
+            if (rerankOutcome.fallbackApplied()) {
+                log.warn("[RAG TOOL] reranker 降级回退生效，继续使用 RRF 顺序。reason={}, elapsed={}ms",
+                        rerankOutcome.fallbackReason(), rerankCostTime);
+            } else {
+                log.info("[RAG TOOL] Cross-Attention 重排完成, 耗时 {}ms", rerankCostTime);
+            }
             
             // 截断获取排名靠前的片段
             List<RetrievedChunkDTO> topChunks = rerankedChunks.stream().limit(rerankTopN).toList();
 
+            String observation = buildObservation(topChunks, rerankOutcome);
+
             // 将片段封装为含有引用的回答并上下文留存
             RagSearchResultDTO result = new RagSearchResultDTO(
-                    buildObservation(topChunks),
+                    observation,
                     topChunks,
                     buildCitations(topChunks)
             );
@@ -117,14 +126,13 @@ public class RagTool {
             return result.observation();
             
         } catch (BusinessException businessEx) {
-            // 直接抛出业务级异常，避免被底层 RuntimeException 包裹，以便 GlobalExceptionHandler 可精准拦截响应给端侧
-            log.error("[RAG TOOL] 知识检索发生业务级校验异常: {}", businessEx.getMessage());
-            throw businessEx;
+            // Tool 层失败通过 marker 回传，避免中断整个 Agent Loop。
+            log.error("[RAG TOOL] 知识检索发生业务级校验异常，将回传 tool failed 状态: {}", businessEx.getMessage());
+            return ToolExecutionConstants.markFailed("知识检索失败：" + businessEx.getMessage());
             
         } catch (Exception exception) {
-            // 将底层未指定的各种抛出明确包装成 BusinessException SYSTEM_ERROR 类型，保证抛栈链路结构对监控预警方一致友好
-            log.error("[RAG TOOL] 检索期间发生底层的未知系统异常，即将包裹为业务异常暴露", exception);
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "知识检索失败：" + exception.getMessage());
+            log.error("[RAG TOOL] 检索期间发生底层未知异常，将回传 tool failed 状态", exception);
+            return ToolExecutionConstants.markFailed("知识检索失败：" + exception.getMessage());
         }
     }
 
@@ -181,7 +189,7 @@ public class RagTool {
                 .toList();
     }
 
-    List<RetrievedChunkDTO> crossAttentionRerank(List<RetrievedChunkDTO> fusedChunks, String query) {
+    RerankerClient.RerankOutcome crossAttentionRerank(List<RetrievedChunkDTO> fusedChunks, String query) {
         log.info("[RAG TOOL] 进入重排阶段，准备调用 reranker，候选片段数={}", fusedChunks.size());
         return rerankerClient.rerank(query, fusedChunks);
     }
@@ -231,8 +239,9 @@ public class RagTool {
         );
     }
 
-    private String buildObservation(List<RetrievedChunkDTO> topChunks) {
-        StringBuilder builder = new StringBuilder();
+    private String buildObservation(List<RetrievedChunkDTO> topChunks, RerankerClient.RerankOutcome rerankOutcome) {
+        StringBuilder builder = new StringBuilder(buildToolResultSummary(topChunks.size(), rerankOutcome));
+        builder.append("\n");
         for (RetrievedChunkDTO topChunk : topChunks) {
             builder.append("[Doc ID: ")
                     .append(topChunk.documentId())
@@ -243,6 +252,13 @@ public class RagTool {
                     .append("\n\n");
         }
         return builder.toString().trim();
+    }
+
+    private String buildToolResultSummary(int topChunkCount, RerankerClient.RerankOutcome rerankOutcome) {
+        if (rerankOutcome.fallbackApplied()) {
+            return "检索到 " + topChunkCount + " 条知识片段（reranker 不可用，已回退到 RRF 排序）";
+        }
+        return "检索到 " + topChunkCount + " 条知识片段（已完成 reranker 重排）";
     }
 
     private List<CitationDTO> buildCitations(List<RetrievedChunkDTO> topChunks) {

@@ -20,8 +20,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
-import com.yoswell.agenticrag.common.exception.BusinessException;
-import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.core.agent.dto.RetrievedChunkDTO;
 
 import tools.jackson.databind.JsonNode;
@@ -53,14 +51,16 @@ public class RerankerClient {
                 .build();
     }
 
-    public List<RetrievedChunkDTO> rerank(String query, List<RetrievedChunkDTO> chunks) {
+    public RerankOutcome rerank(String query, List<RetrievedChunkDTO> chunks) {
         if (chunks == null || chunks.isEmpty()) {
-            return chunks == null ? List.of() : List.copyOf(chunks);
+            return RerankOutcome.noFallback(chunks == null ? List.of() : List.copyOf(chunks));
         }
+
+        List<RetrievedChunkDTO> fusedOrdering = List.copyOf(chunks);
 
         if (!StringUtils.hasText(rerankerApiUrl)) {
             log.debug("[Reranker Client] reranker api-url 未配置，跳过重排并保持融合排序结果。candidateCount={}", chunks.size());
-            return List.copyOf(chunks);
+            return RerankOutcome.fallback(fusedOrdering, "api-url-not-configured");
         }
 
         try {
@@ -72,27 +72,27 @@ public class RerankerClient {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() >= 400) {
                 log.warn("[Reranker Client] Reranker returned non-success status {}, falling back to fused ordering", response.statusCode());
-                return List.copyOf(chunks);
+                return RerankOutcome.fallback(fusedOrdering, "http-status-" + response.statusCode());
             }
             List<RetrievedChunkDTO> reranked = mergeRerankerResponse(chunks, response.body());
             log.info("[Reranker Client] reranker 调用完成: status={}, returnedCount={}", response.statusCode(), reranked.size());
-            return reranked;
+            return RerankOutcome.noFallback(reranked);
         } catch (HttpConnectTimeoutException exception) {
             log.warn("[Reranker Client] Reranker connection timeout, falling back to fused ordering", exception);
-            throw new BusinessException(ErrorCode.RERANKER_TIMEOUT);
+            return RerankOutcome.fallback(fusedOrdering, "connect-timeout");
         } catch (ConnectException exception) {
             log.warn("[Reranker Client] Reranker service unavailable, falling back to fused ordering", exception);
-            throw new BusinessException(ErrorCode.RERANKER_SERVICE_UNAVAILABLE);
+            return RerankOutcome.fallback(fusedOrdering, "connection-failed");
         } catch (IOException exception) {
             log.warn("[Reranker Client] Reranker request failed, falling back to fused ordering", exception);
-            return List.copyOf(chunks);
+            return RerankOutcome.fallback(fusedOrdering, "io-exception");
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             log.warn("[Reranker Client] Reranker request interrupted, falling back to fused ordering", exception);
-            return List.copyOf(chunks);
+            return RerankOutcome.fallback(fusedOrdering, "interrupted");
         } catch (RuntimeException exception) {
             log.warn("[Reranker Client] Reranker request failed, falling back to fused ordering", exception);
-            return List.copyOf(chunks);
+            return RerankOutcome.fallback(fusedOrdering, "runtime-exception");
         }
     }
 
@@ -166,5 +166,16 @@ public class RerankerClient {
             return normalized;
         }
         return normalized.substring(0, 80) + "...";
+    }
+
+    public record RerankOutcome(List<RetrievedChunkDTO> chunks, boolean fallbackApplied, String fallbackReason) {
+
+        public static RerankOutcome noFallback(List<RetrievedChunkDTO> chunks) {
+            return new RerankOutcome(List.copyOf(chunks), false, null);
+        }
+
+        public static RerankOutcome fallback(List<RetrievedChunkDTO> chunks, String fallbackReason) {
+            return new RerankOutcome(List.copyOf(chunks), true, fallbackReason);
+        }
     }
 }
