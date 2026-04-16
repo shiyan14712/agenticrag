@@ -1,5 +1,7 @@
 package com.yoswell.agenticrag.common.exception;
 
+import java.io.EOFException;
+import java.io.IOException;
 import java.net.ConnectException;
 import java.net.NoRouteToHostException;
 import java.net.SocketException;
@@ -7,6 +9,7 @@ import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpTimeoutException;
+import java.util.Locale;
 
 /**
  * 统一异常映射器：把底层异常稳定映射为 BusinessException。
@@ -86,6 +89,12 @@ public final class BusinessExceptionMapper {
                     || current instanceof SocketException) {
                 return true;
             }
+            if (current instanceof EOFException) {
+                return true;
+            }
+            if (current instanceof IOException ioException && isConnectionClosedByPeer(ioException.getMessage())) {
+                return true;
+            }
             Throwable cause = current.getCause();
             if (cause == current) {
                 break;
@@ -93,5 +102,16 @@ public final class BusinessExceptionMapper {
             current = cause;
         }
         return false;
+    }
+
+    private static boolean isConnectionClosedByPeer(String message) {
+        if (message == null || message.isBlank()) {
+            return false;
+        }
+        String normalized = message.toLowerCase(Locale.ROOT);
+        return normalized.contains("header parser received no bytes")
+                || normalized.contains("unexpected end of file")
+                || normalized.contains("connection reset")
+                || normalized.contains("broken pipe");
     }
 }
