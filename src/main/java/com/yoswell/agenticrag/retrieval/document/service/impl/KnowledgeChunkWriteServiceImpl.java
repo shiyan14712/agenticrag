@@ -14,7 +14,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.yoswell.agenticrag.common.constants.KnowledgeChunkIndexConstants;
-import com.yoswell.agenticrag.retrieval.document.dto.KnowledgeChunkDocumentDTO;
+import com.yoswell.agenticrag.retrieval.document.entity.KnowledgeChunkDocumentDO;
 import com.yoswell.agenticrag.retrieval.document.service.KnowledgeChunkWriteService;
 
 import tools.jackson.databind.JsonNode;
@@ -54,7 +54,7 @@ public class KnowledgeChunkWriteServiceImpl implements KnowledgeChunkWriteServic
      * @param chunks 需要写入的知识块集合
      */
     @Override
-    public void indexChunks(List<KnowledgeChunkDocumentDTO> chunks) {
+    public void indexChunks(List<KnowledgeChunkDocumentDO> chunks) {
         if (chunks == null || chunks.isEmpty()) {
             return;
         }
@@ -66,7 +66,7 @@ public class KnowledgeChunkWriteServiceImpl implements KnowledgeChunkWriteServic
         ensureIndexExists(chunks.get(0).contentVector().size());
 
         for (int index = 0; index < chunks.size(); index++) {
-            KnowledgeChunkDocumentDTO chunk = chunks.get(index);
+            KnowledgeChunkDocumentDO chunk = chunks.get(index);
             try {
                 Request request = new Request(KnowledgeChunkIndexConstants.METHOD_PUT, documentPath(chunk.chunkId()));
                 request.setJsonEntity(objectMapper.writeValueAsString(chunk));

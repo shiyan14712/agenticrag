@@ -34,6 +34,7 @@ public class RerankerClient {
 
     private static final Logger log = LoggerFactory.getLogger(RerankerClient.class);
     private static final int REQUEST_BODY_PREVIEW_LIMIT = 1200;
+    private static final int MAX_SEND_ATTEMPTS = 2;
 
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
@@ -72,9 +73,7 @@ public class RerankerClient {
                     StringUtils.hasText(rerankerModelName) ? rerankerModelName : "<default>",
                     summarizeQuery(query));
             String requestBody = buildRequestBody(query, chunks);
-            HttpRequest request = buildRequest(requestBody);
-            logRequestSummary(request, requestBody, chunks.size());
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = sendWithRetry(requestBody, chunks.size());
             if (response.statusCode() >= 400) {
                 String endpointResponse = formatEndpointResponse(response);
                 log.warn("[Reranker Client] Reranker returned non-success response, falling back to fused ordering. {}", endpointResponse);
@@ -109,13 +108,65 @@ public class RerankerClient {
         }
         payload.put("query", query);
         payload.put("top_n", chunks.size());
+        payload.put("return_text", true);
         ArrayNode documents = payload.putArray("documents");
         chunks.forEach(chunk -> documents.add(chunk.content()));
 
         return objectMapper.writeValueAsString(payload);
     }
 
-    private HttpRequest buildRequest(String requestBody) {
+    private HttpResponse<String> sendWithRetry(String requestBody, int candidateCount) throws IOException, InterruptedException {
+        HttpConnectTimeoutException timeoutFailure = null;
+        ConnectException connectFailure = null;
+        IOException ioFailure = null;
+
+        for (int attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt++) {
+            boolean forceCloseConnection = attempt > 1;
+            HttpRequest request = buildRequest(requestBody, forceCloseConnection);
+            if (attempt == 1) {
+                logRequestSummary(request, requestBody, candidateCount);
+            } else {
+                log.warn("[Reranker Client] 检测到可重试连接异常，开始第 {} / {} 次调用重试。strategy=connection-close", attempt, MAX_SEND_ATTEMPTS);
+                logRequestSummary(request, requestBody, candidateCount);
+            }
+
+            try {
+                return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            } catch (HttpConnectTimeoutException exception) {
+                timeoutFailure = exception;
+                if (attempt == MAX_SEND_ATTEMPTS) {
+                    throw exception;
+                }
+                log.warn("[Reranker Client] Reranker connection timeout on attempt {} / {}, will retry once", attempt, MAX_SEND_ATTEMPTS);
+            } catch (ConnectException exception) {
+                connectFailure = exception;
+                if (attempt == MAX_SEND_ATTEMPTS) {
+                    throw exception;
+                }
+                log.warn("[Reranker Client] Reranker connection failed on attempt {} / {}, will retry once", attempt, MAX_SEND_ATTEMPTS);
+            } catch (IOException exception) {
+                ioFailure = exception;
+                if (attempt == MAX_SEND_ATTEMPTS || !isRetryableIOException(exception)) {
+                    throw exception;
+                }
+                log.warn("[Reranker Client] Reranker transient io exception on attempt {} / {}, will retry once. reason={}",
+                        attempt, MAX_SEND_ATTEMPTS, safeExceptionMessage(exception));
+            }
+        }
+
+        if (timeoutFailure != null) {
+            throw timeoutFailure;
+        }
+        if (connectFailure != null) {
+            throw connectFailure;
+        }
+        if (ioFailure != null) {
+            throw ioFailure;
+        }
+        throw new IOException("Reranker request failed without a captured exception");
+    }
+
+    private HttpRequest buildRequest(String requestBody, boolean forceCloseConnection) {
 
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(rerankerApiUrl))
@@ -126,7 +177,42 @@ public class RerankerClient {
         if (StringUtils.hasText(rerankerApiKey)) {
             builder.header("Authorization", "Bearer " + rerankerApiKey);
         }
+        if (forceCloseConnection) {
+            builder.header("Connection", "close");
+        }
         return builder.build();
+    }
+
+    private boolean isRetryableIOException(IOException exception) {
+        return hasMessage(exception, "header parser received no bytes")
+                || hasMessage(exception, "unexpected end of file from server")
+                || hasMessage(exception, "connection reset")
+                || hasMessage(exception, "broken pipe")
+                || hasMessage(exception, "forcibly closed by the remote host");
+    }
+
+    private boolean hasMessage(Throwable throwable, String keyword) {
+        Throwable current = throwable;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && message.toLowerCase(Locale.ROOT).contains(keyword)) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private String safeExceptionMessage(Throwable throwable) {
+        String message = throwable == null ? null : throwable.getMessage();
+        if (message == null || message.isBlank()) {
+            return "<empty-message>";
+        }
+        String normalized = message.replaceAll("\\s+", " ").trim();
+        if (normalized.length() <= 240) {
+            return normalized;
+        }
+        return normalized.substring(0, 240) + "...(truncated)";
     }
 
     private void logRequestSummary(HttpRequest request, String requestBody, int candidateCount) {

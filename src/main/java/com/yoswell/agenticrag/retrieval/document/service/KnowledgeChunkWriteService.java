@@ -2,7 +2,7 @@ package com.yoswell.agenticrag.retrieval.document.service;
 
 import java.util.List;
 
-import com.yoswell.agenticrag.retrieval.document.dto.KnowledgeChunkDocumentDTO;
+import com.yoswell.agenticrag.retrieval.document.entity.KnowledgeChunkDocumentDO;
 
 /**
  * 知识块写入服务接口
@@ -17,7 +17,7 @@ public interface KnowledgeChunkWriteService {
      *
      * @param chunks 需要写入的知识块集合
      */
-    void indexChunks(List<KnowledgeChunkDocumentDTO> chunks);
+    void indexChunks(List<KnowledgeChunkDocumentDO> chunks);
 
     /**
      * 根据文档 ID 删除该文档在索引中的所有 chunk

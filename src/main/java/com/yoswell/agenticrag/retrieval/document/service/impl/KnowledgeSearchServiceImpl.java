@@ -15,6 +15,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.yoswell.agenticrag.common.constants.KnowledgeChunkIndexConstants;
+import com.yoswell.agenticrag.common.exception.BusinessException;
+import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.core.agent.dto.RetrievedChunkDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.KnowledgeChunkSearchHitDTO;
 import com.yoswell.agenticrag.retrieval.document.service.KnowledgeSearchService;
@@ -62,8 +64,13 @@ public class KnowledgeSearchServiceImpl implements KnowledgeSearchService {
             request.setJsonEntity(buildKeywordSearchPayload(query, tenantId, allowedRoles, size));
             JsonNode response = executeForJson(request);
             return parseSearchHits(response);
-        } catch (Exception exception) {
-            throw new RuntimeException("Keyword search failed", exception);
+        } catch (IOException | RuntimeException exception) {
+            log.error("[Knowledge Search] 关键词检索失败: index={}, tenantId={}, size={}", indexName, tenantId, size, exception);
+            throw new BusinessException(
+                    ErrorCode.KNOWLEDGE_KEYWORD_SEARCH_FAILED.getCode(),
+                    ErrorCode.KNOWLEDGE_KEYWORD_SEARCH_FAILED.getMessage(),
+                    exception
+            );
         }
     }
 
@@ -86,8 +93,14 @@ public class KnowledgeSearchServiceImpl implements KnowledgeSearchService {
             request.setJsonEntity(buildVectorSearchPayload(queryVector, tenantId, allowedRoles, size));
             JsonNode response = executeForJson(request);
             return parseSearchHits(response);
-        } catch (Exception exception) {
-            throw new RuntimeException("Vector search failed", exception);
+        } catch (IOException | RuntimeException exception) {
+            log.error("[Knowledge Search] 向量检索失败: index={}, tenantId={}, size={}, vectorDim={}",
+                    indexName, tenantId, size, queryVector.size(), exception);
+            throw new BusinessException(
+                    ErrorCode.KNOWLEDGE_VECTOR_SEARCH_FAILED.getCode(),
+                    ErrorCode.KNOWLEDGE_VECTOR_SEARCH_FAILED.getMessage(),
+                    exception
+            );
         }
     }
 
