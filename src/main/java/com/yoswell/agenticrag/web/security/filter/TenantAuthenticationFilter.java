@@ -92,7 +92,7 @@ public class TenantAuthenticationFilter extends OncePerRequestFilter {
 
                         if (tenantId != null && userId != null) {
                             List<SimpleGrantedAuthority> authorities = resolveAuthorities(roleClaim);
-                            String role = authorities.isEmpty() ? "ROLE_USER" : authorities.get(0).getAuthority();
+                            String role = authorities.get(0).getAuthority();
                             
                             TenantUser principal = new TenantUser(userId, tenantId, role);
                             UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
