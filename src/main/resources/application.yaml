@@ -76,23 +76,27 @@ langchain4j:
     open-ai:
       base-url: "http://10.119.5.190:9000/v1"
       api-key: "sk-your-llm-api-key"
-      model-name: "qwen3.5-122B"
+      model-name: "qwen3.5-27b"
       temperature: 0.7
       max-tokens: 32768
       top-p: 0.8
       presence-penalty: 1.5
 
   embedding:
-    provider: "volcengine"
+    provider: "openai"
     open-ai:
-      base-url: "https://ark.cn-beijing.volces.com/api/v3"
-      api-key: "87db3f57-9659-4c28-9f18-9a3ce1754fc5"
-      model-name: "doubao-embedding-vision-251215"
-      dimensions: 1024
+#      base-url: "https://ark.cn-beijing.volces.com/api/v3"
+#      api-key: "87db3f57-9659-4c28-9f18-9a3ce1754fc5"
+#      model-name: "doubao-embedding-vision-251215"
+#      dimensions: 1024
+      base-url: "http://10.119.5.190:8002/v1"
+      api-key: "sk-"
+      model-name: "Qwen3-Embed-4B"
+      dimensions: 2048
   reranker:
-    api-url: "https://api.jina.ai/v1/rerank"
+    api-url: "http://10.119.5.190:8003/v1/rerank"
     api-key: "jina_1ff6d644760040369f44eba736ca5d37Crdu3unp4kVFHxpUIuouUri0DC4q"
-    model-name: "jina-reranker-v3"
+    model-name: "/app/LLaMA-Factory/data/Qwen3-Reranker-4B"
 
 
 jwt:

@@ -12,7 +12,9 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +33,7 @@ import tools.jackson.databind.node.ObjectNode;
 public class RerankerClient {
 
     private static final Logger log = LoggerFactory.getLogger(RerankerClient.class);
+    private static final int REQUEST_BODY_PREVIEW_LIMIT = 1200;
 
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
@@ -68,11 +71,14 @@ public class RerankerClient {
                     chunks.size(),
                     StringUtils.hasText(rerankerModelName) ? rerankerModelName : "<default>",
                     summarizeQuery(query));
-            HttpRequest request = buildRequest(query, chunks);
+            String requestBody = buildRequestBody(query, chunks);
+            HttpRequest request = buildRequest(requestBody);
+            logRequestSummary(request, requestBody, chunks.size());
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() >= 400) {
-                log.warn("[Reranker Client] Reranker returned non-success status {}, falling back to fused ordering", response.statusCode());
-                return RerankOutcome.fallback(fusedOrdering, "http-status-" + response.statusCode());
+                String endpointResponse = formatEndpointResponse(response);
+                log.warn("[Reranker Client] Reranker returned non-success response, falling back to fused ordering. {}", endpointResponse);
+                return RerankOutcome.fallback(fusedOrdering, endpointResponse);
             }
             List<RetrievedChunkDTO> reranked = mergeRerankerResponse(chunks, response.body());
             log.info("[Reranker Client] reranker 调用完成: status={}, returnedCount={}", response.statusCode(), reranked.size());
@@ -96,7 +102,7 @@ public class RerankerClient {
         }
     }
 
-    private HttpRequest buildRequest(String query, List<RetrievedChunkDTO> chunks) throws IOException {
+    private String buildRequestBody(String query, List<RetrievedChunkDTO> chunks) throws IOException {
         ObjectNode payload = objectMapper.createObjectNode();
         if (StringUtils.hasText(rerankerModelName)) {
             payload.put("model", rerankerModelName);
@@ -106,16 +112,87 @@ public class RerankerClient {
         ArrayNode documents = payload.putArray("documents");
         chunks.forEach(chunk -> documents.add(chunk.content()));
 
+        return objectMapper.writeValueAsString(payload);
+    }
+
+    private HttpRequest buildRequest(String requestBody) {
+
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(rerankerApiUrl))
                 .timeout(Duration.ofSeconds(30))
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)));
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody));
 
         if (StringUtils.hasText(rerankerApiKey)) {
             builder.header("Authorization", "Bearer " + rerankerApiKey);
         }
         return builder.build();
+    }
+
+    private void logRequestSummary(HttpRequest request, String requestBody, int candidateCount) {
+        log.info("[Reranker Client] 请求摘要: method={}, url={}, candidateCount={}, headers={}, bodyChars={}, bodyPreview={}",
+                request.method(),
+                request.uri(),
+                candidateCount,
+                formatRequestHeaders(request.headers().map()),
+                requestBody.length(),
+                summarizeRequestBody(requestBody));
+    }
+
+    private String formatRequestHeaders(Map<String, List<String>> headers) {
+        if (headers == null || headers.isEmpty()) {
+            return "<empty-headers>";
+        }
+        return headers.entrySet().stream()
+                .map(entry -> "[" + entry.getKey() + ": "
+                        + entry.getValue().stream()
+                        .map(value -> maskHeaderValue(entry.getKey(), value))
+                        .collect(Collectors.joining(", "))
+                        + "]")
+                .collect(Collectors.joining(", "));
+    }
+
+    private String maskHeaderValue(String headerName, String headerValue) {
+        if (!StringUtils.hasText(headerValue)) {
+            return headerValue;
+        }
+
+        String normalizedHeader = headerName == null ? "" : headerName.toLowerCase(Locale.ROOT);
+        boolean sensitiveHeader = normalizedHeader.contains("authorization")
+                || normalizedHeader.contains("api-key")
+                || normalizedHeader.contains("x-auth-token");
+
+        if (!sensitiveHeader) {
+            return headerValue;
+        }
+
+        if (headerValue.startsWith("Bearer ")) {
+            return "Bearer " + maskSecret(headerValue.substring("Bearer ".length()));
+        }
+        return maskSecret(headerValue);
+    }
+
+    private String maskSecret(String value) {
+        if (!StringUtils.hasText(value)) {
+            return value;
+        }
+
+        if (value.length() < 7) {
+            return "...";
+        }
+        return value.substring(0, 5) + "..." + value.substring(value.length() - 2);
+    }
+
+    private String summarizeRequestBody(String requestBody) {
+        if (!StringUtils.hasText(requestBody)) {
+            return "<empty-body>";
+        }
+
+        String normalized = requestBody.replaceAll("\\s+", " ").trim();
+        if (normalized.length() <= REQUEST_BODY_PREVIEW_LIMIT) {
+            return normalized;
+        }
+        return normalized.substring(0, REQUEST_BODY_PREVIEW_LIMIT) + "...(truncated)";
     }
 
     private List<RetrievedChunkDTO> mergeRerankerResponse(List<RetrievedChunkDTO> chunks, String body) throws IOException {
@@ -155,6 +232,16 @@ public class RerankerClient {
             return List.copyOf(chunks);
         }
         return List.copyOf(reordered);
+    }
+
+    private String formatEndpointResponse(HttpResponse<String> response) {
+        String responseBody = response.body();
+        if (!StringUtils.hasText(responseBody)) {
+            responseBody = "<empty-body>";
+        }
+        return "http-status-" + response.statusCode()
+                + ", headers=" + response.headers().map()
+                + ", body=" + responseBody;
     }
 
     private String summarizeQuery(String query) {

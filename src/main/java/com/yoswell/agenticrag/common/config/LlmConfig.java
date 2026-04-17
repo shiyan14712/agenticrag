@@ -59,7 +59,7 @@ public class LlmConfig {
     public JdkHttpClientBuilder jdkHttpClientBuilder() {
         HttpClient.Builder httpClientBuilder = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
-                .connectTimeout(Duration.ofSeconds(60));
+                .connectTimeout(Duration.ofSeconds(90));
 
         return JdkHttpClient.builder()
                 .httpClientBuilder(httpClientBuilder);
@@ -77,7 +77,8 @@ public class LlmConfig {
                 .topP(llmTopP)
                 .presencePenalty(llmPresencePenalty)
                 // "top_k": 20 和 "chat_template_kwargs": {"enable_thinking": True} 等特有参数在LangChain4j的标准OpenAiChatModel中目前无法直接注入。如果确需透传，可能需要自定义Client或拦截器实现注入 extra_body。
-                .timeout(Duration.ofSeconds(60))
+                .timeout(Duration.ofSeconds(90))
+                .logRequests(true)
                 .build();
     }
 
@@ -92,19 +93,21 @@ public class LlmConfig {
                 .maxTokens(llmMaxTokens)
                 .topP(llmTopP)
                 .presencePenalty(llmPresencePenalty)
-                .timeout(Duration.ofSeconds(60))
+                .timeout(Duration.ofSeconds(90))
+                .logRequests(true)
                 .build();
     }
 
     @Bean
     @ConditionalOnProperty(name = "langchain4j.embedding.provider", havingValue = "openai", matchIfMissing = true)
-    public EmbeddingModel openAiEmbeddingModel() {
+    public EmbeddingModel openAiEmbeddingModel(JdkHttpClientBuilder jdkHttpClientBuilder) {
         return OpenAiEmbeddingModel.builder()
+                .httpClientBuilder(jdkHttpClientBuilder)
                 .baseUrl(embeddingBaseUrl)
                 .apiKey(embeddingApiKey)
                 .modelName(embeddingModelName)
                 .dimensions(embeddingDimensions)
-                .timeout(Duration.ofSeconds(60))
+                .timeout(Duration.ofSeconds(90))
                 .build();
     }
 

@@ -61,6 +61,12 @@ public class RagTool {
         log.info("[RAG TOOL] LLM 已决策调用工具 search_enterprise_knowledge，开始企业知识检索。queryPreview={}", summarizeQuery(query));
         long totalStartTime = System.currentTimeMillis();
         try {
+            // 校验查询参数
+            if (query == null || query.trim().isEmpty()) {
+                log.warn("[RAG TOOL] 查询参数为空，无法执行检索。");
+                return ToolExecutionConstants.markFailed("查询参数不能为空");
+            }
+            
             TenantUser user = resolveCurrentTenantUser();
 
             if (user == null) {
