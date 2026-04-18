@@ -11,8 +11,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.alibaba.ttl.TtlRunnable;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.yoswell.agenticrag.common.constants.ChatCacheConstants;
 import com.yoswell.agenticrag.common.exception.BusinessException;
 import com.yoswell.agenticrag.common.exception.BusinessExceptionMapper;
@@ -83,12 +83,19 @@ public class ChatOrchestrator {
      */
     public SseEmitter dispatchDynamicStream(String sessionId, String message, TenantUser tenantUser) {
         SseEmitter emitter = new SseEmitter(10L * 60 * 1000);
+        log.info("[ReAct] 接收到流式对话请求: session={}, userId={}, tenantId={}, messageChars={}",
+                sessionId,
+                tenantUser == null ? "<unknown>" : tenantUser.getUserId(),
+                tenantUser == null ? "<unknown>" : tenantUser.getTenantId(),
+                message == null ? 0 : message.length());
 
         AutoCloseable retrievalScope = null;
         try {
             ragRetrievalContextHolder.registerSessionPrincipal(sessionId, tenantUser);
             chatMessageService.saveUserMessage(sessionId, message);
             asyncTitleGenerationIfNeeded(sessionId, message);
+            log.debug("[ReAct] 会话上下文初始化完成: session={}, principalSnapshotReady={}",
+                    sessionId, tenantUser != null);
 
             StringBuilder fullResponse = new StringBuilder();
             ragRetrievalContextHolder.clearSessionResult(sessionId);
@@ -156,7 +163,8 @@ public class ChatOrchestrator {
                             emitCitationsWidget(emitter, citations);
                             emitSseEvent(emitter, SseEventType.DONE, "{}");
                             emitter.complete();
-                            log.info("[ReAct] Agent 推理循环结束: session={}", sessionId);
+                            log.info("[ReAct] Agent 推理循环结束: session={}, answerChars={}, citationCount={}",
+                                    sessionId, fullResponse.length(), citations.size());
                         } catch (Exception exception) {
                             BusinessException businessException = BusinessExceptionMapper.map(exception,
                                 ErrorCode.AGENT_STREAM_INTERRUPTED);
@@ -231,8 +239,10 @@ public class ChatOrchestrator {
      * 发送业务错误并结束 SSE
      */
     private void emitBusinessErrorAndComplete(SseEmitter emitter, BusinessException businessException) {
+        ErrorPayload payload = ErrorPayload.fromBusinessException(businessException);
+        log.warn("[ReAct] 发送错误事件并结束 SSE: code={}, message={}", payload.code(), payload.message());
         emitSseEventJson(emitter, SseEventType.ERROR,
-                new ErrorPayload(businessException.getCode(), businessException.getMessage()));
+            payload);
         emitSseEvent(emitter, SseEventType.DONE, "{}");
         emitter.complete();
     }
@@ -245,8 +255,10 @@ public class ChatOrchestrator {
      */
     private void emitCitationsWidget(SseEmitter emitter, List<CitationDTO> citations) {
         if (citations == null || citations.isEmpty()) {
+            log.debug("[ReAct] 本轮未产生引用，不发送 citations 事件");
             return;
         }
+        log.info("[ReAct] 发送 citations 事件: citationCount={}", citations.size());
         emitSseEventJson(emitter, SseEventType.CITATIONS, citations);
     }
 
@@ -323,26 +335,31 @@ public class ChatOrchestrator {
     }
 
     /**
-     * 解码工具执行结果。
+     * 解码工具执行结果
      *
      * <p>
      * 约定：Tool 返回 "__TOOL_SUCCESS__ ..." / "__TOOL_FAILED__ ..." 前缀时，
-     * 编排器据此推送 completed / failed 卡片；其余结果默认视为 completed。</p>
+     * 编排器据此推送 completed / failed 卡片；其余结果默认视为 completed</p>
      */
     private ToolExecutionOutcome decodeToolExecutionOutcome(String rawResult) {
         if (rawResult == null || rawResult.isBlank()) {
-            return new ToolExecutionOutcome(false, "<无结果>");
+            log.debug("[ReAct] Tool 执行结果为空，按成功空结果处理");
+            return ToolExecutionOutcome.empty();
         }
         String normalizedMessage = ToolExecutionConstants.stripMarker(rawResult);
         if (ToolExecutionConstants.isFailedResult(rawResult)) {
-            String message = normalizedMessage;
-            return new ToolExecutionOutcome(true, message.isBlank() ? "Tool execution failed" : message);
+            ToolExecutionOutcome failedOutcome = ToolExecutionOutcome.failed(normalizedMessage);
+            log.warn("[ReAct] 识别到 Tool 失败标记: messagePreview={}", summarizeToolResult(failedOutcome.message()));
+            return failedOutcome;
         }
         if (ToolExecutionConstants.isSuccessResult(rawResult)) {
-            String message = normalizedMessage;
-            return new ToolExecutionOutcome(false, message.isBlank() ? "Tool executed successfully" : message);
+            ToolExecutionOutcome successOutcome = ToolExecutionOutcome.succeeded(normalizedMessage);
+            log.debug("[ReAct] 识别到 Tool 成功标记: messagePreview={}", summarizeToolResult(successOutcome.message()));
+            return successOutcome;
         }
-        return new ToolExecutionOutcome(false, normalizedMessage);
+        ToolExecutionOutcome defaultOutcome = ToolExecutionOutcome.succeeded(normalizedMessage);
+        log.debug("[ReAct] Tool 返回未包含标准标记，按成功处理: messagePreview={}", summarizeToolResult(defaultOutcome.message()));
+        return defaultOutcome;
     }
 
     /**
@@ -368,21 +385,83 @@ public class ChatOrchestrator {
         try {
             scope.close();
         } catch (Exception e) {
-            log.debug("Failed to close rag retrieval scope cleanly", e);
+            log.debug("[ReAct] 关闭检索上下文作用域失败，已忽略", e);
         }
     }
 
     /**
      * SSE error 事件载荷
+     *
+     * <p>提供统一工厂方法，确保错误码与错误消息不会出现空值，便于前端稳定处理</p>
      */
     private record ErrorPayload(String code, String message) {
+
+        private static final String DEFAULT_ERROR_CODE = ErrorCode.SYSTEM_ERROR.getCode();
+        private static final String DEFAULT_ERROR_MESSAGE = ErrorCode.SYSTEM_ERROR.getMessage();
+
+        /**
+         * 基于业务异常构建标准化错误载荷
+         *
+         * @param businessException 业务异常
+         * @return 兜底后的错误载荷
+         */
+        public static ErrorPayload fromBusinessException(BusinessException businessException) {
+            if (businessException == null) {
+                return new ErrorPayload(DEFAULT_ERROR_CODE, DEFAULT_ERROR_MESSAGE);
+            }
+            String normalizedCode = hasText(businessException.getCode())
+                    ? businessException.getCode()
+                    : DEFAULT_ERROR_CODE;
+            String normalizedMessage = hasText(businessException.getMessage())
+                    ? businessException.getMessage()
+                    : DEFAULT_ERROR_MESSAGE;
+            return new ErrorPayload(normalizedCode, normalizedMessage);
+        }
+
+        private static boolean hasText(String value) {
+            return value != null && !value.isBlank();
+        }
 
     }
 
     /**
-     * 工具执行结果解码后的统一视图。
+     * 工具执行结果解码后的统一视图
+     *
+     * <p>通过工厂方法统一处理空值与默认文案，避免编排器主流程里散落重复判断</p>
      */
     private record ToolExecutionOutcome(boolean failed, String message) {
+
+        private static final String DEFAULT_SUCCESS_MESSAGE = "Tool executed successfully";
+        private static final String DEFAULT_FAILED_MESSAGE = "Tool execution failed";
+        private static final String EMPTY_RESULT_MESSAGE = "<无结果>";
+
+        /**
+         * 构造空结果场景（按成功处理）
+         */
+        public static ToolExecutionOutcome empty() {
+            return new ToolExecutionOutcome(false, EMPTY_RESULT_MESSAGE);
+        }
+
+        /**
+         * 构造成功结果
+         */
+        public static ToolExecutionOutcome succeeded(String message) {
+            return new ToolExecutionOutcome(false, normalizeMessage(message, DEFAULT_SUCCESS_MESSAGE));
+        }
+
+        /**
+         * 构造失败结果
+         */
+        public static ToolExecutionOutcome failed(String message) {
+            return new ToolExecutionOutcome(true, normalizeMessage(message, DEFAULT_FAILED_MESSAGE));
+        }
+
+        private static String normalizeMessage(String message, String fallback) {
+            if (message == null || message.isBlank()) {
+                return fallback;
+            }
+            return message.trim();
+        }
 
     }
 }
