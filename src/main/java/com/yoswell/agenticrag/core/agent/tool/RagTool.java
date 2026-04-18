@@ -50,6 +50,9 @@ public class RagTool {
     @Value("${rag.retrieval.rerank-top-n:5}")
     private int rerankTopN;
 
+    @Value("${rag.retrieval.final-score-threshold:0.0}")
+    private double finalScoreThreshold;
+
     public RagTool(KnowledgeSearchService knowledgeSearchService,
                    EmbeddingModel embeddingModel,
                    RerankerClient rerankerClient,
@@ -121,6 +124,7 @@ public class RagTool {
             long rerankStartTime = System.currentTimeMillis();
             RerankerClient.RerankOutcome rerankOutcome = crossAttentionRerank(fusedChunks, query);
             List<RetrievedChunkDTO> rerankedChunks = rerankOutcome.chunks();
+            List<RetrievedChunkDTO> thresholdedChunks = applyFinalScoreThreshold(rerankedChunks, rerankOutcome, tenantId, role, query);
             long rerankCostTime = System.currentTimeMillis() - rerankStartTime;
             if (rerankOutcome.fallbackApplied()) {
                 log.warn("[RAG TOOL] reranker 降级回退生效，继续使用 RRF 顺序。reason={}, elapsed={}ms",
@@ -129,8 +133,8 @@ public class RagTool {
                 log.info("[RAG TOOL] Cross-Attention 重排完成, 耗时 {}ms", rerankCostTime);
             }
             
-            // 截断获取排名靠前的片段
-            List<RetrievedChunkDTO> topChunks = rerankedChunks.stream().limit(rerankTopN).toList();
+            // 先按最终分数阈值强制裁剪，再截断获取排名靠前的片段
+            List<RetrievedChunkDTO> topChunks = thresholdedChunks.stream().limit(rerankTopN).toList();
 
             String observation = buildObservation(topChunks, rerankOutcome);
 
@@ -301,6 +305,50 @@ public class RagTool {
                 chunk.content(),
                 score
         );
+    }
+
+    private List<RetrievedChunkDTO> applyFinalScoreThreshold(List<RetrievedChunkDTO> chunks,
+                                                             RerankerClient.RerankOutcome rerankOutcome,
+                                                             String tenantId,
+                                                             String role,
+                                                             String query) {
+        if (chunks == null || chunks.isEmpty()) {
+            return List.of();
+        }
+
+        double normalizedThreshold = normalizeFinalScoreThreshold();
+        if (normalizedThreshold <= 0d) {
+            return chunks;
+        }
+
+        List<RetrievedChunkDTO> filteredChunks = chunks.stream()
+                .filter(chunk -> chunk.score() >= normalizedThreshold)
+                .toList();
+
+        int removedCount = chunks.size() - filteredChunks.size();
+        if (removedCount > 0) {
+            log.info("[RAG TOOL] 最终分数阈值过滤完成。threshold={}, source={}, before={}, after={}, removed={} ",
+                    normalizedThreshold,
+                    rerankOutcome.fallbackApplied() ? "rrf" : "reranker",
+                    chunks.size(),
+                    filteredChunks.size(),
+                    removedCount);
+        }
+
+        if (filteredChunks.isEmpty()) {
+            log.warn("[RAG TOOL] 候选片段全部低于最终分数阈值，已强制舍弃。threshold={}, tenantId={}, role={}, queryPreview={}",
+                    normalizedThreshold, tenantId, role, summarizeQuery(query));
+        }
+
+        return filteredChunks;
+    }
+
+    private double normalizeFinalScoreThreshold() {
+        if (finalScoreThreshold < 0d) {
+            log.warn("[RAG TOOL] 检测到非法 final-score-threshold={}，已回退为 0.0", finalScoreThreshold);
+            return 0d;
+        }
+        return finalScoreThreshold;
     }
 
     private String buildObservation(List<RetrievedChunkDTO> topChunks, RerankerClient.RerankOutcome rerankOutcome) {
