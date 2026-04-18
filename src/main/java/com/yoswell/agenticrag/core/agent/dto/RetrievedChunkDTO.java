@@ -20,7 +20,8 @@ import java.util.List;
  * @param allowedRoles 允许访问的角色列表，用于 ES 检索时的权限过滤
  * @param chunkIndex 块索引位置，同一文档中的顺序编号
  * @param content 知识块的文本内容，经过切分和预处理后的正文
- * @param score 相似度得分，向量检索或 RRF 融合后的评分
+ * @param score 当前阶段得分：通道检索阶段为 ES 原始 _score，RRF 阶段为 rank 融合分，
+ *             reranker 阶段为 relevance_score
  * @author AgenticRAG
  * @since 2026-03-28
  */

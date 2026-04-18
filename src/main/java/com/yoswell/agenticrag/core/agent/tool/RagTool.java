@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,6 +13,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 
+import com.alibaba.ttl.TtlRunnable;
 import com.yoswell.agenticrag.common.exception.BusinessException;
 import com.yoswell.agenticrag.common.exception.ErrorCode;
 import com.yoswell.agenticrag.core.agent.constants.ToolExecutionConstants;
@@ -86,17 +89,30 @@ public class RagTool {
             List<String> allowedRoles = List.of(role);
             log.debug("[RAG TOOL] 准备执行多路大模型混合检索, tenant={}, roles={}", tenantId, allowedRoles);
 
-            // 第一阶段：多路归召（BM25 关键字 + KNN 向量检索）
+            // 第一阶段：多路召回（BM25 关键字 + KNN 向量检索，虚拟线程并行执行）
             long retrieveStartTime = System.currentTimeMillis();
-            List<RetrievedChunkDTO> bm25Hits = knowledgeSearchService.searchByKeyword(query, tenantId, allowedRoles, bm25TopK);
-            List<RetrievedChunkDTO> knnHits = knowledgeSearchService.searchByVector(queryVector.vectorAsList(), tenantId, allowedRoles, knnTopK);
+            FutureTask<List<RetrievedChunkDTO>> bm25Task = new FutureTask<>(
+                () -> knowledgeSearchService.searchByKeyword(query, tenantId, allowedRoles, bm25TopK));
+            FutureTask<List<RetrievedChunkDTO>> knnTask = new FutureTask<>(
+                () -> knowledgeSearchService.searchByVector(queryVector.vectorAsList(), tenantId, allowedRoles, knnTopK));
+
+            // 使用虚拟线程并发执行双路检索，降低端到端检索耗时
+            Thread.ofVirtual().name("rag-bm25[" + tenantId + "]").start(TtlRunnable.get(bm25Task));
+            Thread.ofVirtual().name("rag-knn[" + tenantId + "]").start(TtlRunnable.get(knnTask));
+
+            List<RetrievedChunkDTO> bm25Hits = awaitRetrievalResult("bm25", bm25Task, knnTask);
+            List<RetrievedChunkDTO> knnHits = awaitRetrievalResult("knn", knnTask, bm25Task);
             long retrieveCostTime = System.currentTimeMillis() - retrieveStartTime;
 
-            if (bm25Hits.isEmpty() && knnHits.isEmpty()) {
-                log.warn("[RAG TOOL] 双路检索均未命中候选。tenantId={}, role={}, queryPreview={}", tenantId, role, summarizeQuery(query));
+            if (bm25Hits.isEmpty()) {
+                log.warn("[RAG TOOL] BM25检索未命中候选。tenantId={}, role={}, queryPreview={}", tenantId, role, summarizeQuery(query));
+            }
+            if (knnHits.isEmpty()) {
+                log.warn("[RAG TOOL] KNN检索未命中候选。tenantId={}, role={}, queryPreview={}", tenantId, role, summarizeQuery(query));
             }
             
-            // 第二阶段：倒排融合（Reciprocal Rank Fusion），合并多路召回的结果列表
+            // 第二阶段：倒排融合（Reciprocal Rank Fusion）
+            // 仅使用各通道 rank(d)=index+1，不使用 BM25/KNN 原始 score，避免量纲不一致导致混算
             List<RetrievedChunkDTO> fusedChunks = calculateRrfFusion(bm25Hits, knnHits);
             log.info("[RAG TOOL] 多路召回与融合完成, 耗时 {}ms (bm25={}, knn={}, fused={})", 
                     retrieveCostTime, bm25Hits.size(), knnHits.size(), fusedChunks.size());
@@ -194,6 +210,31 @@ public class RagTool {
         return user.getUserId();
     }
 
+    /**
+     * 等待检索任务结果；若当前通道失败，会取消另一通道任务以减少无效资源占用。
+     */
+    private List<RetrievedChunkDTO> awaitRetrievalResult(
+            String channel,
+            FutureTask<List<RetrievedChunkDTO>> currentTask,
+            FutureTask<List<RetrievedChunkDTO>> siblingTask) {
+        try {
+            return currentTask.get();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            siblingTask.cancel(true);
+            log.warn("[RAG TOOL] 等待 {} 检索结果时线程被中断，已取消另一通道任务", channel, exception);
+            throw new RuntimeException("等待 " + channel + " 检索结果时线程被中断", exception);
+        } catch (ExecutionException exception) {
+            siblingTask.cancel(true);
+            Throwable cause = exception.getCause();
+            log.error("[RAG TOOL] {} 检索任务执行失败，已取消另一通道任务", channel, cause);
+            if (cause instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new RuntimeException("等待 " + channel + " 检索结果失败", cause);
+        }
+    }
+
     List<RetrievedChunkDTO> calculateRrfFusion(List<RetrievedChunkDTO> bm25Hits, List<RetrievedChunkDTO> knnHits) {
         Map<String, RetrievedChunkDTO> chunkRegistry = new LinkedHashMap<>();
         Map<String, Double> rrfScores = new LinkedHashMap<>();
@@ -229,6 +270,8 @@ public class RagTool {
      * RRF(d) = \sum_{i=1}^{m} \frac{1}{RRF_K + rank(d)}
      * d for Document-Block, m for Num of Search Channels
      * rank(d) for rank of d in the search channel, RRF_K for smoothing constant.
+     * 注意：该计算仅依赖列表顺序（rank），不会使用 hits 中的 score 字段，
+     * 以避免 BM25/KNN 不同量纲分数的直接混算。
      * @param hits List of retrieved chunks from a single search channel
      * @param chunkRegistry Registry to track unique chunks across channels
      * @param rrfScores Accumulated RRF scores map
@@ -239,7 +282,10 @@ public class RagTool {
         for (int index = 0; index < hits.size(); index++) {
             RetrievedChunkDTO hit = hits.get(index);
             chunkRegistry.putIfAbsent(hit.chunkId(), hit);
-            rrfScores.merge(hit.chunkId(), 1.0d / (RRF_K + index + 1), (left, right) -> left + right);
+            int rank = index + 1;
+            // RRF 严格按 rank 贡献值融合，通道原始 score 仅保留为检索痕迹，不参与融合计算。
+            double rankContribution = 1.0d / (RRF_K + rank);
+            rrfScores.merge(hit.chunkId(), rankContribution, (left, right) -> left + right);
         }
     }
 
