@@ -19,6 +19,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import com.yoswell.agenticrag.common.constants.AuthTokenCacheConstants;
+import com.yoswell.agenticrag.web.security.context.TenantContextHolder;
 import com.yoswell.agenticrag.web.security.model.TenantUser;
 
 import io.jsonwebtoken.Claims;
@@ -74,7 +75,7 @@ public class TenantAuthenticationFilter extends OncePerRequestFilter {
                 log.info("[TenantAuthenticationFilter] JWT Token 命中 Redis 缓存，继续解析认证信息");
                 try {
                     SecretKey key = Keys.hmacShaKeyFor(Decoders.BASE64.decode(jwtSecret));
-                    
+
                     Claims claims = Jwts.parser()
                             .verifyWith(key)
                             .build()
@@ -93,12 +94,15 @@ public class TenantAuthenticationFilter extends OncePerRequestFilter {
                         if (tenantId != null && userId != null) {
                             List<SimpleGrantedAuthority> authorities = resolveAuthorities(roleClaim);
                             String role = authorities.get(0).getAuthority();
-                            
+
                             TenantUser principal = new TenantUser(userId, tenantId, role);
                             UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                                     principal, null, authorities);
 
+                            // 写入 Spring SecurityContext（当前请求主线程）
                             SecurityContextHolder.getContext().setAuthentication(authentication);
+                            // 同步写入 TTL 上下文，确保子虚拟线程/线程池任务可通过 TtlRunnable 透明读取
+                            TenantContextHolder.set(principal);
                             log.info("[TenantAuthenticationFilter] Authentication 设置成功: userId={}, tenantId={}, role={}", userId, tenantId, role);
                         }
                     }
@@ -110,7 +114,12 @@ public class TenantAuthenticationFilter extends OncePerRequestFilter {
             }
         }
 
-        filterChain.doFilter(request, response);
+        try {
+            filterChain.doFilter(request, response);
+        } finally {
+            // 防止虚拟线程被线程池复用时出现上下文泄漏（TTL 内存泄漏防护）
+            TenantContextHolder.clear();
+        }
     }
 
     private List<SimpleGrantedAuthority> resolveAuthorities(String roleClaim) {

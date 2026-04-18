@@ -20,6 +20,7 @@ import com.yoswell.agenticrag.core.agent.dto.RagSearchResultDTO;
 import com.yoswell.agenticrag.core.agent.dto.RetrievedChunkDTO;
 import com.yoswell.agenticrag.core.agent.rag.RerankerClient;
 import com.yoswell.agenticrag.retrieval.document.service.KnowledgeSearchService;
+import com.yoswell.agenticrag.web.security.context.TenantContextHolder;
 import com.yoswell.agenticrag.web.security.model.TenantUser;
 
 import dev.langchain4j.agent.tool.Tool;
@@ -143,12 +144,18 @@ public class RagTool {
     }
 
     private TenantUser resolveCurrentTenantUser() {
+        // 1️⃣ 优先使用会话级快照（由 ChatOrchestrator 在 ReAct 循环入口注册）
         TenantUser sessionBoundUser = ragRetrievalContextHolder.currentTenantUser().orElse(null);
+
+        // 2️⃣ Spring SecurityContext（在请求主线程上有效，子线程可能为空）
         var authentication = SecurityContextHolder.getContext().getAuthentication();
         TenantUser securityContextUser = null;
         if (authentication != null && authentication.getPrincipal() instanceof TenantUser user) {
             securityContextUser = user;
         }
+
+        // 3️⃣ TTL 传播层（子虚拟线程 / 线程池任务内的安全兼容层）
+        TenantUser ttlUser = TenantContextHolder.get();
 
         if (sessionBoundUser != null) {
             if (securityContextUser != null && !sameIdentity(sessionBoundUser, securityContextUser)) {
@@ -162,6 +169,11 @@ public class RagTool {
 
         if (securityContextUser != null) {
             return securityContextUser;
+        }
+
+        if (ttlUser != null) {
+            log.debug("[RAG TOOL] Resolved TenantUser via TenantContextHolder (TTL): userId={}", ttlUser.getUserId());
+            return ttlUser;
         }
 
         log.warn("[RAG TOOL] 权限缺失或无效，未找到可用租户身份。threadName={}, threadId={}",

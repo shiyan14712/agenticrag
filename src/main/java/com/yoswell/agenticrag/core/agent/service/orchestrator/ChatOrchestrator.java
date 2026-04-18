@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.alibaba.ttl.TtlRunnable;
 import com.yoswell.agenticrag.common.constants.ChatCacheConstants;
 import com.yoswell.agenticrag.common.exception.BusinessException;
 import com.yoswell.agenticrag.common.exception.BusinessExceptionMapper;
@@ -277,7 +278,7 @@ public class ChatOrchestrator {
             return;
         }
 
-        Thread.startVirtualThread(() -> {
+        Runnable titleTask = TtlRunnable.get(() -> {
             log.info("[ReAct] 异步生成会话标题: session={}", sessionId);
             try {
                 chatService.generateTitleAndSave(sessionId, message);
@@ -288,6 +289,9 @@ public class ChatOrchestrator {
                 stringRedisTemplate.delete(titleGenKey);
             }
         });
+        Thread.ofVirtual()
+                .name("title-gen[" + sessionId + "]")
+                .start(titleTask);
     }
 
     /**

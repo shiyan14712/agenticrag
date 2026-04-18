@@ -7,6 +7,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -106,11 +107,17 @@ public class RerankerClient {
         if (StringUtils.hasText(rerankerModelName)) {
             payload.put("model", rerankerModelName);
         }
-        payload.put("query", query);
-        payload.put("top_n", chunks.size());
-        payload.put("return_text", true);
-        ArrayNode documents = payload.putArray("documents");
+
+        // DashScope Reranker API: query & documents must be nested under "input"
+        ObjectNode input = payload.putObject("input");
+        input.put("query", query);
+        ArrayNode documents = input.putArray("documents");
         chunks.forEach(chunk -> documents.add(chunk.content()));
+
+        // DashScope Reranker API: top_n & return_documents go under "parameters"
+        ObjectNode parameters = payload.putObject("parameters");
+        parameters.put("top_n", chunks.size());
+        parameters.put("return_documents", false);
 
         return objectMapper.writeValueAsString(payload);
     }
@@ -171,8 +178,8 @@ public class RerankerClient {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(rerankerApiUrl))
                 .timeout(Duration.ofSeconds(30))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(requestBody));
+                .header("Content-Type", "application/json; charset=utf-8")
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8));
 
         if (StringUtils.hasText(rerankerApiKey)) {
             builder.header("Authorization", "Bearer " + rerankerApiKey);
@@ -283,8 +290,10 @@ public class RerankerClient {
 
     private List<RetrievedChunkDTO> mergeRerankerResponse(List<RetrievedChunkDTO> chunks, String body) throws IOException {
         JsonNode root = objectMapper.readTree(body);
-        JsonNode results = root.path("results");
+        // DashScope Reranker API: results are nested under output.results
+        JsonNode results = root.path("output").path("results");
         if (!results.isArray() || results.isEmpty()) {
+            log.warn("[Reranker Client] 响应中未找到 output.results，回退到原始顺序。body={}", body);
             return List.copyOf(chunks);
         }
 

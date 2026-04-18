@@ -8,6 +8,8 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import com.alibaba.ttl.TtlRunnable;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -276,7 +278,12 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
         // 4. 触发异步滑动窗口摘要刷新
         if (!evictedMessages.isEmpty()) {
             final List<ChatMessage> finalEvicted = new ArrayList<>(evictedMessages);
-            Thread.startVirtualThread(() -> refreshSummariesSlidingWindow(sessionId, finalEvicted));
+            // 使用命名虚拟线程 + TtlRunnable，便于监控定位，同时保留请求上下文传播能力
+            Runnable task = TtlRunnable.get(
+                    () -> refreshSummariesSlidingWindow(sessionId, finalEvicted));
+            Thread.ofVirtual()
+                    .name("memory-summarizer[" + sessionId + "]")
+                    .start(task);
         }
     }
 

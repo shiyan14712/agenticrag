@@ -94,9 +94,9 @@ langchain4j:
       model-name: "Qwen3-Embed-4B"
       dimensions: 2048
   reranker:
-    api-url: "http://10.119.5.190:8003/v1/rerank"
-    api-key: "jina_1ff6d644760040369f44eba736ca5d37Crdu3unp4kVFHxpUIuouUri0DC4q"
-    model-name: "/app/LLaMA-Factory/data/Qwen3-Reranker-4B"
+    api-url: "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    api-key: "sk-c27077783afc4b758a1c335cadadb624"
+    model-name: "qwen3-vl-rerank"
 
 
 jwt:

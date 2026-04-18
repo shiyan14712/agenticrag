@@ -8,11 +8,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 
+import com.alibaba.ttl.TtlRunnable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
+
+import com.yoswell.agenticrag.web.security.context.TenantContextHolder;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.yoswell.agenticrag.common.exception.ErrorCode;
@@ -78,7 +81,11 @@ public class PreferenceTool {
                 normalizedKey, normalizedValue, currentUserId);
 
         CompletableFuture<String> callback = new CompletableFuture<>();
-        Thread.startVirtualThread(() -> callback.complete(persistPreferenceWithVerification(currentUserId, normalizedKey, normalizedValue)));
+        Runnable task = TtlRunnable.get(
+                () -> callback.complete(persistPreferenceWithVerification(currentUserId, normalizedKey, normalizedValue)));
+        Thread.ofVirtual()
+                .name("preference-persist[" + currentUserId + "]-" + normalizedKey)
+                .start(task);
 
         try {
             return callback.get(PERSIST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
@@ -134,12 +141,18 @@ public class PreferenceTool {
     }
 
     private String resolveCurrentUserId() {
+        // 1️⃣ 优先使用会话级快照（由 ChatOrchestrator 在 ReAct 循环入口注册）
         TenantUser sessionBoundUser = ragRetrievalContextHolder.currentTenantUser().orElse(null);
+
+        // 2️⃣ Spring SecurityContext（在请求主线程上有效，子线程可能为空）
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         TenantUser securityUser = null;
         if (authentication != null && authentication.getPrincipal() instanceof TenantUser user) {
             securityUser = user;
         }
+
+        // 3️⃣ TTL 传播层（子虚拟线程 / 线程池任务内的看护脶）
+        TenantUser ttlUser = TenantContextHolder.get();
 
         if (sessionBoundUser != null) {
             if (securityUser != null && !sameIdentity(sessionBoundUser, securityUser)) {
@@ -152,6 +165,11 @@ public class PreferenceTool {
 
         if (securityUser != null) {
             return securityUser.getUserId();
+        }
+
+        if (ttlUser != null) {
+            log.debug("[PreferenceTool] Resolved userId via TenantContextHolder (TTL): userId={}", ttlUser.getUserId());
+            return ttlUser.getUserId();
         }
 
         if (authentication != null && authentication.isAuthenticated()) {
