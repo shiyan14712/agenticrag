@@ -21,6 +21,7 @@ public class StandardTxtStrategy implements DocumentParserStrategy {
 
     private static final int DEFAULT_CHUNK_SIZE = 1200;
     private static final int DEFAULT_CHUNK_OVERLAP = 200;
+    private static final int START_BOUNDARY_LOOKAROUND = 40;
 
     /**
      * 解析纯文本内容并生成 chunk
@@ -82,10 +83,7 @@ public class StandardTxtStrategy implements DocumentParserStrategy {
                 break;
             }
 
-            start = Math.max(end - normalizedOverlap, start + 1);
-            while (start < normalized.length() && Character.isWhitespace(normalized.charAt(start))) {
-                start++;
-            }
+            start = adjustChunkStart(normalized, start, end, normalizedOverlap);
         }
 
         return List.copyOf(chunks);
@@ -112,5 +110,70 @@ public class StandardTxtStrategy implements DocumentParserStrategy {
             }
         }
         return maxEnd;
+    }
+
+    /**
+     * 尽量把下一个 chunk 的起点贴近自然断点，避免 overlap 从单词中间开始。
+     *
+     * @param content 规范化后的纯文本
+     * @param previousStart 当前 chunk 的起点
+     * @param previousEnd 当前 chunk 的终点
+     * @param overlap 重叠窗口长度
+     * @return 调整后的下一个 chunk 起点
+     */
+    private static int adjustChunkStart(String content, int previousStart, int previousEnd, int overlap) {
+        int lowerBound = previousStart + 1;
+        int tentativeStart = Math.max(previousEnd - overlap, lowerBound);
+        int adjustedStart = alignToWordBoundary(content, tentativeStart, lowerBound);
+        return skipLeadingWhitespace(content, adjustedStart);
+    }
+
+    /**
+     * 在有限窗口内把起点回拉到单词边界；如果附近没有合适边界，就保留原位置。
+     *
+     * @param content 规范化后的纯文本
+     * @param candidateStart 候选起点
+     * @param lowerBound 最小允许起点
+     * @return 对齐后的起点
+     */
+    private static int alignToWordBoundary(String content, int candidateStart, int lowerBound) {
+        if (candidateStart <= lowerBound || candidateStart >= content.length()) {
+            return candidateStart;
+        }
+
+        if (Character.isWhitespace(content.charAt(candidateStart))) {
+            return candidateStart;
+        }
+
+        int backwardLimit = Math.max(lowerBound, candidateStart - START_BOUNDARY_LOOKAROUND);
+        for (int index = candidateStart; index > backwardLimit; index--) {
+            if (Character.isWhitespace(content.charAt(index - 1))) {
+                return index;
+            }
+        }
+
+        int forwardLimit = Math.min(content.length(), candidateStart + START_BOUNDARY_LOOKAROUND);
+        for (int index = candidateStart; index < forwardLimit; index++) {
+            if (Character.isWhitespace(content.charAt(index))) {
+                return index + 1;
+            }
+        }
+
+        return candidateStart;
+    }
+
+    /**
+     * 跳过 chunk 起点处的空白字符，避免产生空前缀。
+     *
+     * @param content 规范化后的纯文本
+     * @param start 候选起点
+     * @return 跳过空白后的起点
+     */
+    private static int skipLeadingWhitespace(String content, int start) {
+        int adjustedStart = start;
+        while (adjustedStart < content.length() && Character.isWhitespace(content.charAt(adjustedStart))) {
+            adjustedStart++;
+        }
+        return adjustedStart;
     }
 }

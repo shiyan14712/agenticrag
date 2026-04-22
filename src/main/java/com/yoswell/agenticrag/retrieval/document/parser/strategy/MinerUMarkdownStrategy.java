@@ -33,6 +33,7 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
     private static final Pattern FENCE_PATTERN = Pattern.compile("^\\s*(```+|~~~+).*$");
     private static final int DEFAULT_CHUNK_SIZE = 1200;
     private static final int DEFAULT_CHUNK_OVERLAP = 200;
+    private static final int START_BOUNDARY_LOOKAROUND = 40;
 
     /**
      * 解析 Markdown 文本并生成结构化 chunk
@@ -200,10 +201,7 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
                 break;
             }
 
-            start = Math.max(end - effectiveOverlap, start + 1);
-            while (start < body.length() && Character.isWhitespace(body.charAt(start))) {
-                start++;
-            }
+            start = adjustChunkStart(body, start, end, effectiveOverlap);
         }
     }
 
@@ -292,6 +290,71 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
             }
         }
         return maxEnd;
+    }
+
+    /**
+     * 尽量把 overlap 的回退起点对齐到自然断点，避免正文从单词中间开始。
+     *
+     * @param body 当前 section 正文
+     * @param previousStart 当前 chunk 起点
+     * @param previousEnd 当前 chunk 终点
+     * @param overlap 相邻 chunk 的重叠长度
+     * @return 调整后的下一个 chunk 起点
+     */
+    private static int adjustChunkStart(String body, int previousStart, int previousEnd, int overlap) {
+        int lowerBound = previousStart + 1;
+        int tentativeStart = Math.max(previousEnd - overlap, lowerBound);
+        int adjustedStart = alignToWordBoundary(body, tentativeStart, lowerBound);
+        return skipLeadingWhitespace(body, adjustedStart);
+    }
+
+    /**
+     * 在有限窗口内把起点拉回到词边界；若附近没有合适断点，则保留候选位置。
+     *
+     * @param body 当前 section 正文
+     * @param candidateStart 候选起点
+     * @param lowerBound 最小允许起点
+     * @return 对齐后的起点
+     */
+    private static int alignToWordBoundary(String body, int candidateStart, int lowerBound) {
+        if (candidateStart <= lowerBound || candidateStart >= body.length()) {
+            return candidateStart;
+        }
+
+        if (Character.isWhitespace(body.charAt(candidateStart))) {
+            return candidateStart;
+        }
+
+        int backwardLimit = Math.max(lowerBound, candidateStart - START_BOUNDARY_LOOKAROUND);
+        for (int index = candidateStart; index > backwardLimit; index--) {
+            if (Character.isWhitespace(body.charAt(index - 1))) {
+                return index;
+            }
+        }
+
+        int forwardLimit = Math.min(body.length(), candidateStart + START_BOUNDARY_LOOKAROUND);
+        for (int index = candidateStart; index < forwardLimit; index++) {
+            if (Character.isWhitespace(body.charAt(index))) {
+                return index + 1;
+            }
+        }
+
+        return candidateStart;
+    }
+
+    /**
+     * 跳过 chunk 起点处的连续空白，保证正文前缀整洁。
+     *
+     * @param body 当前 section 正文
+     * @param start 候选起点
+     * @return 跳过空白后的起点
+     */
+    private static int skipLeadingWhitespace(String body, int start) {
+        int adjustedStart = start;
+        while (adjustedStart < body.length() && Character.isWhitespace(body.charAt(adjustedStart))) {
+            adjustedStart++;
+        }
+        return adjustedStart;
     }
 
     /**

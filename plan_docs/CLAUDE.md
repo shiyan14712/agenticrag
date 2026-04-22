@@ -8,9 +8,9 @@
 
 **核心存储规范，分工明确各司其职：**
 *   **MinIO**：负责所有物理文件的存储（原始 PDF/Word、解析后的庞大 Markdown 文件、提取的图片）。
-*   **MySQL**：只存元数据指针（文档状态、MinIO URL、权限配置）和用户长期记忆（`user_global_memory`），绝对不存文件文本。
-*   **Redis**：负责短期与中短期对话上下文缓存（Session Memory）和高频热点数据。
-*   **ElasticSearch (8.x+)**：承载文本 Chunk 和 Dense Vector，执行混合检索。
+*   **MySQL**：存储文档meta_data元数据、充当消息投递前的Outbox、持久化用户全局偏好（`user_global_memory`），绝对不存文件文本。
+*   **Redis**：负责用户登录状态快速校验，短期与中短期对话上下文缓存（Session Memory）和高频热点数据。
+*   **ElasticSearch (8.x+)**：存储分块文本向量，承载BM25关键词检索和KNN语义检索，执行混合检索。
 
 ---
 
@@ -37,7 +37,7 @@
 
 **目标**：提供企业级的高召回率检索能力，将 RAG 流程封装为标准的 `@Tool` 供 Agent 随时调用。
 
-*   **技术栈**：ElasticSearch (8.x), Embedding API (BGE-Large), Reranker API (BGE-Reranker)
+*   **技术栈**：ElasticSearch (8.x), Embedding API (Qwen3-Embed-4B, 2048 dims), Reranker API (DashScope qwen3-vl-rerank)
 *   **配置参数 ( application.yml 静态可调)**：
     ```yaml
     rag:
@@ -45,12 +45,14 @@
         knn-top-k: 20      # 向量 KNN 检索召回数
         bm25-top-k: 20     # 关键词 BM25 检索召回数
         rerank-top-n: 5    # 重排序后最终保留进入 Prompt 的 Chunk 数
+        # 最终分数硬阈值：统一作用于 reranker 分数或 RRF 降级分数；低于该值的候选将被强制舍弃
+        final-score-threshold: 0.5
     ```
 *   **实现细节与流程**：
     *   **核心 Tool 封装**：定义 `@Tool("search_enterprise_knowledge")`，要求大模型必须传入 `query` 参数。
     *   **混合检索 (Hybrid Search)**：在 ElasticSearch 中通过 Java API 并发执行两路查询：向量相似度匹配 + BM25 全文检索。
     *   **RRF 融合与重排序**：将双路召回的结果（Top 20）使用倒数秩融合（Reciprocal Rank Fusion）合并，随后统一发送至独立的 Reranker 模型进行 Cross-Attention 交叉打分，截取 Top `rerank-top-n`。
-    *   **[TODO] Rerank Score Threshold**: 设置一个经验阈值，强行去除低于这个值的 rerank 后的文档 Top-k，再次精简。
+    *   **Final Score Threshold 过滤**：对 Reranker 返回分数（或 Reranker 降级后的 RRF 分数）统一执行硬阈值过滤（`final-score-threshold: 0.5`）；低于阈值的候选强制丢弃，若全部被过滤则返回空结果并打 WARN 日志。该逻辑在 `RagTool.applyFinalScoreThreshold()` 中实现。
     *   **Context 组装**：将这 Top-k 的 Chunk 组装成带有明确 `[Doc ID]` 标记的文本块，作为 Tool 的返回值（Observation）喂给 Agent。
 *   **工程落地补充（已实现约束）**：
     *   ElasticSearch 连接配置必须从 `spring.elasticsearch.uris / username / password / api-key` 读取，不允许在 Java Config 中写死 `localhost`。
@@ -76,7 +78,7 @@
 
 为了保证多会话场景下的上下文稳定性，系统采用**一用户一活跃会话指针**模型：
 
-1. **指针定义**：Redis 中 `user:active_session:{userId}` 存储当前用户的唯一 `sessionId`。它是“默认上下文指针”，不是会话列表容器。
+1. **指针定义**：Redis 中 `user:active-session:{userId}` 存储当前用户的唯一 `sessionId`。它是“默认上下文指针”，不是会话列表容器。
 2. **设计目的**：减少每次请求都强依赖前端显式传 `sessionId` 的复杂度；在对话链路中提供稳定的默认会话定位能力。
 3. **生命周期触发点**：
     * 创建会话后，默认将新会话设为 active。
@@ -95,7 +97,7 @@
 3. **会话切换不可阻塞**：`SessionContextSwitcher` 中的旧会话持久化和 L2/L3 压缩必须异步执行（`@Async` 或线程池），切换操作本身应在 200ms 内返回响应。
 4. **Redis 只是加速层**：所有 Redis 操作必须有 MySQL 降级路径。`SessionRedisManager` 的每个读方法都必须接受一个 `Supplier<T> fallback` 参数。
 5. **异步任务防重复最佳实践 (如标题生成)**：会话标题等只需触发一次的增强特性，不要通过每次前端发来流式消息时轮询 DB (`getTitle() == null`) 判断。必须统一利用 Redis 的 `SETNX` (搭配合理的生命周期边界，如 24h) 作为状态位锁互斥，并在虚拟线程中异步操作。这能极大减轻长连接下发的阻塞可能性与 DB 压力。
-6. **Active 指针维护是强约束**：在 `create/switch/archive/delete` 这些会话生命周期操作中，必须维护 `user:active_session:{userId}` 的一致性。严禁留下悬挂指针（指向已归档/已删除/不存在会话）。
+6. **Active 指针维护是强约束**：在 `create/switch/archive/delete` 这些会话生命周期操作中，必须维护 `user:active-session:{userId}` 的一致性。严禁留下悬挂指针（指向已归档/已删除/不存在会话）。
 
 
 
@@ -105,10 +107,10 @@
 
 *   **技术栈**：Redis (Session Memory), MySQL (Global Memory), LangChain4j 自定义 `ChatMemoryStore`
 *   **分级上下文压缩 (Hierarchical Compression)**：
-    实现自定义的对话拦截器与存储机制，依据对话轮数和 Token 消耗动态处理：
-    *   **L1 (近程)**：最近 5 轮对话（原文保留，存 Redis）。
-    *   **L2 (中程)**：第 6-15 轮对话。后台异步调用轻量级 LLM 将其总结为摘要（如“用户刚才探讨了系统架构图设计”）。
-    *   **L3 (远程)**：15 轮以上对话，重度提炼，仅保留核心实体和最终结论。
+    实现自定义 `HierarchicalChatMemoryStore`，依据消息数量动态分层（配置收口在 `application.yaml`）：
+    *   **L1 (近程)**：最近 10 条消息（约 5 轮对话）原文保留，存 Redis。对应配置 `memory.l1-limit: 10`。
+    *   **L2 (中程)**：第 11-30 条消息（约第 6-15 轮）。后台异步调用轻量级 LLM 将其总结为摘要（如”用户刚才探讨了系统架构图设计”）。对应配置 `memory.l2-limit: 30`。
+    *   **L3 (远程)**：第 31-40 条消息（约第 16-20 轮）以上，重度提炼，仅保留核心实体和最终结论。对应配置 `memory.max-messages: 40`。
 *   **企业级长期记忆 (Long-Term Memory)**：
     *   **持久化介质**：MySQL `user_global_memory` 表（取代单机 `.md` 文件以支持分布式部署）。
     *   **自动提取**：提供 `@Tool("save_user_preference")`。Agent 发现用户偏好（如“我只看核心代码”、“用中文回复”）时自主调用该工具写入 MySQL。
@@ -130,7 +132,7 @@
     *   `doc-dlq` (死信队列): 失败超过 3 次的任务进入此队列，记录 MySQL `FAILED` 状态并报警。
 *   **离线 Chunking 与设计模式**：
     为了未来优雅地兼容 TXT、DOCX 等格式，此处**必须**使用设计模式：
-    *   **Strategy Pattern (策略模式)**：定义 `DocumentParserStrategy` 接口，下设 `MinerUMarkdownStrategy` (根据 Markdown 标题层级结合 Overlap 切分) 和 `StandardTxtStrategy`。
+    *   **Strategy Pattern (策略模式)**：定义 `DocumentParserStrategy` 接口，下设 `MinerUMarkdownStrategy` (根据 Markdown 标题层级结合 Overlap 切分) 和 `StandardTxtStrategy`；两类策略都要尽量在自然断点上结束并重新进入下一个 chunk，避免 overlap 从词中间开始。
     *   **Factory Method (工厂模式)**：`DocumentParserFactory` 根据 MySQL 中的文件后缀动态组装并返回具体的策略执行类。
 *   **工程落地补充（已实现约束）**：
     *   Kafka topic 名称、死信 topic 与消费重试参数必须统一收口到专用配置类（如 `DocumentKafkaProperties`）与 `application.yaml`，严禁在 Producer / Listener / Service 中继续硬编码 `doc-parse-request`、`doc-vectorize-request`、`doc-delete-request`、`doc-dlq`。
