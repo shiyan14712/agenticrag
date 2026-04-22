@@ -1,4 +1,6 @@
 spring:
+  profiles:
+    active: dev # remove when deploying
   threads:
     virtual:
       enabled: true
@@ -10,18 +12,18 @@ spring:
       max-request-size: 10MB
 
   datasource:
-    url: jdbc:mysql://10.60.31.253:3306/agenticrag?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://localhost:3306/agenticrag?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
     username: root
-    password: 1234
+    password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   data:
     redis:
-      host: 10.60.31.253
+      host: localhost
       port: 6379
 
   kafka:
-    bootstrap-servers: 10.60.31.253:9092
+    bootstrap-servers: localhost:9092
     producer:
       acks: all
       retries: 10
@@ -34,13 +36,13 @@ spring:
       enable-auto-commit: false
 
   elasticsearch:
-    uris: http://10.60.31.253:9200
+    uris: http://localhost:9200
     username: elastic
-    password: L4f*Pmmcm3GspDlPASq+
-    id: V3i5Qp0Bfiev1JTG4NXl
+    password: changeme
+    id: change-me
     name: agenticrag-key
-    api-key: U9tqWs_B494CPGU8r5-cHg
-    encoded: VjNpNVFwMEJmaWV2MUpURzROWGw6VTl0cVdzX0I0OTRDUEdVOHI1LWNIZw==
+    api-key: change-me
+    encoded: change-me
 
 mybatis-plus:
   mapper-locations: classpath*:/mapper/**/*.xml
@@ -54,9 +56,9 @@ mybatis-plus:
     default-enum-type-handler: org.apache.ibatis.type.EnumTypeHandler
 
 minio:
-  endpoint: http://10.60.31.253:19000
-  access-key: admin
-  secret-key: PaiSmart2025
+  endpoint: http://localhost:19000
+  access-key: minioadmin
+  secret-key: minioadmin
   bucket-name: agenticrag
 
 rag:
@@ -76,7 +78,7 @@ rag:
 langchain4j:
   llm:
     open-ai:
-      base-url: "http://10.119.5.190:9000/v1"
+      base-url: "http://localhost:9000/v1"
       api-key: "sk-your-llm-api-key"
       model-name: "qwen3.5-27b"
       temperature: 0.7
@@ -88,16 +90,16 @@ langchain4j:
     provider: "openai"
     open-ai:
 #      base-url: "https://ark.cn-beijing.volces.com/api/v3"
-#      api-key: "87db3f57-9659-4c28-9f18-9a3ce1754fc5"
+#      api-key: "your-volcengine-api-key"
 #      model-name: "doubao-embedding-vision-251215"
 #      dimensions: 1024
-      base-url: "http://10.119.5.190:8002/v1"
-      api-key: "sk-"
+      base-url: "http://localhost:8002/v1"
+      api-key: "sk-your-embedding-api-key"
       model-name: "Qwen3-Embed-4B"
       dimensions: 2048
   reranker:
     api-url: "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
-    api-key: "sk-c27077783afc4b758a1c335cadadb624"
+    api-key: "sk-your-reranker-api-key"
     model-name: "qwen3-vl-rerank"
 
 
@@ -130,7 +132,7 @@ agenticrag:
     consume:
       processing-timeout-ms: 60000
   mineru:
-    base-url: http://10.60.23.4:8000
+    base-url: http://localhost:8000
     async-enabled: true
     backend: hybrid-auto-engine
     parse-method: auto
