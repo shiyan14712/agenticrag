@@ -26,7 +26,7 @@ import com.yoswell.agenticrag.retrieval.document.parser.model.ParsedDocumentChun
  * 进行离线的语义切块和向量化准备阶段</p>
  */
 @Component
-public class MinerUMarkdownStrategy implements DocumentParserStrategy {
+public class MarkdownStrategy implements DocumentParserStrategy {
     private static final Pattern ATX_HEADING_PATTERN = Pattern.compile("^(#{1,6})\\s+(.*?)\\s*#*\\s*$");
     private static final Pattern SETEXT_H1_PATTERN = Pattern.compile("^\\s*=+\\s*$");
     private static final Pattern SETEXT_H2_PATTERN = Pattern.compile("^\\s*-+\\s*$");
