@@ -36,3 +36,4 @@ plan_docs/raw_stream_response.json
 /plan_docs/frontend_system_design.md
 /docs/interview.md
 /docs/ES_RESULT.json
+/.claude/settings.local.json

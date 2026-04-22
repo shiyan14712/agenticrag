@@ -2,13 +2,13 @@ package com.yoswell.agenticrag.platform.session.service;
 
 import java.util.UUID;
 
-import com.yoswell.agenticrag.core.memory.constants.MemoryStoreConstants;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.yoswell.agenticrag.common.exception.BusinessException;
 import com.yoswell.agenticrag.common.exception.ErrorCode;
+import com.yoswell.agenticrag.core.memory.constants.MemoryStoreConstants;
 import com.yoswell.agenticrag.platform.session.cache.SessionRedisManager;
 import com.yoswell.agenticrag.platform.session.entity.ChatMessageDO;
 import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
@@ -22,7 +22,9 @@ import tools.jackson.databind.ObjectMapper;
 /**
  * 聊天消息服务
  *
- * <p>负责用户消息和助手消息的落库，并维护会话消息计数及缓存同步</p>
+ * <p>
+ * 负责用户消息和助手消息的落库，并维护会话消息计数及缓存同步
+ * </p>
  */
 @Service
 @Slf4j
@@ -34,9 +36,9 @@ public class ChatMessageService {
     private final ObjectMapper objectMapper;
 
     public ChatMessageService(ChatMessageMapper messageMapper,
-                              ChatSessionMapper sessionMapper,
-                              SessionRedisManager redisManager,
-                              ObjectMapper objectMapper) {
+            ChatSessionMapper sessionMapper,
+            SessionRedisManager redisManager,
+            ObjectMapper objectMapper) {
         this.messageMapper = messageMapper;
         this.sessionMapper = sessionMapper;
         this.redisManager = redisManager;
@@ -47,7 +49,7 @@ public class ChatMessageService {
      * 保存用户消息
      *
      * @param sessionId 会话 ID
-     * @param content 用户消息内容
+     * @param content   用户消息内容
      */
     @Transactional
     public void saveUserMessage(String sessionId, String content) {
@@ -65,8 +67,8 @@ public class ChatMessageService {
      * 保存助手消息
      *
      * @param sessionId 会话 ID
-     * @param content 助手消息内容
-     * @param metadata 可选元数据（将序列化为 JSON 保存）
+     * @param content   助手消息内容
+     * @param metadata  可选元数据（将序列化为 JSON 保存）
      */
     @Transactional
     public void saveAssistantMessage(String sessionId, String content, Object metadata) {
@@ -92,13 +94,11 @@ public class ChatMessageService {
 
     private void incrementSessionMessageCount(String sessionId, int delta) {
         ChatSessionDO session = sessionMapper.selectOne(
-                new QueryWrapper<ChatSessionDO>().eq("session_id", sessionId)
-        );
+                new QueryWrapper<ChatSessionDO>().eq("session_id", sessionId));
         if (session == null) {
             throw new BusinessException(
                     ErrorCode.SESSION_NOT_FOUND.getCode(),
-                    ErrorCode.SESSION_NOT_FOUND.getMessage() + sessionId
-            );
+                    ErrorCode.SESSION_NOT_FOUND.getMessage() + sessionId);
         }
 
         Integer messageCount = session.getMessageCount();
@@ -106,7 +106,8 @@ public class ChatMessageService {
         session.setMessageCount(currentCount + delta);
         sessionMapper.updateById(session);
         // TODO(session-messages-cache): 消息写入后应失效/刷新 session:messages:* 缓存，避免历史分页数据脏读。
-        // TODO(session-messages-cache): 建议新增 redisManager.invalidateSessionMessagesCache(sessionId)。
+        // TODO(session-messages-cache): 建议新增
+        // redisManager.invalidateSessionMessagesCache(sessionId)。
         redisManager.cacheSessionMeta(session);
     }
 }

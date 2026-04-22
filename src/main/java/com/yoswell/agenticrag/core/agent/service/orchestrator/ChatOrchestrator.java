@@ -39,13 +39,17 @@ import tools.jackson.databind.ObjectMapper;
  * ReAct 流式对话编排器
  *
  * <p>
- * 职责分为三部分：</p>
+ * 职责分为三部分：
+ * </p>
  * <p>
- * 1. 驱动 LangChain4j 的流式推理链路，并将关键阶段转换成 SSE 事件推给前端</p>
+ * 1. 驱动 LangChain4j 的流式推理链路，并将关键阶段转换成 SSE 事件推给前端
+ * </p>
  * <p>
- * 2. 在流式会话生命周期内维护检索上下文、工具执行耗时与引用聚合</p>
+ * 2. 在流式会话生命周期内维护检索上下文、工具执行耗时与引用聚合
+ * </p>
  * <p>
- * 3. 处理会话级副作用，例如用户消息落库、助手消息落库，以及首轮消息后的异步标题生成</p>
+ * 3. 处理会话级副作用，例如用户消息落库、助手消息落库，以及首轮消息后的异步标题生成
+ * </p>
  */
 @Service
 @RequiredArgsConstructor
@@ -65,19 +69,24 @@ public class ChatOrchestrator {
      * 发起一轮 ReAct 流式对话
      *
      * <p>
-     * 统一执行顺序如下：</p>
+     * 统一执行顺序如下：
+     * </p>
      * <p>
-     * 1. 先保存用户消息，并尝试触发“仅首轮执行一次”的异步标题生成</p>
+     * 1. 先保存用户消息，并尝试触发“仅首轮执行一次”的异步标题生成
+     * </p>
      * <p>
-     * 2. 绑定当前会话的检索上下文，启动 Agent 的 TokenStream</p>
+     * 2. 绑定当前会话的检索上下文，启动 Agent 的 TokenStream
+     * </p>
      * <p>
      * 3. 将 thinking / tool_start / tool_result / message / citations / done
-     * 逐步发给前端</p>
+     * 逐步发给前端
+     * </p>
      * <p>
-     * 4. 在完成或失败时清理上下文绑定，避免线程复用污染后续请求</p>
+     * 4. 在完成或失败时清理上下文绑定，避免线程复用污染后续请求
+     * </p>
      *
-     * @param sessionId 会话 ID
-     * @param message 用户输入
+     * @param sessionId  会话 ID
+     * @param message    用户输入
      * @param tenantUser 当前请求经 JWT 验证后的用户身份快照
      * @return SSE 发射器
      */
@@ -134,14 +143,14 @@ public class ChatOrchestrator {
                         String resultPreview = summarizeToolResult(outcome.message());
                         if (outcome.failed()) {
                             log.warn("[ReAct] Tool 执行失败: tool={}, elapsed={}ms, resultPreview={}",
-                                toolName, elapsed, resultPreview);
+                                    toolName, elapsed, resultPreview);
                             ToolEventDTO resultEvent = ToolEventDTO.failed(toolName, resultPreview);
                             emitSseEventJson(emitter, SseEventType.TOOL_RESULT, resultEvent);
                             return;
                         }
 
                         log.info("[ReAct] Tool 执行完成: tool={}, elapsed={}ms, resultPreview={}",
-                            toolName, elapsed, resultPreview);
+                                toolName, elapsed, resultPreview);
                         ToolEventDTO resultEvent = ToolEventDTO.completed(toolName, resultPreview, elapsed);
                         emitSseEventJson(emitter, SseEventType.TOOL_RESULT, resultEvent);
                     })
@@ -167,9 +176,9 @@ public class ChatOrchestrator {
                                     sessionId, fullResponse.length(), citations.size());
                         } catch (Exception exception) {
                             BusinessException businessException = BusinessExceptionMapper.map(exception,
-                                ErrorCode.AGENT_STREAM_INTERRUPTED);
+                                    ErrorCode.AGENT_STREAM_INTERRUPTED);
                             log.error("[ReAct] 会话收尾失败: session={}, code={}, message={}",
-                                sessionId, businessException.getCode(), businessException.getMessage(), exception);
+                                    sessionId, businessException.getCode(), businessException.getMessage(), exception);
                             emitBusinessErrorAndComplete(emitter, businessException);
                             ragRetrievalContextHolder.clearSessionResult(sessionId);
                         } finally {
@@ -182,9 +191,9 @@ public class ChatOrchestrator {
                         bindRagContextToCurrentThread(sessionId);
                         try {
                             BusinessException businessException = BusinessExceptionMapper.map(error,
-                                ErrorCode.AGENT_STREAM_INTERRUPTED);
+                                    ErrorCode.AGENT_STREAM_INTERRUPTED);
                             log.error("[ReAct] TokenStream 执行异常: session={}, code={}, message={}",
-                                sessionId, businessException.getCode(), businessException.getMessage(), error);
+                                    sessionId, businessException.getCode(), businessException.getMessage(), error);
                             emitBusinessErrorAndComplete(emitter, businessException);
                         } finally {
                             closeQuietly(finalRetrievalScope);
@@ -194,10 +203,10 @@ public class ChatOrchestrator {
                     })
                     .start();
         } catch (Exception e) {
-                    BusinessException businessException = BusinessExceptionMapper.map(e, ErrorCode.AGENT_STREAM_INTERRUPTED);
-                    log.error("[ReAct] 会话启动失败: session={}, code={}, message={}",
-                        sessionId, businessException.getCode(), businessException.getMessage(), e);
-                    emitBusinessErrorAndComplete(emitter, businessException);
+            BusinessException businessException = BusinessExceptionMapper.map(e, ErrorCode.AGENT_STREAM_INTERRUPTED);
+            log.error("[ReAct] 会话启动失败: session={}, code={}, message={}",
+                    sessionId, businessException.getCode(), businessException.getMessage(), e);
+            emitBusinessErrorAndComplete(emitter, businessException);
             closeQuietly(retrievalScope);
             ragRetrievalContextHolder.clearSessionBindings(sessionId);
             ragRetrievalContextHolder.clearSessionResult(sessionId);
@@ -210,7 +219,8 @@ public class ChatOrchestrator {
      * 发送纯文本 SSE 事件
      *
      * <p>
-     * 适用于 thinking 与 message 这类天然按 token 流动的文本事件</p>
+     * 适用于 thinking 与 message 这类天然按 token 流动的文本事件
+     * </p>
      */
     private void emitSseEvent(SseEmitter emitter, SseEventType eventType, String data) {
         try {
@@ -224,7 +234,8 @@ public class ChatOrchestrator {
      * 发送 JSON 类型 SSE 事件
      *
      * <p>
-     * 适用于 tool_start、tool_result、error、citations 这类结构化载荷</p>
+     * 适用于 tool_start、tool_result、error、citations 这类结构化载荷
+     * </p>
      */
     private void emitSseEventJson(SseEmitter emitter, SseEventType eventType, Object payload) {
         try {
@@ -242,7 +253,7 @@ public class ChatOrchestrator {
         ErrorPayload payload = ErrorPayload.fromBusinessException(businessException);
         log.warn("[ReAct] 发送错误事件并结束 SSE: code={}, message={}", payload.code(), payload.message());
         emitSseEventJson(emitter, SseEventType.ERROR,
-            payload);
+                payload);
         emitSseEvent(emitter, SseEventType.DONE, "{}");
         emitter.complete();
     }
@@ -251,7 +262,8 @@ public class ChatOrchestrator {
      * 发送引用卡片事件
      *
      * <p>
-     * 只有存在引用时才发送，避免前端为“空引用”渲染无意义组件</p>
+     * 只有存在引用时才发送，避免前端为“空引用”渲染无意义组件
+     * </p>
      */
     private void emitCitationsWidget(SseEmitter emitter, List<CitationDTO> citations) {
         if (citations == null || citations.isEmpty()) {
@@ -266,7 +278,8 @@ public class ChatOrchestrator {
      * 首轮消息后异步生成会话标题
      *
      * <p>
-     * 使用 Redis 锁避免重复生成；如果生成失败，则主动释放锁，允许后续消息重新触发</p>
+     * 使用 Redis 锁避免重复生成；如果生成失败，则主动释放锁，允许后续消息重新触发
+     * </p>
      */
     private void asyncTitleGenerationIfNeeded(String sessionId, String message) {
         String titleGenKey = ChatCacheConstants.SESSION_TITLE_GEN_PREFIX + sessionId;
@@ -310,7 +323,8 @@ public class ChatOrchestrator {
      * 生成工具参数摘要
      *
      * <p>
-     * 统一压缩空白符，并限制长度，避免长参数把日志和前端状态卡片刷屏</p>
+     * 统一压缩空白符，并限制长度，避免长参数把日志和前端状态卡片刷屏
+     * </p>
      */
     private String summarizeToolArgs(String arguments) {
         if (arguments == null) {
@@ -324,7 +338,8 @@ public class ChatOrchestrator {
      * 生成工具结果摘要
      *
      * <p>
-     * 只保留前 120 个字符，方便日志定位问题，同时避免原始结果过长</p>
+     * 只保留前 120 个字符，方便日志定位问题，同时避免原始结果过长
+     * </p>
      */
     private String summarizeToolResult(String result) {
         if (result == null) {
@@ -339,7 +354,8 @@ public class ChatOrchestrator {
      *
      * <p>
      * 约定：Tool 返回 "__TOOL_SUCCESS__ ..." / "__TOOL_FAILED__ ..." 前缀时，
-     * 编排器据此推送 completed / failed 卡片；其余结果默认视为 completed</p>
+     * 编排器据此推送 completed / failed 卡片；其余结果默认视为 completed
+     * </p>
      */
     private ToolExecutionOutcome decodeToolExecutionOutcome(String rawResult) {
         if (rawResult == null || rawResult.isBlank()) {
@@ -366,7 +382,8 @@ public class ChatOrchestrator {
      * 把当前回调线程重新注册到会话级检索上下文中
      *
      * <p>
-     * 这是为了兼容流式回调与工具执行可能发生在线程切换上的情况</p>
+     * 这是为了兼容流式回调与工具执行可能发生在线程切换上的情况
+     * </p>
      */
     private void bindRagContextToCurrentThread(String sessionId) {
         ragRetrievalContextHolder.registerCurrentThread(sessionId);
@@ -376,7 +393,8 @@ public class ChatOrchestrator {
      * 安静关闭作用域对象
      *
      * <p>
-     * 这里不向外抛异常，避免清理阶段反向覆盖主异常</p>
+     * 这里不向外抛异常，避免清理阶段反向覆盖主异常
+     * </p>
      */
     private void closeQuietly(AutoCloseable scope) {
         if (scope == null) {
@@ -392,7 +410,9 @@ public class ChatOrchestrator {
     /**
      * SSE error 事件载荷
      *
-     * <p>提供统一工厂方法，确保错误码与错误消息不会出现空值，便于前端稳定处理</p>
+     * <p>
+     * 提供统一工厂方法，确保错误码与错误消息不会出现空值，便于前端稳定处理
+     * </p>
      */
     private record ErrorPayload(String code, String message) {
 
@@ -427,7 +447,9 @@ public class ChatOrchestrator {
     /**
      * 工具执行结果解码后的统一视图
      *
-     * <p>通过工厂方法统一处理空值与默认文案，避免编排器主流程里散落重复判断</p>
+     * <p>
+     * 通过工厂方法统一处理空值与默认文案，避免编排器主流程里散落重复判断
+     * </p>
      */
     private record ToolExecutionOutcome(boolean failed, String message) {
 
