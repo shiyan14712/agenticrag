@@ -1,151 +1,136 @@
 package com.yoswell.agenticrag.platform.session.controller;
 
-import java.util.Map;
-
-import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.yoswell.agenticrag.platform.session.dto.SessionCreateRequest;
-import com.yoswell.agenticrag.platform.session.dto.SessionUpdateRequest;
-import com.yoswell.agenticrag.platform.session.entity.ChatSession;
-import com.yoswell.agenticrag.platform.session.service.SessionContextSwitcher;
-import com.yoswell.agenticrag.platform.session.service.SessionService;
-import com.yoswell.agenticrag.util.SecurityUtils;
+import jakarta.validation.Valid;
 
-import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.yoswell.agenticrag.common.result.ApiResponse;
+import com.yoswell.agenticrag.platform.session.dto.request.DeleteSessionRequestDTO;
+import com.yoswell.agenticrag.platform.session.dto.request.SessionCreateRequestDTO;
+import com.yoswell.agenticrag.platform.session.dto.request.SessionListQueryRequestDTO;
+import com.yoswell.agenticrag.platform.session.dto.request.SessionMessageQueryRequestDTO;
+import com.yoswell.agenticrag.platform.session.dto.request.SessionUpdateRequestDTO;
+import com.yoswell.agenticrag.platform.session.dto.response.SessionDetailsRespDTO;
+import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
+import com.yoswell.agenticrag.platform.session.service.SessionContextSwitcher;  
+import com.yoswell.agenticrag.platform.session.service.SessionService;
+import com.yoswell.agenticrag.web.security.util.SecurityUtils;
+
+import lombok.RequiredArgsConstructor;
 
 /**
- * 会话(Session)生命周期管理控制器
- * 
- * 负责智能体对话会话的创建、查询、历史记录拉取、切换上下文及归档操作。
- * 严格基于当前登录用户的 UserID 进行多租户级别的资源隔离，避免串号。
+ * 会话生命周期控制器
+ *
+ * <p>负责会话的创建、查询、激活、更新与删除等管理能力</p>
+ * <p>所有接口默认在当前登录用户上下文下执行，Service 层会继续执行归属校验，
+ * 防止跨用户会话越权访问</p>
+ * <p>除流式接口外，本控制器统一返回 ApiResponse 作为业务响应封装</p>
  */
 @RestController
 @RequestMapping("/api/v1/sessions")
+@RequiredArgsConstructor
 public class SessionController {
 
     private final SessionService sessionService;
     private final SessionContextSwitcher sessionSwitcher;
 
-    public SessionController(SessionService sessionService, SessionContextSwitcher sessionSwitcher) {
-        this.sessionService = sessionService;
-        this.sessionSwitcher = sessionSwitcher;
-    }
-
     /**
-     * 创建全新对话会话 (New Session)
+     * 创建会话
      *
-     * 场景：用户点击左侧边栏的“新对话”按钮时调用。创建一个干净、未受上下文污染的独立会话空间。
-     * 
-     * @param request 包含可选的模型参数(例如: modelId)等配置信息
-     * @return 初始化的会话实体对象
+     * @param request 会话创建参数（可为空，服务端使用默认策略）
+     * @return 包含新建会话实体的统一响应
      */
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED)
-    public Mono<ChatSession> createSession(@RequestBody(required = false) SessionCreateRequest request) {
-        return Mono.fromCallable(() -> sessionService.createSession(SecurityUtils.getCurrentUserId(), request))
-                .subscribeOn(Schedulers.boundedElastic());
+    public ApiResponse<ChatSessionDO> createSession(@RequestBody(required = false) SessionCreateRequestDTO request) {
+        String userId = SecurityUtils.getCurrentUserId();
+        return ApiResponse.success(sessionService.createSession(userId, request));
     }
 
     /**
-     * 分页查询用户的会话列表
+     * 分页查询当前用户会话列表
      *
-     * 场景：用户打开页面，渲染左侧边栏此前的历史话题列表，通常按最后活跃时间降序。
-     *
-     * @param page 页码，从 0 开始，默认为 0
-     * @param size 每页拉取数量，默认为 20
-     * @param status 会话状态（如：ACTIVE, ARCHIVED），默认为 ACTIVE
-     * @return 分页装载的 ChatSession 数据对象
+     * @param reqDTO 查询参数（page/size/status）
+     * @return 包含会话分页结果的统一响应
      */
     @GetMapping
-    public Mono<Page<ChatSession>> getSessions(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
-            @RequestParam(defaultValue = "ACTIVE") String status) {
-        return Mono.fromCallable(() -> sessionService.getSessions(SecurityUtils.getCurrentUserId(), status, page, size))
-                .subscribeOn(Schedulers.boundedElastic());
+    public ApiResponse<IPage<ChatSessionDO>> getSessions(@ModelAttribute SessionListQueryRequestDTO reqDTO) {
+        String userId = SecurityUtils.getCurrentUserId();
+        return ApiResponse.success(sessionService.getSessions(
+                userId,
+                reqDTO.getStatus(),
+                reqDTO.getPage(),
+                reqDTO.getSize()));
     }
 
     /**
-     * 获取指定会话的历史消息记录
+     * 查询指定会话消息详情
      *
-     * 场景：用户在左侧边栏点击了过往的某个话题，进入主界面需要展现该该话题完整的聊天记录上下文。
-     * 
-     * @param sessionId 唯一会话 ID
-     * @param page 页码，从 0 开始，默认为 0
-     * @param size 每页载入记录数，为了沉浸式体验这里默认可设置稍大（如 50）
-     * @return 包含当前 Session 基础元数据和历史消息分页数据的聚合 Map
+     * @param sessionId 会话 ID
+     * @param request 查询参数（page/size）
+     * @return 包含会话详情与消息分页信息的统一响应
      */
     @GetMapping("/{sessionId}/messages")
-    public Mono<Map<String, Object>> getSessionMessages(
+    public ApiResponse<SessionDetailsRespDTO> getSessionMessages(
             @PathVariable String sessionId,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size) {
+            @Valid @ModelAttribute SessionMessageQueryRequestDTO request) {
         String userId = SecurityUtils.getCurrentUserId();
-        return Mono.fromCallable(() -> sessionService.getSessionDetails(sessionId, userId, page, size))
-                .subscribeOn(Schedulers.boundedElastic());
+        return ApiResponse.success(sessionService.getSessionDetails(
+                sessionId,
+                userId,
+                request.getPage(),
+                request.getSize()));
     }
 
     /**
-     * 切换/激活目标会话成为当前活跃上下文
+     * 激活并切换到目标会话
      *
-     * 场景：由于Agent可能会将活跃状态维持在 Redis 以优化速度，当用户在不同的话题间频繁跳转时，
-     * 利用此接口将目标会话推入热数据层（预热L1内存）。
-     *
-     * @param sessionId 唯将要激活的目标会话 ID
-     * @return 已经切换状态完成的 ChatSession 对象
+     * @param sessionId 会话 ID
+     * @return 包含激活后会话实体的统一响应
      */
     @PutMapping("/{sessionId}/activate")
-    public Mono<ChatSession> activateSession(@PathVariable String sessionId) {
-        return Mono.fromCallable(() -> sessionSwitcher.activateSession(sessionId, SecurityUtils.getCurrentUserId()))
-                .subscribeOn(Schedulers.boundedElastic());
+    public ApiResponse<ChatSessionDO> activateSession(@PathVariable String sessionId) {
+        String userId = SecurityUtils.getCurrentUserId();
+        return ApiResponse.success(sessionSwitcher.activateSessionInRedis(sessionId, userId));
     }
 
     /**
-     * 更新指定会话属性 
+     * 更新会话元信息
      *
-     * 场景：LLM 或用户自己重命名了当前的主题名称，或修改了系统设定的偏好参数。
-     *
-     * @param sessionId 指定待更新的会话 ID
-     * @param request 需要更新的字段定义(如 : title 等)
-     * @return 最新的 Session 数据
+     * @param sessionId 会话 ID
+     * @param request 更新参数
+     * @return 包含更新后会话实体的统一响应
      */
     @PatchMapping("/{sessionId}")
-    public Mono<ChatSession> updateSession(
+    public ApiResponse<ChatSessionDO> updateSession(
             @PathVariable String sessionId,
-            @RequestBody SessionUpdateRequest request) {
-        return Mono.fromCallable(() -> sessionService.updateSession(sessionId, SecurityUtils.getCurrentUserId(), request))
-                .subscribeOn(Schedulers.boundedElastic());
+            @RequestBody SessionUpdateRequestDTO request) {
+        String userId = SecurityUtils.getCurrentUserId();
+        return ApiResponse.success(sessionService.updateSession(sessionId, userId, request));
     }
 
     /**
-     * 归档或删除会话
+     * 删除或归档会话
      *
-     * 场景：用户不希望这个话题再出现在前端列表。支持逻辑归档而非物理硬删除（按模式调整）。
-     *
-     * @param sessionId 选择删除的会话 ID
-     * @param mode 操作模式，例如 'archive'（默认）仅标记不删除归档；'hard_delete' 代表级联彻底清除
-     * @return Mono.empty() 代表 204 No Content 执行成功
+     * @param sessionId 会话 ID
+     * @param request 查询参数（mode）
+     * @return 统一响应（data 为 null）
      */
     @DeleteMapping("/{sessionId}")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    public Mono<Void> deleteSession(
+    public ApiResponse<Void> deleteSession(
             @PathVariable String sessionId,
-            @RequestParam(defaultValue = "archive") String mode) {
-        return Mono.<Void>fromRunnable(() -> {
-            sessionService.deleteSession(sessionId, SecurityUtils.getCurrentUserId(), mode);
-        }).subscribeOn(Schedulers.boundedElastic());
+            @ModelAttribute DeleteSessionRequestDTO reqDTO) {
+        String userId = SecurityUtils.getCurrentUserId();
+        sessionService.deleteSession(sessionId, userId, reqDTO.getStatus());
+        return ApiResponse.success(null);
     }
 }

@@ -1,75 +1,96 @@
 package com.yoswell.agenticrag.retrieval.document.controller;
 
+import java.util.List;
 import java.util.Map;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.http.codec.multipart.FilePart;
+import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
+import com.yoswell.agenticrag.common.result.ApiResponse;
+import com.yoswell.agenticrag.retrieval.document.dto.DocumentDTO;
+import com.yoswell.agenticrag.retrieval.document.dto.response.DocumentUploadResponseDTO;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentService;
-import com.yoswell.agenticrag.util.SecurityUtils;
-
-import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
+import com.yoswell.agenticrag.web.security.util.SecurityUtils;
 
 /**
- * 知识库文档资源管理控制器
+ * 文档管理控制器
  *
- * 专门处理外部文档注入到 RAG 系统的文件网关层。负责接收用户的多模态文件上传与请求映射，
- * 并驱动后台通过 MQ 等管道机制实施对这些文件的脱敏、存储、深度拆解甚至向量化工作。
+ * <p>提供文档上传、状态查询、列表查询与删除能力</p>
+ * <p>接口内部使用当前租户上下文执行隔离访问，确保文档读写操作仅作用于当前租户数据域</p>
+ * <p>除流式接口外，统一返回 ApiResponse 业务响应结构</p>
  */
 @RestController
 @RequestMapping("/api/v1/documents")
+@RequiredArgsConstructor
 public class DocumentController {
-
-    private static final Logger log = LoggerFactory.getLogger(DocumentController.class);
 
     private final DocumentService documentService;
 
-    public DocumentController(DocumentService documentService) {
-        this.documentService = documentService;
-    }
-
     /**
-     * 上传企业文档进入知识库解析管道
+     * 上传文档并创建处理任务
      *
-     * 场景：用户需在界面长传如 PDF / Word 等不规则文档到系统知识库中。
-     * 由于后端采取 Python 深度学习框架 (例如 MinerU) 剥离分析版面，耗时巨大。
-     * 因此本接口仅响应上传接受状态，不做同步转换等待。
+     * <p>上传成功仅表示任务已创建，后续解析/向量化由异步链路完成</p>
      *
-     * @param file 由 Spring WebFlux 构建支持的异步数据流包装 (FilePart)
-     * @return 包含 documentId 唯一追踪编号，及其后续轮询追踪状态的任务票据
+     * @param file 上传文件
+     * @return 包含文档 ID、处理状态和存储地址的统一响应
+     * @throws Exception 文件读取或上传链路异常
      */
     @PostMapping(value = "/upload", consumes = "multipart/form-data")
-    public Mono<Map<String, String>> uploadDocument(@RequestPart("file") FilePart file) {
+    public ApiResponse<DocumentUploadResponseDTO> uploadDocument(@RequestParam("file") MultipartFile file) throws Exception {
         String tenantId = SecurityUtils.getCurrentTenantId();
-        return documentService.handleReactiveUpload(file, tenantId)
-                .map(metadata -> Map.of(
-                        "documentId", metadata.getDocumentId(),
-                        "status", metadata.getStatus(),
-                        "minioUrl", metadata.getMinioUrl()
-                ));
+        var metadata = documentService.handleUpload(file, tenantId);
+        
+        DocumentUploadResponseDTO response = new DocumentUploadResponseDTO(
+                metadata.getDocumentId(),
+                metadata.getStatus().value(),
+                metadata.getMinioUrl()
+        );
+        
+        return ApiResponse.success(response);
     }
 
     /**
-     * 查询指定外部企业文档的解析预处理状态
+     * 查询文档处理状态
      *
-     * 场景：前端在呈现文档列表时，显示这篇文件是仍被压在消息队列 ("UPLOADED_PENDING_PARSING") 
-     * 或是正在解析执行化中，又或最后已经被切割存下在 ES 里处于可命中状态。
-     *
-     * @param documentId 文件票据 ID (由上传接口初始化回传)
-     * @return 文件的最新的内部元数据对象表示（脱水版）
+     * @param documentId 文档 ID
+     * @return 包含状态详情的统一响应
      */
     @GetMapping("/{documentId}/status")
-    public Mono<Map<String, String>> getDocumentStatus(@PathVariable String documentId) {
+    public ApiResponse<Map<String, String>> getDocumentStatus(@PathVariable String documentId) {
         String tenantId = SecurityUtils.getCurrentTenantId();
-        return Mono.fromCallable(() -> documentService.getDocumentStatusDetails(documentId, tenantId))
-                .subscribeOn(Schedulers.boundedElastic());
+        return ApiResponse.success(documentService.getDocumentStatusDetails(documentId, tenantId));
+    }
+
+    /**
+     * 查询当前租户文档列表
+     *
+     * @return 包含文档 DTO 列表的统一响应
+     */
+    @GetMapping
+    public ApiResponse<List<DocumentDTO>> getUserDocuments() {
+        String tenantId = SecurityUtils.getCurrentTenantId();
+        return ApiResponse.success(documentService.getUserDocuments(tenantId));
+    }
+
+    /**
+     * 删除指定文档
+     *
+     * <p>删除包含元数据及其关联资源清理逻辑，具体由服务层保证事务边界</p>
+     *
+     * @param documentId 文档 ID
+     * @return 统一响应（data 为 null）
+     */
+    @DeleteMapping("/{documentId}")
+    public ApiResponse<Void> deleteDocument(@PathVariable String documentId) {
+        String tenantId = SecurityUtils.getCurrentTenantId();
+        documentService.deleteDocumentById(documentId, tenantId);
+        return ApiResponse.success(null);
     }
 }

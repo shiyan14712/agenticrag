@@ -1,25 +1,48 @@
 spring:
+  profiles:
+    active: dev # remove when deploying
+  threads:
+    virtual:
+      enabled: true
   application:
     name: agenticrag
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
 
   datasource:
-    url: jdbc:mysql://10.60.31.253:3306/agenticrag?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://localhost:3306/agenticrag?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
     username: root
-    password: 1234
+    password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   data:
     redis:
-      host: 10.60.31.253
+      host: localhost
       port: 6379
 
   kafka:
-    bootstrap-servers: 10.60.31.253:9092
+    bootstrap-servers: localhost:9092
+    producer:
+      acks: all
+      retries: 10
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        delivery.timeout.ms: 120000
     consumer:
       group-id: agenticrag-group
+      enable-auto-commit: false
 
   elasticsearch:
-    uris: http://10.60.31.253:9200
+    uris: http://localhost:9200
+    username: elastic
+    password: changeme
+    id: change-me
+    name: agenticrag-key
+    api-key: change-me
+    encoded: change-me
 
 mybatis-plus:
   mapper-locations: classpath*:/mapper/**/*.xml
@@ -27,13 +50,15 @@ mybatis-plus:
     db-config:
       id-type: auto
   configuration:
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
     map-underscore-to-camel-case: true
+    # 枚举类型处理器：支持枚举与数据库字符串的自动转换
+    default-enum-type-handler: org.apache.ibatis.type.EnumTypeHandler
 
 minio:
-  endpoint: http://10.60.31.253:19000
-  access-key: admin
-  secret-key: PaiSmart2025
+  endpoint: http://localhost:19000
+  access-key: minioadmin
+  secret-key: minioadmin
   bucket-name: agenticrag
 
 rag:
@@ -41,25 +66,93 @@ rag:
     knn-top-k: 20
     bm25-top-k: 20
     rerank-top-n: 5
+    # 最终分数硬阈值：统一作用于 reranker 分数或 RRF 降级分数；低于该值的候选将被强制舍弃
+    final-score-threshold: 0.5
+  index:
+    name: enterprise_chunks
+  memory:
+    max-messages: 40
+    l1-limit: 10
+    l2-limit: 30
 
 langchain4j:
   llm:
     open-ai:
-      base-url: "https://api.openai.com/v1"
+      base-url: "http://localhost:9000/v1"
       api-key: "sk-your-llm-api-key"
-      model-name: "gpt-4o"
+      model-name: "qwen3.5-27b"
       temperature: 0.7
+      max-tokens: 32768
+      top-p: 0.8
+      presence-penalty: 1.5
+
   embedding:
+    provider: "openai"
     open-ai:
-      base-url: "https://api.openai.com/v1"
+#      base-url: "https://ark.cn-beijing.volces.com/api/v3"
+#      api-key: "your-volcengine-api-key"
+#      model-name: "doubao-embedding-vision-251215"
+#      dimensions: 1024
+      base-url: "http://localhost:8002/v1"
       api-key: "sk-your-embedding-api-key"
-      model-name: "text-embedding-3-small"
+      model-name: "Qwen3-Embed-4B"
+      dimensions: 2048
   reranker:
-    api-url: "https://api.jina.ai/v1/rerank"
-    api-key: "jina_your_reranker_api_key"
-    model-name: "jina-reranker-v2-base-multilingual"
+    api-url: "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    api-key: "sk-your-reranker-api-key"
+    model-name: "qwen3-vl-rerank"
 
 
 jwt:
-  secret: "4Z9Q8v/T2p+R1xE6wY7uI0oA4dL5sM3bF8G2hJ7vK1c="
+  secret: "dGhpc19pc19hX3ZlcnlfbG9uZ19zZWNyZXRfa2V5X3RoYXRfaXNfYXRfbGVhc3RfMzJfYnl0ZXNfZm9yX2FnZW50aWNyYWc=" # 必须大于 256 位(32字节)的 Base64 字符串
   expiration: 86400000
+  refresh-expiration: 604800000
+server:
+  port: 8080
+  tomcat:
+    max-swallow-size: -1
+
+agenticrag:
+  kafka:
+    topics:
+      parse-request: doc-parse-request
+      vectorize-request: doc-vectorize-request
+      delete-request: doc-delete-request
+      dead-letter: doc-dlq
+    retry:
+      max-attempts: 3
+      interval-ms: 1000
+      multiplier: 2.0
+      max-interval-ms: 10000
+    outbox:
+      enabled: true
+      batch-size: 20
+      poll-interval-ms: 2000
+      dispatch-timeout-ms: 5000
+    consume:
+      processing-timeout-ms: 60000
+  mineru:
+    base-url: http://localhost:8000
+    async-enabled: true
+    backend: hybrid-auto-engine
+    parse-method: auto
+    formula-enable: true
+    table-enable: true
+    return-md: true
+    lang-list:
+      - ch
+    connect-timeout-ms: 5000
+    request-timeout-ms: 180000
+    poll-interval-ms: 3000
+    max-poll-attempts: 120
+    server-url:
+
+logging:
+  level:
+    # 关闭 MyBatis SQL 语句级别的全量日志，防止定时轮询任务（OutboxDispatcher）每 2s 刷一次 SQL 刷屏
+    # 若需要调试某个具体 mapper，可临时把对应包改回 debug
+    com.yoswell.agenticrag.retrieval.document.reliability.mapper: info
+    # MyBatis 全局日志也压到 warn，避免框架本身的 SqlSession 生命周期日志刷屏
+    org.mybatis: info
+    org.apache.ibatis.transaction: info
+    com.baomidou.mybatisplus: info

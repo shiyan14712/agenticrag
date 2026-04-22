@@ -1,16 +1,30 @@
 package com.yoswell.agenticrag.retrieval.document.parser.strategy;
 
-import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.springframework.stereotype.Component;
 
+import com.yoswell.agenticrag.retrieval.document.parser.model.DocumentParseSource;
+import com.yoswell.agenticrag.retrieval.document.parser.model.ParsedDocument;
+import com.yoswell.agenticrag.retrieval.document.parser.model.ParsedDocumentChunk;
+
+/**
+ * 面向 Markdown 风格文本的分块（Chunking）策略
+ *
+ * <p>本策略针对<strong>以.md文档为首的结构性强</strong>的文档做chunk</p>
+ *
+ * <p>【架构说明】：</p>
+ * <p>它优先保留标题层级信息，再在每个 section 内按长度切块，
+ * 这样检索结果能兼顾结构语义和 chunk 粒度</p>
+ * <p>注意：MinerU OCR PDF 解析引擎不在当前模块和 Java 项目中执行！
+ * 这个策略类仅负责对 Python Worker 解析出来并存入 MinIO 的高精度 Markdown 文本，
+ * 进行离线的语义切块和向量化准备阶段</p>
+ */
 @Component
 public class MinerUMarkdownStrategy implements DocumentParserStrategy {
     private static final Pattern ATX_HEADING_PATTERN = Pattern.compile("^(#{1,6})\\s+(.*?)\\s*#*\\s*$");
@@ -19,23 +33,32 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
     private static final Pattern FENCE_PATTERN = Pattern.compile("^\\s*(```+|~~~+).*$");
     private static final int DEFAULT_CHUNK_SIZE = 1200;
     private static final int DEFAULT_CHUNK_OVERLAP = 200;
+    private static final int START_BOUNDARY_LOOKAROUND = 40;
 
-    private volatile List<String> lastChunks = List.of();
-
+    /**
+     * 解析 Markdown 文本并生成结构化 chunk
+     *
+     * @param source 解析输入
+     * @return 解析结果
+     */
     @Override
-    public void parse(String fileUrl) {
-        Path path = resolvePath(fileUrl);
-        if (!Files.isRegularFile(path)) {
-            throw new IllegalArgumentException("Markdown file does not exist: " + fileUrl);
-        }
-
-        lastChunks = chunkMarkdown(readMarkdown(path), DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP);
+    public ParsedDocument parse(DocumentParseSource source) {
+        List<String> chunks = chunkMarkdown(source.content(), DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP);
+        return new ParsedDocument(
+                source.fileUrl(),
+                source.fileName(),
+                toParsedChunks(source, chunks)
+        );
     }
 
-    List<String> getLastChunks() {
-        return lastChunks;
-    }
-
+    /**
+     * 把 Markdown 文本先拆 section，再按长度和重叠窗口切块
+     *
+     * @param markdown Markdown 内容
+     * @param chunkSize 目标 chunk 长度
+     * @param overlap 相邻 chunk 的重叠长度
+     * @return 文本块列表
+     */
     static List<String> chunkMarkdown(String markdown, int chunkSize, int overlap) {
         if (markdown == null || markdown.isBlank()) {
             return List.of();
@@ -55,6 +78,43 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
         return List.copyOf(chunks);
     }
 
+    /**
+     * 为每个文本块补充稳定 chunkId 和顺序号
+     *
+     * @param source 解析输入
+     * @param chunks 文本块内容
+     * @return 标准化的 chunk 记录
+     */
+    private static List<ParsedDocumentChunk> toParsedChunks(DocumentParseSource source, List<String> chunks) {
+        ArrayList<ParsedDocumentChunk> parsedChunks = new ArrayList<>(chunks.size());
+        for (int index = 0; index < chunks.size(); index++) {
+            parsedChunks.add(new ParsedDocumentChunk(
+                    deterministicChunkId(source, index),
+                    index,
+                    chunks.get(index)
+            ));
+        }
+        return List.copyOf(parsedChunks);
+    }
+
+    /**
+     * 通过文件地址、文件名和序号生成稳定的 chunkId
+     *
+     * @param source 解析输入
+     * @param index chunk 顺序
+     * @return 稳定 chunkId
+     */
+    private static String deterministicChunkId(DocumentParseSource source, int index) {
+        String seed = source.fileUrl() + "|" + source.fileName() + "|" + index;
+        return "chk-" + UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * 按标题层级把 Markdown 拆成 section
+     *
+     * @param markdown Markdown 内容
+     * @return section 列表
+     */
     private static List<Section> splitSections(String markdown) {
         String normalizedMarkdown = markdown.replace("\r\n", "\n").replace('\r', '\n');
         String[] lines = normalizedMarkdown.split("\n", -1);
@@ -95,13 +155,21 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
         String trailingBody = body.toString().strip();
         addSection(sections, headingStack, body);
         if (trailingBody.isEmpty() && !headingStack.isEmpty()
-            && (sections.isEmpty() || !sections.get(sections.size() - 1).headings().equals(headingStack))) {
+                && (sections.isEmpty() || !sections.get(sections.size() - 1).headings().equals(headingStack))) {
             sections.add(new Section(List.copyOf(headingStack), ""));
         }
 
         return sections;
     }
 
+    /**
+     * 在单个 section 内按长度切块，并把标题路径前缀拼进 chunk
+     *
+     * @param section 当前 section
+     * @param chunkSize 目标 chunk 长度
+     * @param overlap 相邻 chunk 重叠长度
+     * @param chunks 输出集合
+     */
     private static void appendChunks(Section section, int chunkSize, int overlap, List<String> chunks) {
         String prefix = formatHeadingPath(section.headings());
         String body = section.body().strip();
@@ -133,13 +201,17 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
                 break;
             }
 
-            start = Math.max(end - effectiveOverlap, start + 1);
-            while (start < body.length() && Character.isWhitespace(body.charAt(start))) {
-                start++;
-            }
+            start = adjustChunkStart(body, start, end, effectiveOverlap);
         }
     }
 
+    /**
+     * 把当前累积正文收束成一个 section
+     *
+     * @param sections 输出 section 集合
+     * @param headingStack 当前标题栈
+     * @param body 当前累积正文
+     */
     private static void addSection(List<Section> sections, List<Heading> headingStack, StringBuilder body) {
         String content = body.toString().strip();
         if (!content.isEmpty()) {
@@ -148,13 +220,27 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
         body.setLength(0);
     }
 
+    /**
+     * 维护标题栈，保证层级路径始终表示当前位置
+     *
+     * @param headingStack 当前标题栈
+     * @param title 新标题文本
+     * @param level 新标题级别
+     */
     private static void pushHeading(List<Heading> headingStack, String title, int level) {
         while (!headingStack.isEmpty() && headingStack.get(headingStack.size() - 1).level() >= level) {
-            headingStack.remove(headingStack.size() - 1);
+            headingStack.removeLast();
         }
         headingStack.add(new Heading(level, title));
     }
 
+    /**
+     * 判断当前行下一行是否构成 setext 风格标题
+     *
+     * @param lines 全部文本行
+     * @param index 当前行下标
+     * @return 标题级别，0 表示不是 setext 标题
+     */
     private static int resolveSetextLevel(String[] lines, int index) {
         if (index + 1 >= lines.length) {
             return 0;
@@ -170,13 +256,27 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
         return 0;
     }
 
+    /**
+     * 向正文缓冲区追加一行文本
+     *
+     * @param body 正文缓冲区
+     * @param line 当前文本行
+     */
     private static void appendLine(StringBuilder body, String line) {
-        if (body.length() > 0) {
+        if (!body.isEmpty()) {
             body.append('\n');
         }
         body.append(line);
     }
 
+    /**
+     * 优先在自然断点上结束当前 chunk
+     *
+     * @param body 当前 section 正文
+     * @param start chunk 起始位置
+     * @param maxEnd 最大结束位置
+     * @return 实际结束位置
+     */
     private static int findChunkEnd(String body, int start, int maxEnd) {
         if (maxEnd >= body.length()) {
             return body.length();
@@ -192,6 +292,77 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
         return maxEnd;
     }
 
+    /**
+     * 尽量把 overlap 的回退起点对齐到自然断点，避免正文从单词中间开始。
+     *
+     * @param body 当前 section 正文
+     * @param previousStart 当前 chunk 起点
+     * @param previousEnd 当前 chunk 终点
+     * @param overlap 相邻 chunk 的重叠长度
+     * @return 调整后的下一个 chunk 起点
+     */
+    private static int adjustChunkStart(String body, int previousStart, int previousEnd, int overlap) {
+        int lowerBound = previousStart + 1;
+        int tentativeStart = Math.max(previousEnd - overlap, lowerBound);
+        int adjustedStart = alignToWordBoundary(body, tentativeStart, lowerBound);
+        return skipLeadingWhitespace(body, adjustedStart);
+    }
+
+    /**
+     * 在有限窗口内把起点拉回到词边界；若附近没有合适断点，则保留候选位置。
+     *
+     * @param body 当前 section 正文
+     * @param candidateStart 候选起点
+     * @param lowerBound 最小允许起点
+     * @return 对齐后的起点
+     */
+    private static int alignToWordBoundary(String body, int candidateStart, int lowerBound) {
+        if (candidateStart <= lowerBound || candidateStart >= body.length()) {
+            return candidateStart;
+        }
+
+        if (Character.isWhitespace(body.charAt(candidateStart))) {
+            return candidateStart;
+        }
+
+        int backwardLimit = Math.max(lowerBound, candidateStart - START_BOUNDARY_LOOKAROUND);
+        for (int index = candidateStart; index > backwardLimit; index--) {
+            if (Character.isWhitespace(body.charAt(index - 1))) {
+                return index;
+            }
+        }
+
+        int forwardLimit = Math.min(body.length(), candidateStart + START_BOUNDARY_LOOKAROUND);
+        for (int index = candidateStart; index < forwardLimit; index++) {
+            if (Character.isWhitespace(body.charAt(index))) {
+                return index + 1;
+            }
+        }
+
+        return candidateStart;
+    }
+
+    /**
+     * 跳过 chunk 起点处的连续空白，保证正文前缀整洁。
+     *
+     * @param body 当前 section 正文
+     * @param start 候选起点
+     * @return 跳过空白后的起点
+     */
+    private static int skipLeadingWhitespace(String body, int start) {
+        int adjustedStart = start;
+        while (adjustedStart < body.length() && Character.isWhitespace(body.charAt(adjustedStart))) {
+            adjustedStart++;
+        }
+        return adjustedStart;
+    }
+
+    /**
+     * 把标题栈格式化成多行 Markdown 标题前缀
+     *
+     * @param headings 当前标题路径
+     * @return 标题路径文本
+     */
     private static String formatHeadingPath(List<Heading> headings) {
         if (headings.isEmpty()) {
             return "";
@@ -199,7 +370,7 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
 
         StringBuilder builder = new StringBuilder();
         for (Heading heading : headings) {
-            if (builder.length() > 0) {
+            if (!builder.isEmpty()) {
                 builder.append('\n');
             }
             for (int count = 0; count < heading.level(); count++) {
@@ -210,24 +381,21 @@ public class MinerUMarkdownStrategy implements DocumentParserStrategy {
         return builder.toString();
     }
 
-    private static Path resolvePath(String fileUrl) {
-        if (fileUrl == null || fileUrl.isBlank()) {
-            throw new IllegalArgumentException("File URL cannot be blank");
-        }
-        return fileUrl.startsWith("file:") ? Path.of(java.net.URI.create(fileUrl)) : Path.of(fileUrl);
-    }
-
-    private static String readMarkdown(Path path) {
-        try {
-            return Files.readString(path, StandardCharsets.UTF_8);
-        } catch (java.io.IOException exception) {
-            throw new UncheckedIOException("Failed to read markdown file: " + path, exception);
-        }
-    }
-
+    /**
+     * 标题节点
+     *
+     * @param level 标题级别
+     * @param title 标题文本
+     */
     private record Heading(int level, String title) {
     }
 
+    /**
+     * section 节点，表示一段标题路径下的正文内容
+     *
+     * @param headings 标题路径
+     * @param body 正文内容
+     */
     private record Section(List<Heading> headings, String body) {
     }
 }
