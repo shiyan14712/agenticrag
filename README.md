@@ -28,6 +28,7 @@
 
 Agentic RAG 是一个企业级的**智能检索增强生成系统**，它不仅提供传统的对话问答，更具备以下核心能力：
 
+- 📑 **创新去上下文化分块策略**：复现前沿研究的 [Decontextualised Chunking](https://aclanthology.org/2024.acl-long.645.pdf) 方案，支持 DECONTEXTUALISED（去语境化改写）与 QA_ENRICHED（问答增强）两种高级策略，显著提升检索召回质量
 - 🧠 **单一 Agent 编排（ReAct 模式）**：大模型自主进行推理、工具调用和决策
 - 🗜️ **分级上下文压缩**：L1/L2/L3 三层记忆管理，突破 Token 窗口限制
 - 💾 **跨会话长期记忆**：持久化用户偏好与知识，实现真正的"认知积累"
@@ -35,6 +36,22 @@ Agentic RAG 是一个企业级的**智能检索增强生成系统**，它不仅�
 - 🔐 **零信任多租户隔离**：从数据物理层到逻辑层的全面权限控制
 
 本系统的核心理念是**渐进式能力叠加**，每个模块都可以独立演进，同时保持整体架构的一致性。
+
+
+### 前端项目
+
+本项目配套的前端应用位于 [agenticrag-front](https://github.com/shiyan14712/agenticrag-front)，提供完整的 Web 界面交互体验，包括：
+
+- 💬 流式对话界面（打字机效果、思考动画、工具执行卡片）
+- 📊 知识库管理与文档上传
+- 📝 会话历史查看与切换
+- 🔍 实时检索结果展示与引用溯源
+
+![文档处理](docs/images/11.jpg)
+<center> 文档处理 </center>
+
+![前端界面预览](docs/images/22.jpg)
+<center> 前端流式对话界面 </center>
 
 ---
 
@@ -71,6 +88,9 @@ Agentic RAG 是一个企业级的**智能检索增强生成系统**，它不仅�
 - **策略模式 + 工厂模式**：优雅扩展 TXT、DOCX 等新格式
 - **事务型 Outbox**：保证数据库提交与消息投递的最终一致性
 - **指数退避重试 + 死信队列**：失败任务自动补偿，超过 3 次进入 DLQ 报警
+
+![文档处理流程](docs/images/document-pipeline.png)
+*图 3：异步文档处理管道，展示从文件上传到向量索引的完整流程及可靠性保障机制*
 
 ### 5. 零信任安全架构
 
@@ -215,6 +235,18 @@ agenticrag/
     ├── filter/           # JWT 认证过滤器
     └── context/          # SecurityContext 提取
 ```
+
+### 技术亮点详解
+
+#### 分块策略对比
+
+![分块策略对比](docs/images/chunking-strategy-comparison.png)
+*图 4：三种分块策略效果对比，Special Chunking 通过去语境化和问答增强显著提升检索准确率*
+
+#### 混合检索流程
+
+![混合检索流程](docs/images/hybrid-retrieval-flow.png)
+*图 5：BM25 + KNN 双路召回与 RRF 融合排序流程，结合 Reranker 重排序实现精准检索*
 
 ---
 
