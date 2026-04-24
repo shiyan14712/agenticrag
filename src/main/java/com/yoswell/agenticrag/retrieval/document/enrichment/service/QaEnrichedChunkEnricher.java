@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yoswell.agenticrag.retrieval.document.enrichment.model.AmbiguousUnitResult;
 import com.yoswell.agenticrag.retrieval.document.enrichment.model.EnrichedChunk;
 import com.yoswell.agenticrag.retrieval.document.enrichment.model.EntityRegistryEntry;
@@ -20,6 +21,11 @@ import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.ResponseFormat;
+import dev.langchain4j.model.chat.request.ResponseFormatType;
+import dev.langchain4j.model.chat.request.json.JsonArraySchema;
+import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
+import dev.langchain4j.model.chat.request.json.JsonSchema;
+import dev.langchain4j.model.chat.request.json.JsonStringSchema;
 import dev.langchain4j.model.chat.response.ChatResponse;
 
 @Service
@@ -49,6 +55,42 @@ public class QaEnrichedChunkEnricher {
             """;
 
     private static final String SUPPLEMENTARY_CONTEXT_HEADER = "\n[Supplementary Context]";
+
+    private static final ResponseFormat AMBIGUITY_RESPONSE_FORMAT = ResponseFormat.builder()
+            .type(ResponseFormatType.JSON)
+            .jsonSchema(JsonSchema.builder()
+                    .name("AmbiguousUnitResult")
+                    .rootElement(JsonObjectSchema.builder()
+                            .addProperty("ambiguousUnits", JsonArraySchema.builder()
+                                    .items(JsonObjectSchema.builder()
+                                            .addProperty("mention", new JsonStringSchema())
+                                            .addProperty("reason", new JsonStringSchema())
+                                            .required(List.of("mention", "reason"))
+                                            .build())
+                                    .build())
+                            .required(List.of("ambiguousUnits"))
+                            .build())
+                    .build())
+            .build();
+
+    private static final ResponseFormat CONTEXT_RESPONSE_FORMAT = ResponseFormat.builder()
+            .type(ResponseFormatType.JSON)
+            .jsonSchema(JsonSchema.builder()
+                    .name("SupplementaryContextResult")
+                    .rootElement(JsonObjectSchema.builder()
+                            .addProperty("contextStatements", JsonArraySchema.builder()
+                                    .items(JsonObjectSchema.builder()
+                                            .addProperty("mention", new JsonStringSchema())
+                                            .addProperty("statement", new JsonStringSchema())
+                                            .required(List.of("mention", "statement"))
+                                            .build())
+                                    .build())
+                            .required(List.of("contextStatements"))
+                            .build())
+                    .build())
+            .build();
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final ChatModel chatModel;
 
@@ -111,7 +153,7 @@ public class QaEnrichedChunkEnricher {
                 .messages(List.of(
                         SystemMessage.from(AMBIGUITY_SYSTEM_PROMPT),
                         UserMessage.from(chunkContent)))
-                .responseFormat(ResponseFormat.JSON)
+                .responseFormat(AMBIGUITY_RESPONSE_FORMAT)
                 .build();
 
         ChatResponse response = chatModel.chat(request);
@@ -134,7 +176,7 @@ public class QaEnrichedChunkEnricher {
                 .messages(List.of(
                         SystemMessage.from(CONTEXT_GEN_SYSTEM_PROMPT),
                         UserMessage.from(userPrompt)))
-                .responseFormat(ResponseFormat.JSON)
+                .responseFormat(CONTEXT_RESPONSE_FORMAT)
                 .build();
 
         ChatResponse response = chatModel.chat(request);
@@ -171,8 +213,7 @@ public class QaEnrichedChunkEnricher {
 
     private <T> T parseJson(String json, Class<T> type) {
         try {
-            tools.jackson.databind.ObjectMapper mapper = new tools.jackson.databind.ObjectMapper();
-            return mapper.readValue(json, type);
+            return OBJECT_MAPPER.readValue(json, type);
         } catch (Exception e) {
             log.warn("[Special Chunk][QA_ENRICH] JSON 解析失败: {}", e.getMessage());
             return null;

@@ -7,6 +7,7 @@ import java.util.Map;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.yoswell.agenticrag.retrieval.document.dto.DocumentDTO;
+import com.yoswell.agenticrag.retrieval.document.dto.response.EntityRegistryEntryDTO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
 
 import com.yoswell.agenticrag.retrieval.document.model.ChunkingStrategy;
@@ -27,4 +28,6 @@ public interface DocumentService {
     List<DocumentDTO> getUserDocuments(String tenantId);
 
     void deleteDocumentById(String documentId, String tenantId);
+
+    List<EntityRegistryEntryDTO> getDocumentEntities(String documentId, String tenantId);
 }

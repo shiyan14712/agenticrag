@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yoswell.agenticrag.retrieval.document.enrichment.entity.EntityRegistryDO;
 import com.yoswell.agenticrag.retrieval.document.mapper.EntityRegistryMapper;
 import com.yoswell.agenticrag.retrieval.document.enrichment.model.EntityRegistryEntry;
@@ -21,6 +22,12 @@ import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.ResponseFormat;
+import dev.langchain4j.model.chat.request.ResponseFormatType;
+import dev.langchain4j.model.chat.request.json.JsonArraySchema;
+import dev.langchain4j.model.chat.request.json.JsonEnumSchema;
+import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
+import dev.langchain4j.model.chat.request.json.JsonSchema;
+import dev.langchain4j.model.chat.request.json.JsonStringSchema;
 import dev.langchain4j.model.chat.response.ChatResponse;
 
 @Service
@@ -36,9 +43,32 @@ public class EntityRegistryBuilder {
             - definition: 简要定义或描述（一句话）
             - category: 实体类别，必须是以下之一：PERSON, ORGANIZATION, LOCATION, ABBREVIATION, TERM, OTHER
 
-            请以 JSON 格式返回，结构为：{"entities": [{"mention": "...", "fullName": "...", "definition": "...", "category": "..."}]}
-            如果文本中没有可提取的实体，返回 {"entities": []}
+            如果文本中没有可提取的实体，返回 entities 为空数组。
             """;
+
+    private static final ResponseFormat NER_RESPONSE_FORMAT = ResponseFormat.builder()
+            .type(ResponseFormatType.JSON)
+            .jsonSchema(JsonSchema.builder()
+                    .name("NerResult")
+                    .rootElement(JsonObjectSchema.builder()
+                            .addProperty("entities", JsonArraySchema.builder()
+                                    .items(JsonObjectSchema.builder()
+                                            .addProperty("mention", new JsonStringSchema())
+                                            .addProperty("fullName", new JsonStringSchema())
+                                            .addProperty("definition", new JsonStringSchema())
+                                            .addProperty("category", JsonEnumSchema.builder()
+                                                    .enumValues("PERSON", "ORGANIZATION", "LOCATION",
+                                                            "ABBREVIATION", "TERM", "OTHER")
+                                                    .build())
+                                            .required(List.of("mention", "fullName", "definition", "category"))
+                                            .build())
+                                    .build())
+                            .required(List.of("entities"))
+                            .build())
+                    .build())
+            .build();
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final ChatModel chatModel;
     private final EntityRegistryMapper entityRegistryMapper;
@@ -112,7 +142,7 @@ public class EntityRegistryBuilder {
                 .messages(List.of(
                         SystemMessage.from(NER_SYSTEM_PROMPT),
                         UserMessage.from(text)))
-                .responseFormat(ResponseFormat.JSON)
+                .responseFormat(NER_RESPONSE_FORMAT)
                 .build();
 
         ChatResponse response = chatModel.chat(request);
@@ -122,8 +152,7 @@ public class EntityRegistryBuilder {
 
     private NerResult parseNerResult(String json) {
         try {
-            tools.jackson.databind.ObjectMapper mapper = new tools.jackson.databind.ObjectMapper();
-            return mapper.readValue(json, NerResult.class);
+            return OBJECT_MAPPER.readValue(json, NerResult.class);
         } catch (Exception e) {
             log.warn("[Special Chunk][NER] JSON 解析失败: {}", e.getMessage());
             return null;

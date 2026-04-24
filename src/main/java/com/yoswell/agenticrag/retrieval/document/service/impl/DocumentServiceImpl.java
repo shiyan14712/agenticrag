@@ -16,8 +16,11 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.yoswell.agenticrag.common.config.DocumentKafkaProperties;
 import com.yoswell.agenticrag.retrieval.document.dto.DocumentDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentParseRequestDTO;
+import com.yoswell.agenticrag.retrieval.document.dto.response.EntityRegistryEntryDTO;
+import com.yoswell.agenticrag.retrieval.document.enrichment.entity.EntityRegistryDO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
+import com.yoswell.agenticrag.retrieval.document.mapper.EntityRegistryMapper;
 import com.yoswell.agenticrag.retrieval.document.model.ChunkingStrategy;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentProcessingStatus;
@@ -55,6 +58,7 @@ public class DocumentServiceImpl implements DocumentService {
     private final DocumentKafkaProperties kafkaProperties;
     private final RedisTemplate<String, Object> redisTemplate;
     private final KnowledgeChunkWriteService knowledgeChunkWriteService;
+    private final EntityRegistryMapper entityRegistryMapper;
 
     /**
      * 同步接收上传文件并执行上传编排
@@ -262,6 +266,7 @@ public class DocumentServiceImpl implements DocumentService {
                         meta.getFileName(),
                         meta.getFileExtension(),
                         meta.getStatus(),
+                        meta.getChunkingStrategy(),
                         meta.getCreatedAt(),
                         meta.getUpdatedAt()
                 ))
@@ -352,5 +357,30 @@ public class DocumentServiceImpl implements DocumentService {
             return "unknown";
         }
         return fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
+    }
+
+    /**
+     * 获取文档对应的 NER 实体列表
+     * @param documentId 文档业务 ID
+     * @param tenantId 当前租户 ID
+     * @return 含 NER 列表的 DTO
+     */
+    @Override
+    public List<EntityRegistryEntryDTO> getDocumentEntities(String documentId, String tenantId) {
+        DocumentDO metadata = documentMetadataMapper.selectOne(
+                new LambdaQueryWrapper<DocumentDO>()
+                        .eq(DocumentDO::getDocumentId, documentId)
+                        .eq(DocumentDO::getTenantId, tenantId));
+        if (metadata == null) {
+            throw new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND);
+        }
+
+        return entityRegistryMapper.selectList(
+                        new LambdaQueryWrapper<EntityRegistryDO>()
+                                .eq(EntityRegistryDO::getDocumentId, documentId)
+                                .orderByAsc(EntityRegistryDO::getId))
+                .stream()
+                .map(r -> new EntityRegistryEntryDTO(r.getMention(), r.getFullName(), r.getDefinition(), r.getCategory()))
+                .toList();
     }
 }
