@@ -17,6 +17,7 @@ import org.springframework.web.multipart.MultipartFile;
 import com.yoswell.agenticrag.common.result.ApiResponse;
 import com.yoswell.agenticrag.retrieval.document.dto.DocumentDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.response.DocumentUploadResponseDTO;
+import com.yoswell.agenticrag.retrieval.document.dto.response.EntityRegistryEntryDTO;
 import com.yoswell.agenticrag.retrieval.document.model.ChunkingStrategy;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentService;
 import com.yoswell.agenticrag.web.security.util.SecurityUtils;
@@ -96,5 +97,11 @@ public class DocumentController {
         String tenantId = SecurityUtils.getCurrentTenantId();
         documentService.deleteDocumentById(documentId, tenantId);
         return ApiResponse.success(null);
+    }
+
+    @GetMapping("/{documentId}/entity-registry")
+    public ApiResponse<List<EntityRegistryEntryDTO>> getEntityRegistry(@PathVariable String documentId) {
+        String tenantId = SecurityUtils.getCurrentTenantId();
+        return ApiResponse.success(documentService.getDocumentEntities(documentId, tenantId));
     }
 }
