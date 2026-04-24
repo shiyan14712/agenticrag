@@ -9,14 +9,16 @@ import org.springframework.web.multipart.MultipartFile;
 import com.yoswell.agenticrag.retrieval.document.dto.DocumentDTO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
 
+import com.yoswell.agenticrag.retrieval.document.model.ChunkingStrategy;
+
 /**
  * 文档管理服务接口
  */
 public interface DocumentService {
 
-    DocumentDO handleUpload(MultipartFile file, String tenantId);
+    DocumentDO handleUpload(MultipartFile file, String tenantId, ChunkingStrategy chunkingStrategy);
 
-    DocumentDO uploadAndDispatch(String fileName, InputStream inputStream, long fileSize, String contentType, String tenantId);
+    DocumentDO uploadAndDispatch(String fileName, InputStream inputStream, long fileSize, String contentType, String tenantId, ChunkingStrategy chunkingStrategy);
 
     DocumentDO getDocumentStatus(String documentId, String tenantId);
 

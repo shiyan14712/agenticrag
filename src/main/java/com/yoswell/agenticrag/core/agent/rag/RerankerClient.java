@@ -318,6 +318,8 @@ public class RerankerClient {
                                 chunk.allowedRoles(),
                                 chunk.chunkIndex(),
                                 chunk.content(),
+                                chunk.originalContent(),
+                                chunk.chunkingStrategy(),
                                 entry.getValue()
                         ));
                     }

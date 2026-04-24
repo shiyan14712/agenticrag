@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS document_metadata (
     file_extension VARCHAR(32) NOT NULL COMMENT '文件扩展名，决定策略工厂的走向(如: md, pdf, txt)',
     minio_url VARCHAR(1024) NOT NULL COMMENT '指向 MinIO 的物理存储 URL',
     status VARCHAR(64) NOT NULL DEFAULT 'UPLOADED' COMMENT '状态流转字典: UPLOADED, PARSING, VECTORIZED, FAILED',
+    chunking_strategy VARCHAR(32) NOT NULL DEFAULT 'STANDARD' COMMENT '分块策略: STANDARD, DECONTEXTUALISED, QA_ENRICHED',
     allowed_roles VARCHAR(512) COMMENT '权限控制：逗号分隔的 Role 列表，存入 ES 用作拦截 Filter',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -147,3 +148,17 @@ CREATE TABLE IF NOT EXISTS chat_message (
     INDEX idx_session_created (session_id, created_at ASC),
     INDEX idx_session_compression (session_id, compression_level)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 实体注册表：Special Chunking 阶段由 LLM NER 提取的文档级实体，用于去上下文化和 QA 增强
+CREATE TABLE IF NOT EXISTS entity_registry (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(128) NOT NULL COMMENT '关联文档ID',
+    tenant_id VARCHAR(128) NOT NULL COMMENT '租户ID',
+    mention VARCHAR(255) NOT NULL COMMENT '原文中的表述（如 Bird）',
+    full_name VARCHAR(512) NOT NULL COMMENT '完整名称（如 California scooter sharing start-up Bird）',
+    definition TEXT COMMENT '简要定义或描述',
+    category VARCHAR(32) NOT NULL COMMENT '实体类别: PERSON, ORGANIZATION, LOCATION, ABBREVIATION, TERM, OTHER',
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    INDEX idx_entity_document (document_id),
+    INDEX idx_entity_tenant (tenant_id, document_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='文档实体注册表（Special Chunking NER 产物）';

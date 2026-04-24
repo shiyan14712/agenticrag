@@ -5,6 +5,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.support.DefaultMessageSourceResolvable;
+import org.springframework.core.convert.ConversionFailedException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -81,6 +82,30 @@ public class GlobalExceptionHandler {
     public ApiResponse<Void> handleIllegalArgumentException(IllegalArgumentException e) {
         log.warn("[Global Exception] 非法参数断言异常: {}", e.getMessage());
         return ApiResponse.error("BAD_REQUEST", e.getMessage());
+    }
+
+    @ExceptionHandler(ConversionFailedException.class)
+    public ApiResponse<Void> handleConversionFailedException(ConversionFailedException e) {
+        // 针对枚举转换失败的友好提示
+        if (e.getTargetType() != null && e.getTargetType().getType() != null && e.getTargetType().getType().isEnum()) {
+            String enumName = e.getTargetType().getType().getSimpleName();
+            log.warn("[Global Exception] 枚举转换失败 [{}]: {}", enumName, e.getMessage());
+            
+            // 根据枚举类型返回具体的错误码和友好提示
+            if ("ChunkingStrategy".equals(enumName)) {
+                return ApiResponse.error(
+                    ErrorCode.INVALID_CHUNKING_STRATEGY.getCode(),
+                    ErrorCode.INVALID_CHUNKING_STRATEGY.getMessage()
+                );
+            }
+            
+            // 通用枚举转换失败提示
+            return ApiResponse.error("BAD_REQUEST", "参数值无效，请检查枚举类型 " + enumName + " 的可选值");
+        }
+        
+        // 其他转换失败情况
+        log.warn("[Global Exception] 参数转换失败: {}", e.getMessage());
+        return ApiResponse.error("BAD_REQUEST", "请求参数格式不正确");
     }
 
     @ExceptionHandler(AuthenticationException.class)

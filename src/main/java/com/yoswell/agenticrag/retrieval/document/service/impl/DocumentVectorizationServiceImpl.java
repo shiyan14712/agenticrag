@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,10 +14,16 @@ import org.springframework.util.StringUtils;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.yoswell.agenticrag.retrieval.document.enrichment.model.EnrichedChunk;
+import com.yoswell.agenticrag.retrieval.document.enrichment.model.EntityRegistryEntry;
+import com.yoswell.agenticrag.retrieval.document.enrichment.service.DecontextualisedChunkEnricher;
+import com.yoswell.agenticrag.retrieval.document.enrichment.service.EntityRegistryBuilder;
+import com.yoswell.agenticrag.retrieval.document.enrichment.service.QaEnrichedChunkEnricher;
 import com.yoswell.agenticrag.retrieval.document.entity.KnowledgeChunkDocumentDO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentVectorizeRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
+import com.yoswell.agenticrag.retrieval.document.model.ChunkingStrategy;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentProcessingStatus;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentVectorizationExecutionResult;
 import com.yoswell.agenticrag.retrieval.document.parser.DocumentParserFactory;
@@ -46,17 +53,26 @@ public class DocumentVectorizationServiceImpl implements DocumentVectorizationSe
     private final DocumentParserFactory documentParserFactory;
     private final EmbeddingModel embeddingModel;
     private final KnowledgeChunkWriteService knowledgeChunkWriteService;
+    private final EntityRegistryBuilder entityRegistryBuilder;
+    private final DecontextualisedChunkEnricher decontextualisedChunkEnricher;
+    private final QaEnrichedChunkEnricher qaEnrichedChunkEnricher;
 
     public DocumentVectorizationServiceImpl(DocumentMetadataMapper documentMetadataMapper,
                                             MinioStorageService minioStorageService,
                                             DocumentParserFactory documentParserFactory,
                                             EmbeddingModel embeddingModel,
-                                            KnowledgeChunkWriteService knowledgeChunkWriteService) {
+                                            KnowledgeChunkWriteService knowledgeChunkWriteService,
+                                            EntityRegistryBuilder entityRegistryBuilder,
+                                            DecontextualisedChunkEnricher decontextualisedChunkEnricher,
+                                            QaEnrichedChunkEnricher qaEnrichedChunkEnricher) {
         this.documentMetadataMapper = documentMetadataMapper;
         this.minioStorageService = minioStorageService;
         this.documentParserFactory = documentParserFactory;
         this.embeddingModel = embeddingModel;
         this.knowledgeChunkWriteService = knowledgeChunkWriteService;
+        this.entityRegistryBuilder = entityRegistryBuilder;
+        this.decontextualisedChunkEnricher = decontextualisedChunkEnricher;
+        this.qaEnrichedChunkEnricher = qaEnrichedChunkEnricher;
     }
 
     /**
@@ -122,28 +138,28 @@ public class DocumentVectorizationServiceImpl implements DocumentVectorizationSe
             int totalChunks = parsedDocument.chunks().size();
             log.info("[Offline RAG][PARSE] 文档解析完成: documentId={}, chunkCount={}", metadata.getDocumentId(), totalChunks);
 
-            List<KnowledgeChunkDocumentDO> indexedChunks = new ArrayList<>(totalChunks);
-            for (int index = 0; index < totalChunks; index++) {
-                var chunk = parsedDocument.chunks().get(index);
-                int processed = index + 1;
-                if (shouldLogEmbeddingProgress(processed, totalChunks)) {
-                    log.info("[Offline RAG][EMBED] 进度: documentId={}, {}/{}, chunkId={}",
-                            metadata.getDocumentId(), processed, totalChunks, chunk.chunkId());
-                }
+            ChunkingStrategy chunkingStrategy = resolveChunkingStrategy(request, metadata);
+            log.info("[Offline RAG][CHUNK] 分块策略: documentId={}, strategy={}", metadata.getDocumentId(), chunkingStrategy);
 
-                Embedding embedding = embeddingModel.embed(chunk.content()).content();
-                indexedChunks.add(new KnowledgeChunkDocumentDO(
-                        chunk.chunkId(),
-                        metadata.getDocumentId(),
-                        sourceFileName,
-                        tenantId,
-                        kbId,
-                        allowedRoles,
-                        chunk.chunkIndex(),
-                        chunk.content(),
-                        embedding.vectorAsList()
-                ));
-            }
+            List<KnowledgeChunkDocumentDO> indexedChunks = switch (chunkingStrategy) {
+                case STANDARD -> buildStandardChunks(parsedDocument, metadata, sourceFileName, tenantId, kbId, allowedRoles);
+                
+                case DECONTEXTUALISED -> {
+                    Map<String, EntityRegistryEntry> registry = entityRegistryBuilder
+                            .buildAndPersist(parsedDocument.chunks(), metadata.getDocumentId(), tenantId);
+                    List<EnrichedChunk> enrichedChunks = decontextualisedChunkEnricher
+                            .enrich(parsedDocument.chunks(), registry, metadata.getDocumentId());
+                    yield buildEnrichedChunks(enrichedChunks, metadata, sourceFileName, tenantId, kbId, allowedRoles, chunkingStrategy);
+                }
+                
+                case QA_ENRICHED -> {
+                    Map<String, EntityRegistryEntry> registry = entityRegistryBuilder
+                            .buildAndPersist(parsedDocument.chunks(), metadata.getDocumentId(), tenantId);
+                    List<EnrichedChunk> enrichedChunks = qaEnrichedChunkEnricher
+                            .enrich(parsedDocument.chunks(), registry, metadata.getDocumentId());
+                    yield buildEnrichedChunks(enrichedChunks, metadata, sourceFileName, tenantId, kbId, allowedRoles, chunkingStrategy);
+                }
+            };
 
             log.info("[Offline RAG][EMBED] 向量化完成，准备写入检索索引: documentId={}, chunkCount={}",
                     metadata.getDocumentId(), indexedChunks.size());
@@ -186,7 +202,7 @@ public class DocumentVectorizationServiceImpl implements DocumentVectorizationSe
      * @return 迁移成功返回 {@code true}，状态不匹配返回 {@code false}
      */
     @Transactional
-    private boolean transitionStatus(String documentId,
+    protected boolean transitionStatus(String documentId,
                                      DocumentProcessingStatus targetStatus,
                                      Collection<DocumentProcessingStatus> expectedCurrentStatuses) {
         if (!StringUtils.hasText(documentId) || targetStatus == null) {
@@ -212,7 +228,7 @@ public class DocumentVectorizationServiceImpl implements DocumentVectorizationSe
      * @param targetStatus 目标状态
      */
     @Transactional
-    private void updateStatus(String documentId, DocumentProcessingStatus targetStatus) {
+    protected void updateStatus(String documentId, DocumentProcessingStatus targetStatus) {
         if (!StringUtils.hasText(documentId) || targetStatus == null) {
             return;
         }
@@ -282,5 +298,63 @@ public class DocumentVectorizationServiceImpl implements DocumentVectorizationSe
             return true;
         }
         return processed == 1 || processed == total || processed % 20 == 0;
+    }
+
+    private ChunkingStrategy resolveChunkingStrategy(DocumentVectorizeRequestDTO request, DocumentDO metadata) {
+        if (request.chunkingStrategy() != null && !request.chunkingStrategy().isBlank()) {
+            try {
+                return ChunkingStrategy.valueOf(request.chunkingStrategy());
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
+        if (metadata.getChunkingStrategy() != null) {
+            return metadata.getChunkingStrategy();
+        }
+        return ChunkingStrategy.STANDARD;
+    }
+
+    private List<KnowledgeChunkDocumentDO> buildStandardChunks(
+            ParsedDocument parsedDocument, DocumentDO metadata,
+            String sourceFileName, String tenantId, String kbId, List<String> allowedRoles) {
+
+        List<KnowledgeChunkDocumentDO> result = new ArrayList<>(parsedDocument.chunks().size());
+        int total = parsedDocument.chunks().size();
+        for (int i = 0; i < total; i++) {
+            var chunk = parsedDocument.chunks().get(i);
+            if (shouldLogEmbeddingProgress(i + 1, total)) {
+                log.info("[Offline RAG][EMBED] 进度: documentId={}, {}/{}, chunkId={}",
+                        metadata.getDocumentId(), i + 1, total, chunk.chunkId());
+            }
+            Embedding embedding = embeddingModel.embed(chunk.content()).content();
+            result.add(new KnowledgeChunkDocumentDO(
+                    chunk.chunkId(), metadata.getDocumentId(), sourceFileName,
+                    tenantId, kbId, allowedRoles, chunk.chunkIndex(),
+                    chunk.content(), chunk.content(),
+                    ChunkingStrategy.STANDARD.value(), embedding.vectorAsList()));
+        }
+        return result;
+    }
+
+    private List<KnowledgeChunkDocumentDO> buildEnrichedChunks(
+            List<EnrichedChunk> enrichedChunks, DocumentDO metadata,
+            String sourceFileName, String tenantId, String kbId,
+            List<String> allowedRoles, ChunkingStrategy strategy) {
+
+        List<KnowledgeChunkDocumentDO> result = new ArrayList<>(enrichedChunks.size());
+        int total = enrichedChunks.size();
+        for (int i = 0; i < total; i++) {
+            EnrichedChunk chunk = enrichedChunks.get(i);
+            if (shouldLogEmbeddingProgress(i + 1, total)) {
+                log.info("[Offline RAG][EMBED] 进度: documentId={}, {}/{}, chunkId={}",
+                        metadata.getDocumentId(), i + 1, total, chunk.chunkId());
+            }
+            Embedding embedding = embeddingModel.embed(chunk.enrichedContent()).content();
+            result.add(new KnowledgeChunkDocumentDO(
+                    chunk.chunkId(), metadata.getDocumentId(), sourceFileName,
+                    tenantId, kbId, allowedRoles, chunk.chunkIndex(),
+                    chunk.enrichedContent(), chunk.originalContent(),
+                    strategy.value(), embedding.vectorAsList()));
+        }
+        return result;
     }
 }

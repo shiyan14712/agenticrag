@@ -15,7 +15,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.yoswell.agenticrag.common.config.DocumentKafkaProperties;
 import com.yoswell.agenticrag.retrieval.document.reliability.entity.MqConsumeLogDO;
-import com.yoswell.agenticrag.retrieval.document.reliability.mapper.MqConsumeLogMapper;
+import com.yoswell.agenticrag.retrieval.document.mapper.MqConsumeLogMapper;
 import com.yoswell.agenticrag.retrieval.document.reliability.model.MqConsumeStatus;
 
 @Service

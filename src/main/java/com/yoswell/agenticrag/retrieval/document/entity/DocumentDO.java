@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
+import com.yoswell.agenticrag.retrieval.document.model.ChunkingStrategy;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentProcessingStatus;
 import lombok.Data;
 
@@ -69,6 +70,12 @@ public class DocumentDO {
      */
     @TableField("status")
     private DocumentProcessingStatus status;
+
+    /**
+     * 分块策略
+     */
+    @TableField("chunking_strategy")
+    private ChunkingStrategy chunkingStrategy;
 
     /**
      * 允许访问当前文档的角色列表，使用逗号分隔后持久化

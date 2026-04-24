@@ -303,6 +303,8 @@ public class RagTool {
                 chunk.allowedRoles(),
                 chunk.chunkIndex(),
                 chunk.content(),
+                chunk.originalContent(),
+                chunk.chunkingStrategy(),
                 score
         );
     }
@@ -355,15 +357,26 @@ public class RagTool {
         StringBuilder builder = new StringBuilder(buildToolResultSummary(topChunks.size(), rerankOutcome));
         builder.append("\n");
         for (RetrievedChunkDTO topChunk : topChunks) {
+            String citableContent = resolveContentForLlm(topChunk);
             builder.append("[Doc ID: ")
                     .append(topChunk.documentId())
                     .append("][Chunk ID: ")
                     .append(topChunk.chunkId())
                     .append("] ")
-                    .append(topChunk.content())
+                    .append(citableContent)
                     .append("\n\n");
         }
         return builder.toString().trim();
+    }
+
+    private String resolveContentForLlm(RetrievedChunkDTO chunk) {
+        // Special chunks: give LLM the original text for accurate citation;
+        // enrichedContent was only used for retrieval quality.
+        if (chunk.originalContent() != null && !chunk.originalContent().isBlank()
+                && !chunk.originalContent().equals(chunk.content())) {
+            return chunk.originalContent();
+        }
+        return chunk.content();
     }
 
     private String buildToolResultSummary(int topChunkCount, RerankerClient.RerankOutcome rerankOutcome) {

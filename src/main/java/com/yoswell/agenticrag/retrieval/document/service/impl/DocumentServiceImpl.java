@@ -18,6 +18,7 @@ import com.yoswell.agenticrag.retrieval.document.dto.DocumentDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.request.DocumentParseRequestDTO;
 import com.yoswell.agenticrag.retrieval.document.entity.DocumentDO;
 import com.yoswell.agenticrag.retrieval.document.mapper.DocumentMetadataMapper;
+import com.yoswell.agenticrag.retrieval.document.model.ChunkingStrategy;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentProcessingStatus;
 import com.yoswell.agenticrag.retrieval.document.reliability.entity.DocumentAsyncTaskDO;
@@ -63,7 +64,7 @@ public class DocumentServiceImpl implements DocumentService {
      * @return 落库后的文档元数据
      */
     @Override
-    public DocumentDO handleUpload(MultipartFile file, String tenantId) {
+    public DocumentDO handleUpload(MultipartFile file, String tenantId, ChunkingStrategy chunkingStrategy) {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Uploaded file cannot be empty");
         }
@@ -77,7 +78,7 @@ public class DocumentServiceImpl implements DocumentService {
                 tenantId, fileName, file.getSize(), contentType);
 
         try (InputStream inputStream = file.getInputStream()) {
-            DocumentDO metadata = uploadAndDispatch(fileName, inputStream, file.getSize(), contentType, tenantId);
+            DocumentDO metadata = uploadAndDispatch(fileName, inputStream, file.getSize(), contentType, tenantId, chunkingStrategy);
             log.info("[Upload Pipeline][DONE] 上传链路完成: documentId={}, tenantId={}, finalStatus={}",
                     metadata.getDocumentId(), tenantId, metadata.getStatus());
             return metadata;
@@ -100,7 +101,7 @@ public class DocumentServiceImpl implements DocumentService {
     @Transactional
     @Override
     public DocumentDO uploadAndDispatch(String fileName, InputStream inputStream,
-                                        long fileSize, String contentType, String tenantId) {
+                                        long fileSize, String contentType, String tenantId, ChunkingStrategy chunkingStrategy) {
         // ① 保存文档元数据到 document 表
         String documentId = "doc-" + UUID.randomUUID();
         String extension = extractExtension(fileName);
@@ -120,6 +121,7 @@ public class DocumentServiceImpl implements DocumentService {
         metadata.setMinioUrl(minioUrl);
         metadata.setFileExtension(extension);
         metadata.setAllowedRoles(String.join(",", DEFAULT_ALLOWED_ROLES));
+        metadata.setChunkingStrategy(chunkingStrategy);
         metadata.setStatus(DocumentProcessingStatus.UPLOADED);
 
         int rowsAffected = documentMetadataMapper.insert(metadata);
@@ -156,6 +158,7 @@ public class DocumentServiceImpl implements DocumentService {
                         minioUrl,
                         extension,
                         DEFAULT_ALLOWED_ROLES,
+                        chunkingStrategy.value(),
                         parseTask.getTaskId(),
                         messageId,
                         System.currentTimeMillis()

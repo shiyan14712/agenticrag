@@ -128,6 +128,7 @@ public class DocumentParsePipelineServiceImpl implements DocumentParsePipelineSe
                         vectorizeFileUrl,
                         vectorizeFileExtension,
                         allowedRoles,
+                        request.chunkingStrategy(),
                         vectorizeMessageId,
                         System.currentTimeMillis()
                 ));

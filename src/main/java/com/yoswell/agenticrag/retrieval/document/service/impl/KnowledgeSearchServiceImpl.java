@@ -158,6 +158,8 @@ public class KnowledgeSearchServiceImpl implements KnowledgeSearchService {
                     sourceDto.allowedRoles() == null ? List.of() : List.copyOf(sourceDto.allowedRoles()),
                     sourceDto.chunkIndex(),
                     defaultString(sourceDto.content()),
+                    defaultString(sourceDto.originalContent()),
+                    defaultString(sourceDto.chunkingStrategy()),
                     hit.path(KnowledgeChunkIndexConstants.JSON_SCORE).asDouble(KnowledgeChunkIndexConstants.DEFAULT_SCORE)
             ));
         }

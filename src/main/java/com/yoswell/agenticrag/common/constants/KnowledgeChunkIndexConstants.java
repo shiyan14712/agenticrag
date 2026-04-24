@@ -58,6 +58,8 @@ public final class KnowledgeChunkIndexConstants {
     public static final String FIELD_ALLOWED_ROLES = "allowedRoles";
     public static final String FIELD_CHUNK_INDEX = "chunkIndex";
     public static final String FIELD_CONTENT = "content";
+    public static final String FIELD_ORIGINAL_CONTENT = "originalContent";
+    public static final String FIELD_CHUNKING_STRATEGY = "chunkingStrategy";
     public static final String FIELD_CONTENT_VECTOR = "contentVector";
 
     // documentId/tenantId 字段本身就是 keyword 类型，无需 .keyword 子字段
@@ -89,6 +91,8 @@ public final class KnowledgeChunkIndexConstants {
             FIELD_KB_ID,
             FIELD_ALLOWED_ROLES,
             FIELD_CHUNK_INDEX,
-            FIELD_CONTENT
+            FIELD_CONTENT,
+            FIELD_ORIGINAL_CONTENT,
+            FIELD_CHUNKING_STRATEGY
     );
 }

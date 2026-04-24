@@ -1,4 +1,4 @@
-package com.yoswell.agenticrag.retrieval.document.reliability.mapper;
+package com.yoswell.agenticrag.retrieval.document.mapper;
 
 import org.apache.ibatis.annotations.Mapper;
 

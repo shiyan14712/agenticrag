@@ -51,6 +51,7 @@ public enum ErrorCode {
     DOCUMENT_DELETE_FAILED("D40005", "文档安全删除失败，请稍后重试"),
     KNOWLEDGE_KEYWORD_SEARCH_FAILED("D40006", "知识关键词检索失败，请稍后重试"),
     KNOWLEDGE_VECTOR_SEARCH_FAILED("D40007", "知识向量检索失败，请稍后重试"),
+    INVALID_CHUNKING_STRATEGY("D40008", "无效的分块策略，可选值：STANDARD、DECONTEXTUALISED、QA_ENRICHED"),
 
     // =========================================================================
     // 【HTTP 401/403】 鉴权与安全拦截错误码 (Security & Authentication)

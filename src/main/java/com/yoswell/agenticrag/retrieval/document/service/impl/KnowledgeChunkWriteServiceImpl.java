@@ -213,6 +213,10 @@ public class KnowledgeChunkWriteServiceImpl implements KnowledgeChunkWriteServic
                 .put(KnowledgeChunkIndexConstants.JSON_TYPE, KnowledgeChunkIndexConstants.TYPE_INTEGER);
         properties.putObject(KnowledgeChunkIndexConstants.FIELD_CONTENT)
                 .put(KnowledgeChunkIndexConstants.JSON_TYPE, KnowledgeChunkIndexConstants.TYPE_TEXT);
+        properties.putObject(KnowledgeChunkIndexConstants.FIELD_ORIGINAL_CONTENT)
+                .put(KnowledgeChunkIndexConstants.JSON_TYPE, KnowledgeChunkIndexConstants.TYPE_TEXT);
+        properties.putObject(KnowledgeChunkIndexConstants.FIELD_CHUNKING_STRATEGY)
+                .put(KnowledgeChunkIndexConstants.JSON_TYPE, KnowledgeChunkIndexConstants.TYPE_KEYWORD);
         ObjectNode vector = properties.putObject(KnowledgeChunkIndexConstants.FIELD_CONTENT_VECTOR);
         vector.put(KnowledgeChunkIndexConstants.JSON_TYPE, KnowledgeChunkIndexConstants.TYPE_DENSE_VECTOR);
         vector.put(KnowledgeChunkIndexConstants.JSON_DIMS, vectorDimensions);

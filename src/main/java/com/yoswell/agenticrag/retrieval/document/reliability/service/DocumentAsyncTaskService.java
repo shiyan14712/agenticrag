@@ -14,7 +14,7 @@ import org.springframework.util.StringUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.yoswell.agenticrag.retrieval.document.reliability.entity.DocumentAsyncTaskDO;
-import com.yoswell.agenticrag.retrieval.document.reliability.mapper.DocumentAsyncTaskMapper;
+import com.yoswell.agenticrag.retrieval.document.mapper.DocumentAsyncTaskMapper;
 import com.yoswell.agenticrag.retrieval.document.reliability.model.DocumentAsyncTaskStatus;
 import com.yoswell.agenticrag.retrieval.document.reliability.model.DocumentAsyncTaskType;
 

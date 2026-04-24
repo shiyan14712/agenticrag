@@ -13,6 +13,8 @@ public record KnowledgeChunkSearchHitDTO(
         String kbId,
         List<String> allowedRoles,
         int chunkIndex,
-        String content
+        String content,
+        String originalContent,
+        String chunkingStrategy
 ) {
 }

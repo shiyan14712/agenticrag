@@ -11,7 +11,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.yoswell.agenticrag.retrieval.document.model.DocumentKafkaTopic;
 import com.yoswell.agenticrag.retrieval.document.reliability.entity.MessageOutboxDO;
-import com.yoswell.agenticrag.retrieval.document.reliability.mapper.MessageOutboxMapper;
+import com.yoswell.agenticrag.retrieval.document.mapper.MessageOutboxMapper;
 import com.yoswell.agenticrag.retrieval.document.reliability.model.MessageOutboxEventType;
 import com.yoswell.agenticrag.retrieval.document.reliability.model.MessageOutboxStatus;
 
