@@ -3,6 +3,7 @@ package com.yoswell.agenticrag.retrieval.document.controller;
 import java.util.List;
 import java.util.Map;
 
+import com.yoswell.agenticrag.common.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,6 +17,7 @@ import org.springframework.web.multipart.MultipartFile;
 import com.yoswell.agenticrag.common.result.ApiResponse;
 import com.yoswell.agenticrag.retrieval.document.dto.DocumentDTO;
 import com.yoswell.agenticrag.retrieval.document.dto.response.DocumentUploadResponseDTO;
+import com.yoswell.agenticrag.retrieval.document.model.ChunkingStrategy;
 import com.yoswell.agenticrag.retrieval.document.service.DocumentService;
 import com.yoswell.agenticrag.web.security.util.SecurityUtils;
 
@@ -43,9 +45,11 @@ public class DocumentController {
      * @throws Exception 文件读取或上传链路异常
      */
     @PostMapping(value = "/upload", consumes = "multipart/form-data")
-    public ApiResponse<DocumentUploadResponseDTO> uploadDocument(@RequestParam("file") MultipartFile file) throws Exception {
+    public ApiResponse<DocumentUploadResponseDTO> uploadDocument(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "chunkingStrategy", defaultValue = "STANDARD") ChunkingStrategy chunkingStrategy) throws BusinessException {
         String tenantId = SecurityUtils.getCurrentTenantId();
-        var metadata = documentService.handleUpload(file, tenantId);
+        var metadata = documentService.handleUpload(file, tenantId, chunkingStrategy);
         
         DocumentUploadResponseDTO response = new DocumentUploadResponseDTO(
                 metadata.getDocumentId(),
