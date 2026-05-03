@@ -15,20 +15,22 @@ import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
 import com.yoswell.agenticrag.platform.session.mapper.ChatMessageMapper;
 import com.yoswell.agenticrag.platform.session.mapper.ChatSessionMapper;
 
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.service.tool.ToolExecutionResult;
 import lombok.extern.slf4j.Slf4j;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * 聊天消息服务
- *
- * <p>
- * 负责用户消息和助手消息的落库，并维护会话消息计数及缓存同步
- * </p>
+ * Chat message persistence service.
  */
 @Service
 @Slf4j
 public class ChatMessageService {
+
+    public static final String CONTENT_TYPE_TEXT = "text";
+    public static final String CONTENT_TYPE_TOOL_CALL = "tool_call";
+    public static final String CONTENT_TYPE_TOOL_RESULT = "tool_result";
 
     private final ChatMessageMapper messageMapper;
     private final ChatSessionMapper sessionMapper;
@@ -45,12 +47,6 @@ public class ChatMessageService {
         this.objectMapper = objectMapper;
     }
 
-    /**
-     * 保存用户消息
-     *
-     * @param sessionId 会话 ID
-     * @param content   用户消息内容
-     */
     @Transactional
     public void saveUserMessage(String sessionId, String content) {
         ChatMessageDO msg = new ChatMessageDO();
@@ -58,18 +54,12 @@ public class ChatMessageService {
         msg.setSessionId(sessionId);
         msg.setRole("user");
         msg.setContent(content);
+        msg.setContentType(CONTENT_TYPE_TEXT);
         msg.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L1);
         messageMapper.insert(msg);
         incrementSessionMessageCount(sessionId, 1);
     }
 
-    /**
-     * 保存助手消息
-     *
-     * @param sessionId 会话 ID
-     * @param content   助手消息内容
-     * @param metadata  可选元数据（将序列化为 JSON 保存）
-     */
     @Transactional
     public void saveAssistantMessage(String sessionId, String content, Object metadata) {
         ChatMessageDO msg = new ChatMessageDO();
@@ -77,19 +67,72 @@ public class ChatMessageService {
         msg.setSessionId(sessionId);
         msg.setRole("assistant");
         msg.setContent(content);
+        msg.setContentType(CONTENT_TYPE_TEXT);
         msg.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L1);
-
-        if (metadata != null) {
-            try {
-                msg.setMetadata(objectMapper.writeValueAsString(metadata));
-            } catch (JacksonException e) {
-                log.error("[ChatMessageService] 助手消息元数据序列化失败: sessionId={}", sessionId, e);
-                throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "消息元数据序列化失败，请稍后重试");
-            }
-        }
+        msg.setMetadata(serializeMetadata(sessionId, metadata));
         messageMapper.insert(msg);
-
         incrementSessionMessageCount(sessionId, 1);
+    }
+
+    /**
+     * Persist an assistant tool-call turn so chat history can replay the agent loop.
+     */
+    @Transactional
+    public void saveAssistantToolCallMessage(String sessionId, ToolExecutionRequest toolRequest, int turn) {
+        ChatMessageDO msg = new ChatMessageDO();
+        msg.setMessageId(UUID.randomUUID().toString());
+        msg.setSessionId(sessionId);
+        msg.setRole("assistant");
+        String arguments = toolRequest.arguments() == null ? "" : toolRequest.arguments();
+        msg.setContent(arguments);
+        msg.setContentType(CONTENT_TYPE_TOOL_CALL);
+        msg.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L1);
+        msg.setMetadata(serializeMetadata(sessionId, new ToolCallMetadata(
+                turn,
+                toolRequest.id(),
+                toolRequest.name(),
+                arguments)));
+        messageMapper.insert(msg);
+        incrementSessionMessageCount(sessionId, 1);
+    }
+
+    /**
+     * Persist a tool observation so chat history can replay the agent loop.
+     */
+    @Transactional
+    public void saveToolResultMessage(String sessionId,
+                                      ToolExecutionRequest toolRequest,
+                                      ToolExecutionResult result,
+                                      boolean failed,
+                                      long durationMs,
+                                      int turn) {
+        ChatMessageDO msg = new ChatMessageDO();
+        msg.setMessageId(UUID.randomUUID().toString());
+        msg.setSessionId(sessionId);
+        msg.setRole("tool");
+        msg.setContent(result.resultText() == null ? "" : result.resultText());
+        msg.setContentType(CONTENT_TYPE_TOOL_RESULT);
+        msg.setCompressionLevel(MemoryStoreConstants.COMPRESSION_LEVEL_L1);
+        msg.setMetadata(serializeMetadata(sessionId, new ToolResultMetadata(
+                turn,
+                toolRequest.id(),
+                toolRequest.name(),
+                failed,
+                durationMs)));
+        messageMapper.insert(msg);
+        incrementSessionMessageCount(sessionId, 1);
+    }
+
+    private String serializeMetadata(String sessionId, Object metadata) {
+        if (metadata == null) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(metadata);
+        } catch (JacksonException e) {
+            log.error("[ChatMessageService] Failed to serialize message metadata: sessionId={}", sessionId, e);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "消息元数据序列化失败，请稍后重试");
+        }
     }
 
     private void incrementSessionMessageCount(String sessionId, int delta) {
@@ -105,9 +148,17 @@ public class ChatMessageService {
         int currentCount = messageCount == null ? 0 : messageCount;
         session.setMessageCount(currentCount + delta);
         sessionMapper.updateById(session);
-        // TODO(session-messages-cache): 消息写入后应失效/刷新 session:messages:* 缓存，避免历史分页数据脏读。
-        // TODO(session-messages-cache): 建议新增
-        // redisManager.invalidateSessionMessagesCache(sessionId)。
         redisManager.cacheSessionMeta(session);
+    }
+
+    private record ToolCallMetadata(int turn, String toolCallId, String toolName, String arguments) {
+    }
+
+    private record ToolResultMetadata(
+            int turn,
+            String toolCallId,
+            String toolName,
+            boolean failed,
+            long durationMs) {
     }
 }

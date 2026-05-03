@@ -126,12 +126,25 @@ public class SessionService {
      * @param size 每页大小
      * @return 消息分页结果
      */
-    public IPage<ChatMessageDO> getSessionMessages(String sessionId, String userId, int page, int size) {
+    public IPage<ChatMessageDO> getSessionMessages(String sessionId,
+                                                   String userId,
+                                                   int page,
+                                                   int size,
+                                                   boolean includeTrace) {
         getSessionBySessionId(sessionId, userId);
         Page<ChatMessageDO> p = new Page<>(toMybatisCurrentPage(page), size);
-        return messageMapper.selectPage(p, new LambdaQueryWrapper<ChatMessageDO>()
-                .eq(ChatMessageDO::getSessionId, sessionId)
-                .orderByAsc(ChatMessageDO::getCreatedAt));
+        LambdaQueryWrapper<ChatMessageDO> wrapper = new LambdaQueryWrapper<ChatMessageDO>()
+                .eq(ChatMessageDO::getSessionId, sessionId);
+        if (!includeTrace) {
+            wrapper.ne(ChatMessageDO::getRole, "tool")
+                    .and(query -> query
+                            .isNull(ChatMessageDO::getContentType)
+                            .or()
+                            .eq(ChatMessageDO::getContentType, ChatMessageService.CONTENT_TYPE_TEXT));
+        }
+        return messageMapper.selectPage(p, wrapper
+                .orderByAsc(ChatMessageDO::getCreatedAt)
+                .orderByAsc(ChatMessageDO::getId));
     }
 
     /**
@@ -166,9 +179,13 @@ public class SessionService {
      * @param size 每页大小
      * @return 详情聚合响应
      */
-    public SessionDetailsRespDTO getSessionDetails(String sessionId, String userId, int page, int size) {
+    public SessionDetailsRespDTO getSessionDetails(String sessionId,
+                                                   String userId,
+                                                   int page,
+                                                   int size,
+                                                   boolean includeTrace) {
         ChatSessionDO session = getSessionBySessionId(sessionId, userId);
-        IPage<ChatMessageDO> messages = getSessionMessages(sessionId, userId, page, size);
+        IPage<ChatMessageDO> messages = getSessionMessages(sessionId, userId, page, size, includeTrace);
         return new SessionDetailsRespDTO(session, messages);
     }
 

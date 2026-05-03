@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS chat_message (
     created_at      DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     INDEX idx_session_created (session_id, created_at ASC),
+    INDEX idx_session_content_created (session_id, content_type, created_at ASC),
     INDEX idx_session_compression (session_id, compression_level)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

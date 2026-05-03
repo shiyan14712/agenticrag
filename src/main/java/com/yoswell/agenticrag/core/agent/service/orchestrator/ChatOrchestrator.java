@@ -1,8 +1,13 @@
 package com.yoswell.agenticrag.core.agent.service.orchestrator;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
@@ -17,7 +22,6 @@ import com.yoswell.agenticrag.common.constants.ChatCacheConstants;
 import com.yoswell.agenticrag.common.exception.BusinessException;
 import com.yoswell.agenticrag.common.exception.BusinessExceptionMapper;
 import com.yoswell.agenticrag.common.exception.ErrorCode;
-import com.yoswell.agenticrag.core.agent.ai.EnterpriseAgent;
 import com.yoswell.agenticrag.core.agent.constants.ToolExecutionConstants;
 import com.yoswell.agenticrag.core.agent.context.RagRetrievalContextHolder;
 import com.yoswell.agenticrag.core.agent.dto.CitationDTO;
@@ -25,12 +29,34 @@ import com.yoswell.agenticrag.core.agent.dto.RagSearchResultDTO;
 import com.yoswell.agenticrag.core.agent.dto.SseEventType;
 import com.yoswell.agenticrag.core.agent.dto.ToolEventDTO;
 import com.yoswell.agenticrag.core.agent.service.ChatService;
+import com.yoswell.agenticrag.core.agent.tool.PreferenceTool;
+import com.yoswell.agenticrag.core.agent.tool.RagTool;
 import com.yoswell.agenticrag.platform.session.entity.ChatSessionDO;
 import com.yoswell.agenticrag.platform.session.mapper.ChatSessionMapper;
 import com.yoswell.agenticrag.platform.session.service.ChatMessageService;
 import com.yoswell.agenticrag.web.security.model.TenantUser;
 
-import dev.langchain4j.service.TokenStream;
+import dev.langchain4j.agent.tool.Tool;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.agent.tool.ToolSpecification;
+import dev.langchain4j.agent.tool.ToolSpecifications;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.ToolExecutionResultMessage;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.invocation.InvocationContext;
+import dev.langchain4j.memory.ChatMemory;
+import dev.langchain4j.memory.chat.ChatMemoryProvider;
+import dev.langchain4j.model.chat.StreamingChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.chat.response.PartialThinking;
+import dev.langchain4j.model.chat.response.PartialToolCall;
+import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
+import dev.langchain4j.service.tool.DefaultToolExecutor;
+import dev.langchain4j.service.tool.ToolExecutionResult;
+import dev.langchain4j.service.tool.ToolExecutor;
 import lombok.RequiredArgsConstructor;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
@@ -56,8 +82,12 @@ import tools.jackson.databind.ObjectMapper;
 public class ChatOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(ChatOrchestrator.class);
+    private static final int MAX_AGENT_TURNS = 12;
 
-    private final EnterpriseAgent enterpriseAgent;
+    private final StreamingChatModel streamingChatModel;
+    private final ChatMemoryProvider chatMemoryProvider;
+    private final RagTool ragTool;
+    private final PreferenceTool preferenceTool;
     private final ObjectMapper objectMapper;
     private final ChatMessageService chatMessageService;
     private final RagRetrievalContextHolder ragRetrievalContextHolder;
@@ -113,95 +143,30 @@ public class ChatOrchestrator {
             AtomicLong toolStartTimestamp = new AtomicLong(0);
 
             log.info("[ReAct] Agent 推理循环启动: session={}", sessionId);
-            TokenStream tokenStream = enterpriseAgent.chat(sessionId, message);
-            tokenStream
-                    // 阶段 1：流式思考过程前端通常会渲染成“正在思考”或 reasoning 面板
-                    .onPartialThinking(partialThinking -> {
-                        bindRagContextToCurrentThread(sessionId);
-                        String thinkingText = partialThinking.text();
-                        if (thinkingText != null && !thinkingText.isEmpty()) {
-                            emitSseEvent(emitter, SseEventType.THINKING, thinkingText);
-                        }
-                    })
-                    // 阶段 2：工具开始执行这里记录开始时间，并把工具名与参数摘要发给前端
-                    .beforeToolExecution(beforeTool -> {
-                        bindRagContextToCurrentThread(sessionId);
-                        toolStartTimestamp.set(System.currentTimeMillis());
-                        String toolName = beforeTool.request().name();
-                        String argsPreview = summarizeToolArgs(beforeTool.request().arguments());
-                        log.info("[ReAct] Tool 即将执行: tool={}, args={}", toolName, argsPreview);
+            try {
+                runExplicitAgentLoop(sessionId, message, emitter, fullResponse, toolStartTimestamp);
 
-                        ToolEventDTO startEvent = ToolEventDTO.executing(toolName, argsPreview);
-                        emitSseEventJson(emitter, SseEventType.TOOL_START, startEvent);
-                    })
-                    // 阶段 3：工具执行完成这里计算耗时，并把结果摘要发给前端
-                    .onToolExecuted(toolExecution -> {
-                        bindRagContextToCurrentThread(sessionId);
-                        long elapsed = System.currentTimeMillis() - toolStartTimestamp.get();
-                        String toolName = toolExecution.request().name();
-                        ToolExecutionOutcome outcome = decodeToolExecutionOutcome(toolExecution.result());
-                        String resultPreview = summarizeToolResult(outcome.message());
-                        if (outcome.failed()) {
-                            log.warn("[ReAct] Tool 执行失败: tool={}, elapsed={}ms, resultPreview={}",
-                                    toolName, elapsed, resultPreview);
-                            ToolEventDTO resultEvent = ToolEventDTO.failed(toolName, resultPreview);
-                            emitSseEventJson(emitter, SseEventType.TOOL_RESULT, resultEvent);
-                            return;
-                        }
+                List<CitationDTO> citations = ragRetrievalContextHolder.consume(sessionId)
+                        .map(RagSearchResultDTO::citations)
+                        .orElse(List.of());
 
-                        log.info("[ReAct] Tool 执行完成: tool={}, elapsed={}ms, resultPreview={}",
-                                toolName, elapsed, resultPreview);
-                        ToolEventDTO resultEvent = ToolEventDTO.completed(toolName, resultPreview, elapsed);
-                        emitSseEventJson(emitter, SseEventType.TOOL_RESULT, resultEvent);
-                    })
-                    // 阶段 4：最终回答流式输出每个 token 都会推给前端，并拼接完整回答
-                    .onPartialResponse(token -> {
-                        bindRagContextToCurrentThread(sessionId);
-                        fullResponse.append(token);
-                        emitSseEvent(emitter, SseEventType.MESSAGE, token);
-                    })
-                    // 阶段 5：整轮会话完成聚合引用、发送结束事件、保存助手消息并清理上下文
-                    .onCompleteResponse(response -> {
-                        bindRagContextToCurrentThread(sessionId);
-                        try {
-                            List<CitationDTO> citations = ragRetrievalContextHolder.consume(sessionId)
-                                    .map(RagSearchResultDTO::citations)
-                                    .orElse(List.of());
-
-                            chatMessageService.saveAssistantMessage(sessionId, fullResponse.toString(), citations);
-                            emitCitationsWidget(emitter, citations);
-                            emitSseEvent(emitter, SseEventType.DONE, "{}");
-                            emitter.complete();
-                            log.info("[ReAct] Agent 推理循环结束: session={}, answerChars={}, citationCount={}",
-                                    sessionId, fullResponse.length(), citations.size());
-                        } catch (Exception exception) {
-                            BusinessException businessException = BusinessExceptionMapper.map(exception,
-                                    ErrorCode.AGENT_STREAM_INTERRUPTED);
-                            log.error("[ReAct] 会话收尾失败: session={}, code={}, message={}",
-                                    sessionId, businessException.getCode(), businessException.getMessage(), exception);
-                            emitBusinessErrorAndComplete(emitter, businessException);
-                            ragRetrievalContextHolder.clearSessionResult(sessionId);
-                        } finally {
-                            closeQuietly(finalRetrievalScope);
-                            ragRetrievalContextHolder.clearSessionBindings(sessionId);
-                        }
-                    })
-                    // 异常阶段：发送 error 事件，并回收检索上下文与会话结果缓存
-                    .onError(error -> {
-                        bindRagContextToCurrentThread(sessionId);
-                        try {
-                            BusinessException businessException = BusinessExceptionMapper.map(error,
-                                    ErrorCode.AGENT_STREAM_INTERRUPTED);
-                            log.error("[ReAct] TokenStream 执行异常: session={}, code={}, message={}",
-                                    sessionId, businessException.getCode(), businessException.getMessage(), error);
-                            emitBusinessErrorAndComplete(emitter, businessException);
-                        } finally {
-                            closeQuietly(finalRetrievalScope);
-                            ragRetrievalContextHolder.clearSessionBindings(sessionId);
-                            ragRetrievalContextHolder.clearSessionResult(sessionId);
-                        }
-                    })
-                    .start();
+                chatMessageService.saveAssistantMessage(sessionId, fullResponse.toString(), citations);
+                emitCitationsWidget(emitter, citations);
+                emitSseEvent(emitter, SseEventType.DONE, "{}");
+                emitter.complete();
+                log.info("[ReAct] Agent 推理循环结束: session={}, answerChars={}, citationCount={}",
+                        sessionId, fullResponse.length(), citations.size());
+            } catch (Exception exception) {
+                BusinessException businessException = BusinessExceptionMapper.map(exception,
+                        ErrorCode.AGENT_STREAM_INTERRUPTED);
+                log.error("[ReAct] TokenStream 执行异常: session={}, code={}, message={}",
+                        sessionId, businessException.getCode(), businessException.getMessage(), exception);
+                emitBusinessErrorAndComplete(emitter, businessException);
+                ragRetrievalContextHolder.clearSessionResult(sessionId);
+            } finally {
+                closeQuietly(finalRetrievalScope);
+                ragRetrievalContextHolder.clearSessionBindings(sessionId);
+            }
         } catch (Exception e) {
             BusinessException businessException = BusinessExceptionMapper.map(e, ErrorCode.AGENT_STREAM_INTERRUPTED);
             log.error("[ReAct] 会话启动失败: session={}, code={}, message={}",
@@ -213,6 +178,253 @@ public class ChatOrchestrator {
         }
 
         return emitter;
+    }
+
+    /**
+     * 项目侧显式 Harness Loop。
+     *
+     * <p>
+     * 与 LangChain4j AiServices 的黑盒 Tool Loop 不同，这里由业务代码掌控 turn 计数、
+     * 中间响应日志、工具执行、Observation 回填和结束条件。
+     * </p>
+     */
+    private void runExplicitAgentLoop(String sessionId,
+                                      String message,
+                                      SseEmitter emitter,
+                                      StringBuilder fullResponse,
+                                      AtomicLong toolStartTimestamp) {
+        ChatMemory chatMemory = chatMemoryProvider.get(sessionId);
+        chatMemory.add(UserMessage.from(message));
+
+        ToolRuntime toolRuntime = buildToolRuntime();
+        InvocationContext invocationContext = InvocationContext.builder()
+                .chatMemoryId(sessionId)
+                .build();
+
+        for (int turn = 1; turn <= MAX_AGENT_TURNS; turn++) {
+            bindRagContextToCurrentThread(sessionId);
+            List<ChatMessage> messages = messagesWithSystemPrompt(chatMemory.messages());
+            log.info("[Harness] Turn {} 开始: session={}, messageCount={}, toolCount={}",
+                    turn, sessionId, messages.size(), toolRuntime.specifications().size());
+
+            StringBuilder turnTextBuffer = new StringBuilder();
+            ChatResponse response = streamOneModelTurn(
+                    sessionId, turn, messages, toolRuntime.specifications(), emitter, turnTextBuffer);
+
+            AiMessage aiMessage = response.aiMessage();
+            chatMemory.add(aiMessage);
+
+            if (!aiMessage.hasToolExecutionRequests()) {
+                appendFinalTurnTextIfNeeded(emitter, fullResponse, turnTextBuffer, aiMessage);
+                log.info("[Harness] Turn {} 产生最终回答，Agent Loop 正常结束: session={}", turn, sessionId);
+                return;
+            }
+
+            List<ToolExecutionRequest> toolRequests = aiMessage.toolExecutionRequests();
+            log.info("[Harness] Turn {} 产生 {} 个 ToolExecutionRequest: session={}",
+                    turn, toolRequests.size(), sessionId);
+            if (!turnTextBuffer.isEmpty()) {
+                emitSseEvent(emitter, SseEventType.THINKING, turnTextBuffer.toString());
+            }
+
+            List<ToolExecutionResultMessage> observations = executeToolRequests(
+                    sessionId, turn, toolRequests, toolRuntime.executors(), invocationContext, emitter, toolStartTimestamp);
+            observations.forEach(chatMemory::add);
+
+            log.info("[Harness] Turn {} 工具 Observation 已写回 Memory，继续下一轮推理: session={}, observations={}",
+                    turn, sessionId, observations.size());
+        }
+
+        throw new BusinessException(
+                ErrorCode.AGENT_STREAM_INTERRUPTED.getCode(),
+                "Agent Loop 超过最大轮数限制: " + MAX_AGENT_TURNS + ", 请手动继续");
+    }
+
+    private ChatResponse streamOneModelTurn(String sessionId,
+                                            int turn,
+                                            List<ChatMessage> messages,
+                                            List<ToolSpecification> toolSpecifications,
+                                            SseEmitter emitter,
+                                            StringBuilder turnTextBuffer) {
+        CompletableFuture<ChatResponse> completion = new CompletableFuture<>();
+        ChatRequest request = ChatRequest.builder()
+                .messages(messages)
+                .toolSpecifications(toolSpecifications)
+                .build();
+
+        streamingChatModel.chat(request, new StreamingChatResponseHandler() {
+            @Override
+            public void onPartialResponse(String partialResponse) {
+                bindRagContextToCurrentThread(sessionId);
+                if (partialResponse != null && !partialResponse.isEmpty()) {
+                    turnTextBuffer.append(partialResponse);
+                }
+            }
+
+            @Override
+            public void onPartialThinking(PartialThinking partialThinking) {
+                bindRagContextToCurrentThread(sessionId);
+                String thinkingText = partialThinking.text();
+                if (thinkingText != null && !thinkingText.isEmpty()) {
+                    emitSseEvent(emitter, SseEventType.THINKING, thinkingText);
+                }
+            }
+
+            @Override
+            public void onPartialToolCall(PartialToolCall partialToolCall) {
+                bindRagContextToCurrentThread(sessionId);
+                log.debug("[Harness] Turn {} 正在生成 ToolCall: session={}, index={}, tool={}, partialArgs={}",
+                        turn,
+                        sessionId,
+                        partialToolCall.index(),
+                        partialToolCall.name(),
+                        summarizeToolArgs(partialToolCall.partialArguments()));
+            }
+
+            @Override
+            public void onCompleteResponse(ChatResponse completeResponse) {
+                bindRagContextToCurrentThread(sessionId);
+                completion.complete(completeResponse);
+            }
+
+            @Override
+            public void onError(Throwable error) {
+                completion.completeExceptionally(error);
+            }
+        });
+
+        try {
+            ChatResponse response = completion.join();
+            AiMessage aiMessage = response.aiMessage();
+            log.info("[Harness] Turn {} 模型响应完成: session={}, hasToolRequests={}, finishReason={}",
+                    turn, sessionId, aiMessage.hasToolExecutionRequests(), response.finishReason());
+            return response;
+        } catch (Exception exception) {
+            Throwable cause = exception.getCause() == null ? exception : exception.getCause();
+            throw new BusinessException(
+                    ErrorCode.AGENT_STREAM_INTERRUPTED.getCode(),
+                    "Agent Loop 模型流式响应失败: " + cause.getMessage());
+        }
+    }
+
+    private List<ToolExecutionResultMessage> executeToolRequests(String sessionId,
+                                                                 int turn,
+                                                                 List<ToolExecutionRequest> toolRequests,
+                                                                 Map<String, ToolExecutor> toolExecutors,
+                                                                 InvocationContext invocationContext,
+                                                                 SseEmitter emitter,
+                                                                 AtomicLong toolStartTimestamp) {
+        List<ToolExecutionResultMessage> observations = new ArrayList<>(toolRequests.size());
+        for (ToolExecutionRequest toolRequest : toolRequests) {
+            bindRagContextToCurrentThread(sessionId);
+            toolStartTimestamp.set(System.currentTimeMillis());
+            String toolName = toolRequest.name();
+            String argsPreview = summarizeToolArgs(toolRequest.arguments());
+            log.info("[Harness] Tool 即将执行: session={}, tool={}, args={}", sessionId, toolName, argsPreview);
+            chatMessageService.saveAssistantToolCallMessage(sessionId, toolRequest, turn);
+            emitSseEventJson(emitter, SseEventType.TOOL_START, ToolEventDTO.executing(toolName, argsPreview));
+
+            ToolExecutionResult result = executeSingleTool(toolRequest, toolExecutors, invocationContext);
+            long elapsed = System.currentTimeMillis() - toolStartTimestamp.get();
+            String resultText = result.resultText() == null ? "" : result.resultText();
+            ToolExecutionOutcome outcome = decodeToolExecutionOutcome(resultText);
+            boolean failed = result.isError() || outcome.failed();
+            String resultPreview = summarizeToolResult(outcome.message());
+            chatMessageService.saveToolResultMessage(sessionId, toolRequest, result, failed, elapsed, turn);
+
+            if (failed) {
+                log.warn("[Harness] Tool 执行失败: session={}, tool={}, elapsed={}ms, resultPreview={}",
+                        sessionId, toolName, elapsed, resultPreview);
+                emitSseEventJson(emitter, SseEventType.TOOL_RESULT, ToolEventDTO.failed(toolName, resultPreview));
+            } else {
+                log.info("[Harness] Tool 执行完成: session={}, tool={}, elapsed={}ms, resultPreview={}",
+                        sessionId, toolName, elapsed, resultPreview);
+                emitSseEventJson(emitter, SseEventType.TOOL_RESULT,
+                        ToolEventDTO.completed(toolName, resultPreview, elapsed));
+            }
+
+            observations.add(ToolExecutionResultMessage.builder()
+                    .id(toolRequest.id())
+                    .toolName(toolName)
+                    .text(resultText)
+                    .isError(failed)
+                    .attributes(result.attributes())
+                    .build());
+        }
+        return observations;
+    }
+
+    private ToolExecutionResult executeSingleTool(ToolExecutionRequest toolRequest,
+                                                  Map<String, ToolExecutor> toolExecutors,
+                                                  InvocationContext invocationContext) {
+        ToolExecutor executor = toolExecutors.get(toolRequest.name());
+        if (executor == null) {
+            return ToolExecutionResult.builder()
+                    .isError(true)
+                    .resultText("Unknown tool requested by model: " + toolRequest.name())
+                    .build();
+        }
+        try {
+            return executor.executeWithContext(toolRequest, invocationContext);
+        } catch (Exception exception) {
+            String message = exception.getMessage() == null
+                    ? exception.getClass().getSimpleName()
+                    : exception.getMessage();
+            log.error("[Harness] Tool 执行异常: tool={}, args={}", toolRequest.name(), toolRequest.arguments(), exception);
+            return ToolExecutionResult.builder()
+                    .isError(true)
+                    .resultText(message)
+                    .build();
+        }
+    }
+
+    private void appendFinalTurnTextIfNeeded(SseEmitter emitter,
+                                             StringBuilder fullResponse,
+                                             StringBuilder turnTextBuffer,
+                                             AiMessage aiMessage) {
+        String finalText = !turnTextBuffer.isEmpty() ? turnTextBuffer.toString() : aiMessage.text();
+        if (finalText == null || finalText.isEmpty()) {
+            return;
+        }
+        fullResponse.append(finalText);
+        emitSseEvent(emitter, SseEventType.MESSAGE, finalText);
+    }
+
+    private List<ChatMessage> messagesWithSystemPrompt(List<ChatMessage> memoryMessages) {
+        List<ChatMessage> messages = new ArrayList<>(memoryMessages.size() + 1);
+        messages.add(SystemMessage.from("""
+                You are an enterprise AI assistant.
+                Use tools sequentially if needed. Maintain a professional tone.
+                Reason step by step before calling a tool.
+                For complex research tasks, decompose the request into multiple searches when the current observations are insufficient.
+                After each tool observation, decide whether another search is needed or whether the final answer can be produced.
+                If retrieval failed, do not answer arbitrarily; indicate that no content was found.
+                """));
+        messages.addAll(memoryMessages);
+        return messages;
+    }
+
+    private ToolRuntime buildToolRuntime() {
+        Map<String, ToolExecutor> executors = new LinkedHashMap<>();
+        List<ToolSpecification> specifications = new ArrayList<>();
+        registerToolObject(ragTool, specifications, executors);
+        registerToolObject(preferenceTool, specifications, executors);
+        return new ToolRuntime(List.copyOf(specifications), Map.copyOf(executors));
+    }
+
+    private void registerToolObject(Object toolObject,
+                                    List<ToolSpecification> specifications,
+                                    Map<String, ToolExecutor> executors) {
+        for (Method method : toolObject.getClass().getDeclaredMethods()) {
+            if (!method.isAnnotationPresent(Tool.class)) {
+                continue;
+            }
+            ToolSpecification specification = ToolSpecifications.toolSpecificationFrom(method);
+            specifications.add(specification);
+            executors.put(specification.name(), new DefaultToolExecutor(toolObject, method));
+            log.debug("[Harness] 注册工具: tool={}, class={}, method={}",
+                    specification.name(), toolObject.getClass().getSimpleName(), method.getName());
+        }
     }
 
     /**
@@ -328,7 +540,7 @@ public class ChatOrchestrator {
      */
     private String summarizeToolArgs(String arguments) {
         if (arguments == null) {
-            return "<无参数>";
+            return "<NO_PARAMETER>";
         }
         String normalized = arguments.replaceAll("\\s+", " ").trim();
         return normalized.length() <= 80 ? normalized : normalized.substring(0, 77) + "...";
@@ -343,7 +555,7 @@ public class ChatOrchestrator {
      */
     private String summarizeToolResult(String result) {
         if (result == null) {
-            return "<无结果>";
+            return "<NO_TOOL_RESULT>";
         }
         String normalized = result.replaceAll("\\s+", " ").trim();
         return normalized.length() <= 120 ? normalized : normalized.substring(0, 117) + "...";
@@ -445,6 +657,12 @@ public class ChatOrchestrator {
     }
 
     /**
+     * Harness 层运行时工具注册表
+     */
+    private record ToolRuntime(List<ToolSpecification> specifications, Map<String, ToolExecutor> executors) {
+    }
+
+    /**
      * 工具执行结果解码后的统一视图
      *
      * <p>
@@ -455,7 +673,7 @@ public class ChatOrchestrator {
 
         private static final String DEFAULT_SUCCESS_MESSAGE = "Tool executed successfully";
         private static final String DEFAULT_FAILED_MESSAGE = "Tool execution failed";
-        private static final String EMPTY_RESULT_MESSAGE = "<无结果>";
+        private static final String EMPTY_RESULT_MESSAGE = "<NO_TOOL_RESULT>";
 
         /**
          * 构造空结果场景（按成功处理）

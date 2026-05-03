@@ -88,7 +88,8 @@ public class SessionController {
                 sessionId,
                 userId,
                 request.getPage(),
-                request.getSize()));
+                request.getSize(),
+                Boolean.TRUE.equals(request.getIncludeTrace())));
     }
 
     /**

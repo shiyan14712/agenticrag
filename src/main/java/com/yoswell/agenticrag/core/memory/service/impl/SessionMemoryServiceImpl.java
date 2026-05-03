@@ -22,6 +22,7 @@ import com.yoswell.agenticrag.core.memory.dto.SessionMemoryViewDTO;
 import com.yoswell.agenticrag.core.memory.service.SessionMemoryService;
 import com.yoswell.agenticrag.core.memory.store.HierarchicalChatMemoryStore;
 import com.yoswell.agenticrag.platform.session.mapper.ChatMessageMapper;
+import com.yoswell.agenticrag.platform.session.service.ChatMessageService;
 import com.yoswell.agenticrag.platform.session.service.JudgeSessionService;
 
 import dev.langchain4j.data.message.AiMessage;
@@ -31,7 +32,10 @@ import dev.langchain4j.data.message.ChatMessageSerializer;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import lombok.extern.slf4j.Slf4j;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
@@ -131,8 +135,9 @@ public class SessionMemoryServiceImpl implements SessionMemoryService {
         if (persisted == null) {
             return null;
         }
-        String content = persisted.getContent();
-        if (!hasText(content)) {
+        String content = defaultString(persisted.getContent(), "");
+        String contentType = defaultString(persisted.getContentType(), ChatMessageService.CONTENT_TYPE_TEXT);
+        if (!hasText(content) && !ChatMessageService.CONTENT_TYPE_TOOL_CALL.equals(contentType)) {
             log.warn("[SessionMemoryService] 数据库消息内容为空，跳过: sessionId={}, index={}, role={}",
                     sessionId, index, persisted.getRole());
             return null;
@@ -142,14 +147,81 @@ public class SessionMemoryServiceImpl implements SessionMemoryService {
         return switch (role) {
             case "SYSTEM" -> SystemMessage.from(content);
             case "USER" -> UserMessage.from(content);
-            case "AI", "ASSISTANT" -> AiMessage.from(content);
-            case "TOOL" -> ToolExecutionResultMessage.from("", "unknown", content);
+            case "AI", "ASSISTANT" -> convertPersistedAssistantMessage(content, contentType, persisted);
+            case "TOOL" -> convertPersistedToolMessage(content, persisted);
             default -> {
                 log.warn("[SessionMemoryService] 数据库消息角色未知，按 user 降级: sessionId={}, index={}, role={}",
                         sessionId, index, persisted.getRole());
                 yield UserMessage.from(content);
             }
         };
+    }
+
+    private ChatMessage convertPersistedAssistantMessage(String content, String contentType, ChatMessageDO persisted) {
+        if (ChatMessageService.CONTENT_TYPE_TOOL_CALL.equals(contentType)) {
+            JsonNode metadata = readMetadata(persisted);
+            ToolExecutionRequest request = ToolExecutionRequest.builder()
+                    .id(metadataText(metadata, "toolCallId", ""))
+                    .name(metadataText(metadata, "toolName", "unknown"))
+                    .arguments(metadataText(metadata, "arguments", content))
+                    .build();
+            return AiMessage.from(request);
+        }
+        return AiMessage.from(content);
+    }
+
+    private ChatMessage convertPersistedToolMessage(String content, ChatMessageDO persisted) {
+        JsonNode metadata = readMetadata(persisted);
+        return ToolExecutionResultMessage.builder()
+                .id(metadataText(metadata, "toolCallId", ""))
+                .toolName(metadataText(metadata, "toolName", "unknown"))
+                .text(content)
+                .isError(metadataBoolean(metadata, "failed"))
+                .build();
+    }
+
+    private JsonNode readMetadata(ChatMessageDO persisted) {
+        if (persisted == null || !hasText(persisted.getMetadata())) {
+            return null;
+        }
+        try {
+            return objectMapper.readTree(persisted.getMetadata());
+        } catch (JacksonException exception) {
+            log.warn("[SessionMemoryService] 消息 metadata 解析失败: messageId={}",
+                    persisted.getMessageId(), exception);
+            return null;
+        }
+    }
+
+    private String metadataText(JsonNode metadata, String field, String defaultValue) {
+        if (metadata == null || metadata.isMissingNode() || metadata.isNull()) {
+            return defaultValue;
+        }
+        JsonNode value = metadata.path(field);
+        if (value.isMissingNode() || value.isNull()) {
+            return defaultValue;
+        }
+        try {
+            String text = objectMapper.treeToValue(value, String.class);
+            return hasText(text) ? text : defaultValue;
+        } catch (JacksonException exception) {
+            return value.toString();
+        }
+    }
+
+    private Boolean metadataBoolean(JsonNode metadata, String field) {
+        if (metadata == null || metadata.isMissingNode() || metadata.isNull()) {
+            return null;
+        }
+        JsonNode value = metadata.path(field);
+        if (value.isMissingNode() || value.isNull()) {
+            return null;
+        }
+        try {
+            return objectMapper.treeToValue(value, Boolean.class);
+        } catch (JacksonException exception) {
+            return null;
+        }
     }
 
     private void warmUpL1Redis(String sessionId, List<ChatMessage> messages) {
