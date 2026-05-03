@@ -1,10 +1,11 @@
 这份文档不仅是一份架构说明，更是整个系统工程的**宪法**。它明确了从宏观架构到微观设计模式、存储分工、以及系统与前端的规约。
 
----
+# Agentic Research
 
+---
 ## 0. 项目概述 (Project Overview)
-本项目是一个基于 Java21 生态（Spring Boot 4.0.5 + LangChain4j 1.12.2 + ElasticSearch + Kafka + Redis + MySQL + WebMVC + Virtual Threads）的企业级 Agentic RAG（检索增强生成智能体）系统。
-本系统的核心理念是**渐进式能力叠加**。它不仅提供传统的对话问答，更具备单一 Agent 编排（ReAct）、分级上下文压缩、跨会话长期记忆、以及基于 MinerU 的高精度异构文档解析管道。
+本项目是一个基于 Java21 生态（Spring Boot 4.0.5 + LangChain4j 1.12.2 + ElasticSearch + Kafka + Redis + MySQL + MinIO + MinerU + WebMVC + Virtual Threads）的个人研究型知识库系统。
+本系统的核心理念是**渐进式能力叠加**。它不仅提供传统的LLM对话问答，更具备智能文档切块策略、 Agent 编排（ReAct）、分级上下文压缩、跨会话长期记忆、以及基于 MinerU 的高精度异构文档解析管道。
 
 **核心存储规范，分工明确各司其职：**
 *   **MinIO**：负责所有物理文件的存储（原始 PDF/Word、解析后的庞大 Markdown 文件、提取的图片）。
@@ -16,11 +17,11 @@
 
 ## 1. Agent 编排与对话交互模块 [core]
 
-**目标**：Agent 是系统的“大脑”，负责意图路由、步骤编排并与前端进行富媒体交互。本模块严格遵循“非确定性内容输出自然语言，确定性流程输出 JSON Schema”的原则。
+**目标**：Agent 是系统的“大脑”，负责意图路由、步骤编排并与前端进行富媒体交互。本模块严格遵循**非确定性内容输出自然语言，确定性流程输出 JSON Schema**的原则。
 
 *   **技术栈**：Spring Boot WebMVC (Virtual Threads, SseEmitter), LangChain4j, JSON Schema (Jackson)
 *   **单一 Agent 编排机制**：
-    * **ReAct 模式 (常规问答)**：基于 LangChain4j `AiServices`。大模型根据当前上下文，按照 `Thought -> Action (调用 Tool) -> Observation` 循环自主执行。
+    * **ReAct 模式 (常规问答)**：基于 LangChain4j `AiServices`。大模型根据当前上下文，按照 `Thought -> Action (可能调用 Tool) -> Observation -> ... -> finish` 循环自主执行。
     * **Spring Boot 4 + LangChain4j 1.12.2 装配基线**：不依赖 `langchain4j-spring-boot-starter` 与 `@AiService` 自动注册；必须在配置类中使用 `AiServices.builder(...)/AiServices.create(...)` 手动注册 Spring Bean，并显式挂接 `chatMemoryProvider`、`tools`。
 *   **前端接口预留与 SSE 契约 (Rich UI Rendering / ReAct 过程可观测性)**：
     系统提供统一的 WebMVC (Servlet) SSE 接口 `/api/v1/agent/chat/stream`，配合虚拟线程使用 `SseEmitter` 异步推流。
@@ -38,16 +39,6 @@
 **目标**：提供企业级的高召回率检索能力，将 RAG 流程封装为标准的 `@Tool` 供 Agent 随时调用。
 
 *   **技术栈**：ElasticSearch (8.x), Embedding API (Qwen3-Embed-4B, 2048 dims), Reranker API (DashScope qwen3-vl-rerank)
-*   **配置参数 ( application.yml 静态可调)**：
-    ```yaml
-    rag:
-      retrieval:
-        knn-top-k: 20      # 向量 KNN 检索召回数
-        bm25-top-k: 20     # 关键词 BM25 检索召回数
-        rerank-top-n: 5    # 重排序后最终保留进入 Prompt 的 Chunk 数
-        # 最终分数硬阈值：统一作用于 reranker 分数或 RRF 降级分数；低于该值的候选将被强制舍弃
-        final-score-threshold: 0.5
-    ```
 *   **实现细节与流程**：
     *   **核心 Tool 封装**：定义 `@Tool("search_enterprise_knowledge")`，要求大模型必须传入 `query` 参数。
     *   **混合检索 (Hybrid Search)**：在 ElasticSearch 中通过 Java API 并发执行两路查询：向量相似度匹配 + BM25 全文检索。
@@ -101,7 +92,7 @@
 
 
 
-## 4. 上下文与记忆管理模块 [core]
+## 4. 分层上下文与记忆管理模块 [core]
 
 **目标**：突破 Token 窗口极限，实现上下文的分级压缩，并赋予智能体跨会话的“长期认知”。
 
@@ -115,14 +106,14 @@
     *   **持久化介质**：MySQL `user_global_memory` 表（取代单机 `.md` 文件以支持分布式部署）。
     *   **自动提取**：提供 `@Tool("save_user_preference")`。Agent 发现用户偏好（如“我只看核心代码”、“用中文回复”）时自主调用该工具写入 MySQL。
     *   **生命周期**：每次新建 Session，拦截器自动读取该用户的长期记忆表，转化为 System Prompt 注入对话初始上下文中。
-*   **工程落地补充（已实现约束）**：
+*   **工程落地**：
     *   `memoryId` 在当前工程中等价于真实 `sessionId`，绝对不要假设它是 `"userId_sessionId"` 拼接串；需要先查 `chat_session` 再拿到 `user_id`。
     *   LangChain4j 侧必须显式挂接 `ChatMemoryProvider`，确保通过 `AiServices.builder(...)` 注册的 AI Service 代理真正使用 `HierarchicalChatMemoryStore`，不能只定义 Store Bean 却没有被 AI Service 消费。
     *   L2/L3 压缩结果除了写 Redis 以外，还必须回写 `chat_message.compressed_content` 与 `chat_session.summary`，否则“分层记忆”无法在持久化层闭环。
 
 ## 5. 异构文档处理与消息管道模块
 
-**目标**：实现复杂企业文档（PDF/Word/TXT）的高吞吐解析入库，彻底解耦 Web 主干与耗时的解析引擎。
+**目标**：实现复杂企业文档（PDF/TXT）的高吞吐解析入库，利用消息队列彻底解耦 Web 主干与耗时的解析引擎
 
 *   **技术栈**：Kafka, MinIO, Python (MinerU Worker), 设计模式 (Strategy, Factory)
 *   **Kafka 消息队列设计**：
@@ -131,28 +122,37 @@
     *   `doc-delete-request`: 文档进入删除补偿链路时投递此队列，供下游组件删除 Elasticsearch 中的向量与分块。
     *   `doc-dlq` (死信队列): 失败超过 3 次的任务进入此队列，记录 MySQL `FAILED` 状态并报警。
 *   **离线 Chunking 与设计模式**：
-    为了未来优雅地兼容 TXT、DOCX 等格式，此处**必须**使用设计模式：
-    *   **Strategy Pattern (策略模式)**：定义 `DocumentParserStrategy` 接口，下设 `MinerUMarkdownStrategy` (根据 Markdown 标题层级结合 Overlap 切分) 和 `StandardTxtStrategy`；两类策略都要尽量在自然断点上结束并重新进入下一个 chunk，避免 overlap 从词中间开始。
-    *   **Factory Method (工厂模式)**：`DocumentParserFactory` 根据 MySQL 中的文件后缀动态组装并返回具体的策略执行类。
-*   **工程落地补充（已实现约束）**：
-    *   Kafka topic 名称、死信 topic 与消费重试参数必须统一收口到专用配置类（如 `DocumentKafkaProperties`）与 `application.yaml`，严禁在 Producer / Listener / Service 中继续硬编码 `doc-parse-request`、`doc-vectorize-request`、`doc-delete-request`、`doc-dlq`。
-    *   `doc-parse-request` 与 `doc-vectorize-request` 必须是显式 JSON DTO，不要再发送松散 `Map` 或靠日志约定字段名。
-    *   Spring Kafka 消费端必须使用统一的 `ConcurrentKafkaListenerContainerFactory`，显式启用 `AckMode.MANUAL_IMMEDIATE`；业务处理成功后再 `ack.acknowledge()`，禁止依赖默认自动提交 offset 的隐式行为。
-    *   文档消费链路必须配置统一的 `DefaultErrorHandler`、指数退避重试与 DLT 路由，避免把“抛异常 + 期待默认行为正确”当作可靠性方案。
-    *   对于上传、删除这类“数据库提交与消息投递必须最终一致”的链路，必须采用事务型 Outbox：事务内只允许写业务表与 `mq_outbox` / `document_async_task`，严禁在同一事务中直接发送 Kafka。
-    *   `mq_outbox` 至少要记录 `outbox_id / aggregate_type / aggregate_id / task_id / topic / message_key / payload / status / retry_count / next_retry_at / sent_at / last_error`；后台 dispatcher 只扫描 `PENDING / FAILED`，发送成功后转 `SENT`，失败时按指数退避回写下一次重试时间。
-    *   `document_async_task` 是文档异步动作的业务账本，至少覆盖 `DOCUMENT_PARSE / DOCUMENT_VECTORIZATION / DOCUMENT_DELETE` 三类任务，并维护 `PENDING / DISPATCHED / RUNNING / SUCCEEDED / FAILED / SKIPPED` 生命周期，不允许只有 MQ 状态没有业务任务状态。
-    *   `mq_consume_log` 只应接入那些确实需要防重复消费和可靠留痕的链路（当前至少包括 `doc-vectorize-request`、`doc-delete-request`、`doc-dlq`），不要对所有消息一刀切引入重型去重。
-    *   `mq_consume_log` 的唯一幂等键必须基于 `consumer_group + topic + message_identity`；`message_identity` 优先使用业务 `messageId`，缺失时可回退为 `message_key + payload hash`，以兼容外部 Worker 渐进升级。
-    *   消费日志必须区分“正在处理”和“已处理完成”，至少要有 `locked_until` 一类租约字段，避免并发消费者同时抢到同一条消息。
-    *   `doc-parse-request`、`doc-vectorize-request`、`doc-delete-request` DTO 应支持 `taskId / messageId` 透传；其中跨系统的 `doc-parse-request -> Python Worker -> doc-vectorize-request` 最终也必须透传这两个字段，否则只能算 Java 侧半闭环。
-    *   `DocumentParserStrategy` 不应再使用 `void parse(...)` 这种“只执行不返回”的接口；必须返回标准化解析结果（例如 `ParsedDocument` + `ParsedDocumentChunk`），这样向量化链路才能稳定消费。
-    *   Java 侧 `doc-vectorize-request` 的真实流程已经确定为：回读 MinIO 内容 -> 根据扩展名选择策略 -> 分块 -> embedding -> 写 ES -> 更新 `document_metadata.status`。
-    *   `DocumentVectorizationService` 不应再把 MinIO 读取、embedding、ES 写入和状态迁移包裹在同一个长事务中；状态迁移必须拆到短事务边界中处理，避免失败时 `FAILED` 状态随事务一起回滚。
-    *   Java 侧消费 `doc-vectorize-request` 时必须做基础重复消费防护：至少要在文档已是 `VECTORIZED` 或已被其他消费者抢占到 `PARSING` 状态时安全跳过，不允许同一文档被并发重复向量化。
-    *   `DocumentVectorizationService` 这类慢 I/O 编排服务，在可靠消费场景下应显式返回“成功 / 跳过”之类的执行结果，而不是把所有非成功分支都折叠成异常；否则 `document_async_task` 与 `mq_consume_log` 无法准确记账。
-    *   当前阶段写 ES 前应先按 `documentId + tenantId` 清理旧 chunk，再写入新 chunk，确保重复消费或重跑时不会残留过期分块。
-    *   `document_metadata` 的代码模型与 schema 必须始终保持一致，至少包括 `document_id / tenant_id / kb_id / allowed_roles / status / minio_url / file_extension` 这些字段。
+    为了优雅地兼容 TXT、MD 等不同格式，此处使用设计模式实现智能分流：
+    *   **Strategy Pattern (策略模式)**：定义 `DocumentParserStrategy` 接口，下设 `MarkdownStrategy` (根据 Markdown 标题层级结合 Overlap 切分) 和 `StandardTxtStrategy` (针对纯文本的自然断点切分)；两类策略都在自然断点上结束并重新进入下一个 chunk，避免 overlap 从词中间开始。
+    *   **Factory Method (工厂模式)**：`DocumentParserFactory` 根据文件后缀动态组装并返回具体的策略执行类。
+*   **智能 Chunk 改写策略**：
+    为提供高精度的召回效果，系统实现了两种智能改写 chunk 的策略：
+    *   **去上下文化改写 (Decontextualised Chunk Enrichment)**：通过 LLM 将代词替换为具体指代对象、展开缩写简称、补全省略的关键信息，使每个 chunk 脱离原文也能被完全理解。
+    *   **QA 增强改写 (QA-Enriched Chunk Enrichment)**：识别文本中的模糊单元（代词指代不明、缩写未展开、省略主语等），然后基于实体注册表和相邻上下文生成补充陈述句，附加到原始内容后形成增强版本。
+*   **实体注册表构建 (Entity Registry Building)**：
+    NER 是两种 Enrichment 改写策略的基础：
+    *   **命名实体识别 (NER)**：`EntityRegistryBuilder` 通过 LLM 对每个 chunk 进行实体提取，识别 PERSON、ORGANIZATION、LOCATION、ABBREVIATION、TERM 等类型的实体，记录其提及形式、完整名称、定义和类别。
+    *   **实体合并与去重**：使用 `merge` 策略处理同一实体的多次出现，优先保留更长的完整名称，确保实体信息的准确性。
+    *   **持久化存储**：实体注册表存入 MySQL `entity_registry` 表，支持按 `documentId` 加载复用，避免重复 NER 计算。
+    *   **JSON Schema 约束**：NER 输出严格遵循 JSON Schema，确保结构化数据的可靠性，失败时自动降级跳过该 chunk。
+*   **工程落地与可靠性保障**：
+    *   **Topic 语义统一管理**：通过 `DocumentKafkaTopic` 枚举统一管理 Topic 语义标识与默认值，业务代码通过枚举取值，避免散落的字符串访问。
+    *   **显式 JSON DTO 契约**：`doc-parse-request`、`doc-vectorize-request`、`doc-delete-request` 必须是显式 JSON DTO，支持 `taskId / messageId` 透传；严禁发送松散 `Map` 或靠日志约定字段名。跨系统的 `doc-parse-request -> Python Worker -> doc-vectorize-request` 必须透传这两个字段，确保全链路追踪闭环。
+    *   **手动 ACK 机制**：Spring Kafka 消费端使用统一的 `ConcurrentKafkaListenerContainerFactory`，显式启用 `AckMode.MANUAL_IMMEDIATE`；业务处理成功后再 `ack.acknowledge()`，禁止依赖默认自动提交 offset 的隐式行为。
+    *   **统一错误处理**：文档消费链路配置统一的 `DefaultErrorHandler`、指数退避重试与 DLT 路由，避免把“抛异常 + 期待默认行为正确”当作可靠性方案。
+    *   **事务型 Outbox 模式保证最终一致性**：对于上传、删除这类“数据库提交与消息投递必须最终一致”的链路，采用事务型 Outbox：事务内只允许写业务表与 `mq_outbox` / `document_async_task`，严禁在同一事务中直接发送 Kafka。`DocumentOutboxDispatcher` 通过定时任务扫描 `PENDING / FAILED` 状态的 Outbox 记录，发送成功后转 `SENT`，失败时按指数退避回写下一次重试时间。
+    *   **Outbox 表结构设计**：`mq_outbox` 至少记录 `outbox_id / aggregate_type / aggregate_id / task_id / topic / message_key / payload / status / retry_count / next_retry_at / sent_at / last_error`，确保消息投递的可追溯性与可重试性。
+    *   **业务任务状态机管理**：`document_async_task` 是文档异步动作的业务账本，覆盖 `DOCUMENT_PARSE / DOCUMENT_VECTORIZATION / DOCUMENT_DELETE` 三类任务，维护 `PENDING / DISPATCHED / RUNNING / SUCCEEDED / FAILED / SKIPPED` 完整生命周期，不允许只有 MQ 状态没有业务任务状态。
+    *   **消费幂等性保证（三层防护）**：
+        1. **第一层 - 消息身份唯一标识**：`mq_consume_log` 的唯一幂等键基于 `consumer_group + topic + message_identity`；`message_identity` 优先使用业务 `messageId`，缺失时回退为 `message_key + payload SHA-256 hash`，兼容外部 Worker 渐进升级。
+        2. **第二层 - 分布式锁租约机制**：消费日志通过 `locked_until` 字段实现租约锁，区分“正在处理”和“已处理完成”，避免并发消费者同时抢到同一条消息。锁超时后自动释放，允许其他消费者接管。
+        3. **第三层 - 状态机防重判断**：`DocumentMessageListener` 在消费前调用 `MqConsumeLogService.claim()` 进行三重校验：(a) 已存在 SUCCESS/SKIPPED 记录则直接返回 `AlreadyCompletedException` 并 ACK；(b) 处于 PROCESSING 且锁未过期则抛出 `RetryLaterException` 触发重试；(c) 首次消费或锁已过期则获取处理权限并更新锁租约。
+    *   **选择性幂等接入**：`mq_consume_log` 只接入确实需要防重复消费和可靠留痕的链路（当前包括 `doc-vectorize-request`、`doc-delete-request`、`doc-dlq`），不对所有消息一刀切引入重型去重，平衡性能与可靠性。
+    *   **向量化重复消费防护**：Java 侧消费 `doc-vectorize-request` 时做基础重复消费防护：在文档已是 `VECTORIZED` 状态或已被其他消费者抢占到 `PARSING` 状态时安全跳过，返回 `skipped=true` 结果，不允许同一文档被并发重复向量化。
+    *   **短事务边界拆分**：`DocumentVectorizationService` 不将 MinIO 读取、embedding、ES 写入和状态迁移包裹在同一个长事务中；状态迁移拆到短事务边界处理，避免失败时 `FAILED` 状态随事务一起回滚。
+    *   **ES 写入前清理旧数据**：写 ES 前先按 `documentId + tenantId` 清理旧 chunk，再写入新 chunk，确保重复消费或重跑时不会残留过期分块。
+    *   **标准化解析结果返回**：`DocumentParserStrategy` 返回标准化解析结果（`ParsedDocument` + `ParsedDocumentChunk`），而非 `void parse(...)` 这种“只执行不返回”的接口，确保向量化链路稳定消费。
+    *   **元数据模型一致性**：`document_metadata` 的代码模型与 schema 始终保持一致，至少包括 `document_id / tenant_id / kb_id / allowed_roles / status / minio_url / file_extension` 字段。
 
 ## 6. 权限控制与零信任安全模块
 

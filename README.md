@@ -32,7 +32,7 @@ Agentic RAG 是一个企业级的**智能检索增强生成系统**，它不仅�
 - 🧠 **单一 Agent 编排（ReAct 模式）**：大模型自主进行推理、工具调用和决策
 - 🗜️ **分级上下文压缩**：L1/L2/L3 三层记忆管理，突破 Token 窗口限制
 - 💾 **跨会话长期记忆**：持久化用户偏好与知识，实现真正的"认知积累"
-- 📄 **高精度异构文档解析**：基于 MinerU 的深度学习版面分析，支持 PDF/Word/TXT 等多格式
+- 📄 **高精度异构文档解析**：基于 MinerU 的深度学习版面分析，支持 PDF/Word/TXT 等多格式，采用策略模式和工厂模式实现智能分流
 - 🔐 **零信任多租户隔离**：从数据物理层到逻辑层的全面权限控制
 
 本系统的核心理念是**渐进式能力叠加**，每个模块都可以独立演进，同时保持整体架构的一致性。
@@ -85,7 +85,9 @@ Agentic RAG 是一个企业级的**智能检索增强生成系统**，它不仅�
 上传文件 → MinIO 存储 → Kafka 解耦 → MinerU 解析 → 离线 Chunking → Embedding → ES 索引
 ```
 
-- **策略模式 + 工厂模式**：优雅扩展 TXT、DOCX 等新格式
+- **策略模式 + 工厂模式**：优雅扩展 TXT、DOCX 等新格式，实现智能分流
+- **实体注册表构建**：通过 NER 提取关键实体（PERSON、ORGANIZATION、LOCATION 等），持久化到 MySQL 供后续改写使用
+- **智能 Chunk 改写**：支持去上下文化改写和 QA 增强两种策略，基于实体注册表提升检索精度
 - **事务型 Outbox**：保证数据库提交与消息投递的最终一致性
 - **指数退避重试 + 死信队列**：失败任务自动补偿，超过 3 次进入 DLQ 报警
 
@@ -197,6 +199,10 @@ Agentic RAG 是一个企业级的**智能检索增强生成系统**，它不仅�
 
 ### 文档解析
 - **MinerU** - 高精度 OCR 和 PDF 解析引擎
+- **策略模式** - DocumentParserStrategy 接口及实现类（MarkdownStrategy、StandardTxtStrategy）
+- **工厂模式** - DocumentParserFactory 根据文件类型动态选择解析策略
+- **实体注册表构建** - EntityRegistryBuilder 通过 NER 提取实体并持久化到 MySQL
+- **智能改写** - DecontextualisedChunkEnricher 和 QaEnrichedChunkEnricher 提供两种增强策略
 
 ---
 
@@ -225,7 +231,11 @@ agenticrag/
 │   └── service/          # 记忆压缩服务
 ├── retrieval/document/   # RAG 核心引擎
 │   ├── service/          # 混合检索、向量化服务
-│   ├── parser/           # 策略模式文档解析
+│   ├── parser/           # 策略模式文档解析（MarkdownStrategy、StandardTxtStrategy）
+│   ├── enrichment/       # 智能 Chunk 改写
+│   │   ├── service/      # EntityRegistryBuilder (NER)、DecontextualisedChunkEnricher、QaEnrichedChunkEnricher
+│   │   ├── model/        # EnrichedChunk、EntityRegistryEntry、NerResult 等数据模型
+│   │   └── entity/       # EntityRegistryDO 持久化实体
 │   ├── mq/               # Kafka 消费者
 │   └── reliability/      # Outbox、消费日志、幂等性
 ├── platform/session/     # 会话生命周期管理
