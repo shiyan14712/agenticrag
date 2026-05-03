@@ -28,6 +28,7 @@ import com.yoswell.agenticrag.core.agent.dto.CitationDTO;
 import com.yoswell.agenticrag.core.agent.dto.RagSearchResultDTO;
 import com.yoswell.agenticrag.core.agent.dto.SseEventType;
 import com.yoswell.agenticrag.core.agent.dto.ToolEventDTO;
+import com.yoswell.agenticrag.core.agent.prompt.SystemPromptAssembler;
 import com.yoswell.agenticrag.core.agent.service.ChatService;
 import com.yoswell.agenticrag.core.agent.tool.PreferenceTool;
 import com.yoswell.agenticrag.core.agent.tool.RagTool;
@@ -36,13 +37,14 @@ import com.yoswell.agenticrag.platform.session.mapper.ChatSessionMapper;
 import com.yoswell.agenticrag.platform.session.service.ChatMessageService;
 import com.yoswell.agenticrag.web.security.model.TenantUser;
 
+import jakarta.annotation.PostConstruct;
+
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.agent.tool.ToolSpecifications;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
-import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.invocation.InvocationContext;
@@ -94,6 +96,28 @@ public class ChatOrchestrator {
     private final ChatService chatService;
     private final StringRedisTemplate stringRedisTemplate;
     private final ChatSessionMapper chatSessionMapper;
+    private final SystemPromptAssembler systemPromptAssembler;
+
+    /**
+     * 注册静态系统提示词片段。
+     *
+     * <p>
+     * 所有静态指令在此处集中注册，运行期不再修改。
+     * {@link SystemPromptAssembler} 会将这些片段与每次请求的动态上下文（用户偏好、L2/L3 摘要）
+     * 合并为单条 SystemMessage，确保发送给模型的消息列表中始终只有一条 system 消息。
+     * </p>
+     */
+    @PostConstruct
+    private void registerStaticSystemPrompts() {
+        systemPromptAssembler.registerStatic("""
+                You are an enterprise AI assistant.
+                Use tools sequentially if needed. Maintain a professional tone.
+                Reason step by step before calling a tool.
+                For complex research tasks, decompose the request into multiple searches when the current observations are insufficient.
+                After each tool observation, decide whether another search is needed or whether the final answer can be produced.
+                If retrieval failed, do not answer arbitrarily; indicate that no content was found.
+                """);
+    }
 
     /**
      * 发起一轮 ReAct 流式对话
@@ -203,7 +227,8 @@ public class ChatOrchestrator {
 
         for (int turn = 1; turn <= MAX_AGENT_TURNS; turn++) {
             bindRagContextToCurrentThread(sessionId);
-            List<ChatMessage> messages = messagesWithSystemPrompt(chatMemory.messages());
+            // SystemPromptAssembler 已在 getMessages() 中将静态指令与动态上下文合并为单条 SystemMessage
+            List<ChatMessage> messages = chatMemory.messages();
             log.info("[Harness] Turn {} 开始: session={}, messageCount={}, toolCount={}",
                     turn, sessionId, messages.size(), toolRuntime.specifications().size());
 
@@ -388,20 +413,6 @@ public class ChatOrchestrator {
         }
         fullResponse.append(finalText);
         emitSseEvent(emitter, SseEventType.MESSAGE, finalText);
-    }
-
-    private List<ChatMessage> messagesWithSystemPrompt(List<ChatMessage> memoryMessages) {
-        List<ChatMessage> messages = new ArrayList<>(memoryMessages.size() + 1);
-        messages.add(SystemMessage.from("""
-                You are an enterprise AI assistant.
-                Use tools sequentially if needed. Maintain a professional tone.
-                Reason step by step before calling a tool.
-                For complex research tasks, decompose the request into multiple searches when the current observations are insufficient.
-                After each tool observation, decide whether another search is needed or whether the final answer can be produced.
-                If retrieval failed, do not answer arbitrarily; indicate that no content was found.
-                """));
-        messages.addAll(memoryMessages);
-        return messages;
     }
 
     private ToolRuntime buildToolRuntime() {

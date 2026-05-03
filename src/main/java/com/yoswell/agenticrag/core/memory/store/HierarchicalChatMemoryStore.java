@@ -1,7 +1,6 @@
 package com.yoswell.agenticrag.core.memory.store;
 
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -21,6 +20,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yoswell.agenticrag.common.exception.BusinessException;
 import com.yoswell.agenticrag.common.exception.BusinessExceptionMapper;
 import com.yoswell.agenticrag.common.exception.ErrorCode;
+import com.yoswell.agenticrag.core.agent.prompt.SystemPromptAssembler;
 import com.yoswell.agenticrag.core.memory.constants.MemoryStoreConstants;
 import com.yoswell.agenticrag.core.memory.entity.UserGlobalMemory;
 import com.yoswell.agenticrag.core.memory.mapper.UserGlobalMemoryMapper;
@@ -44,7 +44,9 @@ import dev.langchain4j.store.memory.chat.ChatMemoryStore;
  * 实现三级分层内存管理策略，平衡对话质量与存储效率：
  * </p>
  * <p>
- * 扮演了一个**适配器（Adapter）**的核心枢纽角色。它的职责恰恰就是在两种形态之间做“翻译”和“组装”。
+ * 扮演了一个**适配器（Adapter）**的核心枢纽角色。它的职责恰恰就是在两种形态之间做”翻译”和”组装”。
+ * 动态上下文（用户偏好、L2/L3 摘要）的组装委托给 {@link com.yoswell.agenticrag.core.agent.prompt.SystemPromptAssembler}，
+ * 确保发送给模型的消息列表中始终只有一条 SystemMessage。
  * </p>
  * 
  * <h3>内存层级架构：</h3>
@@ -78,11 +80,6 @@ import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 @Component
 public class HierarchicalChatMemoryStore implements ChatMemoryStore {
 
-    private static final String SYNTHETIC_SYSTEM_MESSAGE_MARKER = "AgenticRag Internal System Context";
-
-    /**
-     * 日志记录器
-     */
     private static final Logger log = LoggerFactory.getLogger(HierarchicalChatMemoryStore.class);
 
     /**
@@ -111,6 +108,11 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     private final ChatModel chatLanguageModel;
 
     /**
+     * 系统提示词组装器，负责将静态指令与动态上下文合并为单条 SystemMessage
+     */
+    private final SystemPromptAssembler systemPromptAssembler;
+
+    /**
      * JSON 序列化器，处理 Redis 数据的序列化/反序列化
      */
     private final ObjectMapper objectMapper;
@@ -132,12 +134,13 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
 
     /**
      * 构造函数
-     * 
+     *
      * @param redisTemplate          Redis 操作模板
      * @param userGlobalMemoryMapper 用户全局记忆 Mapper
      * @param chatSessionMapper      会话 Mapper
      * @param chatMessageMapper      消息 Mapper
      * @param chatLanguageModel      聊天语言模型（用于摘要生成）
+     * @param systemPromptAssembler  系统提示词组装器
      * @param maxMessages            最大保留消息数（默认 40 条）
      * @param l1Limit                L1 级缓存上限（默认 10 条）
      * @param l2Limit                L2 级缓存上限（默认 30 条）
@@ -147,6 +150,7 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
             ChatSessionMapper chatSessionMapper,
             ChatMessageMapper chatMessageMapper,
             ChatModel chatLanguageModel,
+            SystemPromptAssembler systemPromptAssembler,
             @Value("${rag.memory.max-messages:40}") int maxMessages,
             @Value("${rag.memory.l1-limit:10}") int l1Limit,
             @Value("${rag.memory.l2-limit:30}") int l2Limit) {
@@ -155,6 +159,7 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
         this.chatSessionMapper = chatSessionMapper;
         this.chatMessageMapper = chatMessageMapper;
         this.chatLanguageModel = chatLanguageModel;
+        this.systemPromptAssembler = systemPromptAssembler;
         this.objectMapper = new ObjectMapper();
         this.maxMessages = maxMessages;
         this.l1Limit = l1Limit;
@@ -211,7 +216,8 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
         injectSummary(sessionId, "session:memory:l2:", "Medium-range session summary", systemSegments);
 
         ArrayList<ChatMessage> messages = new ArrayList<>();
-        buildCompositeSystemMessage(systemSegments).ifPresent(messages::add);
+        // 委托 SystemPromptAssembler 将静态指令与动态上下文合并为单条 SystemMessage
+        systemPromptAssembler.assemble(systemSegments).ifPresent(messages::add);
         messages.addAll(otherMessages);
         return messages;
     }
@@ -239,10 +245,9 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
     public void updateMessages(Object memoryId, List<ChatMessage> messages) {
         String sessionId = memoryId.toString();
 
-        // 1. Filter out synthetic system messages
+        // 1. 过滤掉由 SystemPromptAssembler 合成的 SystemMessage，只保留真实对话消息
         List<ChatMessage> pureMessages = messages.stream()
-                .filter(msg -> !(msg instanceof SystemMessage sm && sm.text() != null
-                        && sm.text().startsWith(SYNTHETIC_SYSTEM_MESSAGE_MARKER)))
+                .filter(msg -> !(msg instanceof SystemMessage sm && systemPromptAssembler.isSynthetic(sm)))
                 .collect(Collectors.toList());
 
         log.info("[Hierarchical Chat Memory Store] Updating memory for session: {}. Pure messages count: {}", sessionId,
@@ -371,63 +376,27 @@ public class HierarchicalChatMemoryStore implements ChatMemoryStore {
 
     /**
      * 提取持久化的 SystemMessage 文本
-     * 
+     *
      * <p>
-     * 从 Redis L1 缓存的历史消息中提取有效的系统指令片段，过滤掉由本类合成的复合 SystemMessage（以
-     * {@code SYNTHETIC_SYSTEM_MESSAGE_MARKER} 开头），
-     * 避免重复注入导致上下文膨胀。
+     * 从 Redis L1 缓存的历史消息中提取有效的系统指令片段，过滤掉由 {@link SystemPromptAssembler}
+     * 合成的复合 SystemMessage，避免重复注入导致上下文膨胀。
      * </p>
-     * 
+     *
      * @param systemMessage 待检查的系统消息对象
      * @return 提取后的文本片段（空表示应忽略）
-     * 
-     * @see #SYNTHETIC_SYSTEM_MESSAGE_MARKER
+     *
+     * @see SystemPromptAssembler#isSynthetic(SystemMessage)
      */
     private Optional<String> extractStoredSystemSegment(SystemMessage systemMessage) {
         String text = systemMessage.text();
         if (text == null || text.isBlank()) {
             return Optional.empty();
         }
-        String normalized = text.trim();
-        if (normalized.startsWith(SYNTHETIC_SYSTEM_MESSAGE_MARKER)) {
+        // 过滤掉由 SystemPromptAssembler 合成的消息，避免将其作为片段再次注入
+        if (systemPromptAssembler.isSynthetic(systemMessage)) {
             return Optional.empty();
         }
-        return Optional.of(normalized);
-    }
-
-    /**
-     * 构建复合 SystemMessage
-     * 
-     * <p>
-     * 将多个系统指令片段（用户偏好、L2/L3 摘要、历史系统消息）合并为单条 SystemMessage，
-     * 确保 {@code getMessages()} 只返回一条 SystemMessage，避免与 {@code EnterpriseAgent} 方法上的
-     * {@code @SystemMessage}
-     * 叠加后产生多条 system message，触发 OpenAI 兼容接口的校验失败。
-     * </p>
-     * 
-     * <p>
-     * 处理流程：去重 → 过滤空值 → 添加内部标记头 → 双换行分隔符拼接。
-     * </p>
-     * 
-     * @param systemSegments 系统指令片段集合
-     * @return 合成后的 SystemMessage（无有效片段时返回空）
-     * 
-     * @see #SYNTHETIC_SYSTEM_MESSAGE_MARKER
-     * @see #extractStoredSystemSegment(SystemMessage)
-     */
-    private Optional<SystemMessage> buildCompositeSystemMessage(List<String> systemSegments) {
-        LinkedHashSet<String> deduplicatedSegments = systemSegments.stream()
-                .filter(segment -> segment != null && !segment.isBlank())
-                .map(String::trim)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-
-        if (deduplicatedSegments.isEmpty()) {
-            return Optional.empty();
-        }
-
-        String combined = SYNTHETIC_SYSTEM_MESSAGE_MARKER + "\n\n"
-                + String.join("\n\n", deduplicatedSegments);
-        return Optional.of(SystemMessage.from(combined));
+        return Optional.of(text.trim());
     }
 
     /**
