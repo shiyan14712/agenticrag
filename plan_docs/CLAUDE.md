@@ -21,18 +21,23 @@
 
 *   **技术栈**：Spring Boot WebMVC (Virtual Threads, SseEmitter), LangChain4j, JSON Schema (Jackson)
 *   **单一 Agent 编排机制**：
-    * **ReAct 模式 (常规问答)**：基于 LangChain4j `AiServices`。大模型根据当前上下文，按照 `Thought -> Action (可能调用 Tool) -> Observation -> ... -> finish` 循环自主执行。
+    * **显式 Harness Loop (常规问答)**：项目侧不依赖 `AiServices` 黑箱循环，而是由 `ChatOrchestrator` 自己掌控 turn 计数、工具执行、Observation 回填与结束条件；每轮先取 `chatMemory.messages()`，再调用 `StreamingChatModel.chat(...)`，收到 `AiMessage` 后若有 tool call 就手工执行 `@Tool` 方法并写回 `ToolExecutionResultMessage`。
     * **Spring Boot 4 + LangChain4j 1.12.2 装配基线**：不依赖 `langchain4j-spring-boot-starter` 与 `@AiService` 自动注册；必须在配置类中使用 `AiServices.builder(...)/AiServices.create(...)` 手动注册 Spring Bean，并显式挂接 `chatMemoryProvider`、`tools`。
 *   **前端接口预留与 SSE 契约 (Rich UI Rendering / ReAct 过程可观测性)**：
     系统提供统一的 WebMVC (Servlet) SSE 接口 `/api/v1/agent/chat/stream`，配合虚拟线程使用 `SseEmitter` 异步推流。
-    `ChatOrchestrator` 通过 LangChain4j 1.12.2 的 `TokenStream` 完整回调链（`onPartialThinking`、`beforeToolExecution`、`onToolExecuted`、`onPartialResponse`、`onCompleteResponse`）将 ReAct 循环的每个阶段实时暴露给前端：
+    `ChatOrchestrator` 通过 `StreamingChatResponseHandler` 只接收 `onPartialThinking`、`onPartialToolCall`、`onPartialResponse`、`onCompleteResponse`；`tool_start` / `tool_result` 是编排器在工具执行前后手工发出的业务事件，`citations` 则只在整轮结束后由 `RagRetrievalContextHolder.consume(sessionId)` 聚合推送。
     *   `event: thinking` -> 推送 LLM 的 CoT 推理 token 流（需要 LLM 后端支持 reasoning token 输出），前端渲染为**思考动画 + 打字机文本**。
     *   `event: tool_start` -> 推送 `ToolEventDTO` JSON，标记工具开始执行（如"正在检索知识库：虚拟线程调度机制"），前端渲染为**加载动画 + 工具名标签**。
     *   `event: tool_result` -> 推送 `ToolEventDTO` JSON，标记工具执行完成（如"检索到 5 条知识片段，耗时 320ms"），前端渲染为**完成卡片**。
     *   `event: message` -> 推送 Markdown 文本流，前端渲染为**打字机对话**。
-    *   `event: citations` -> 推送 JSON 格式的溯源数组（包含 `doc_id`, `chunk_id`），前端渲染为**富文本引用卡片**。
+    *   `event: citations` -> 推送 JSON 格式的溯源数组（包含 `doc_id`, `chunk_id`），前端渲染为**富文本引用卡片**；它是一次回答里多次 RAG 调用的聚合结果，不是单次工具调用回包。
     *   `event: done` -> 推送空 JSON `{}`，标记整个 ReAct 循环结束。
     *   `event: error` -> 推送 `{ code, message }` JSON，前端渲染为**错误提示**。
+*   **会话副作用与标题生成**：
+    * 用户消息在 Agent 启动前落库，助手消息在 SSE 结束后落库，两者不在同一个事务里。
+    * `ragRetrievalContextHolder.registerSessionPrincipal(sessionId, tenantUser)` 会保存认证快照，`bindCurrentThread(sessionId)` / `clearSessionBindings(sessionId)` 负责把流式回调线程和工具线程绑定到同一会话，避免引用串线。
+    * 首轮消息后的异步标题生成使用 Redis `SETNX` 锁 (`ChatCacheConstants.SESSION_TITLE_GEN_PREFIX`) + 24h TTL；生成失败会主动删锁，允许后续重试。
+    * `buildToolRuntime()` 通过反射扫描 `ragTool` 与 `preferenceTool` 上的 `@Tool` 方法构造 `ToolSpecification` / `DefaultToolExecutor`；工具结果再通过 `__TOOL_SUCCESS__` / `__TOOL_FAILED__` marker 规范化，统一决定 `tool_result` 的 completed / failed 卡片。
 
 ## 2. RAG 核心引擎模块[core]
 
@@ -110,6 +115,11 @@
     *   `memoryId` 在当前工程中等价于真实 `sessionId`，绝对不要假设它是 `"userId_sessionId"` 拼接串；需要先查 `chat_session` 再拿到 `user_id`。
     *   LangChain4j 侧必须显式挂接 `ChatMemoryProvider`，确保通过 `AiServices.builder(...)` 注册的 AI Service 代理真正使用 `HierarchicalChatMemoryStore`，不能只定义 Store Bean 却没有被 AI Service 消费。
     *   L2/L3 压缩结果除了写 Redis 以外，还必须回写 `chat_message.compressed_content` 与 `chat_session.summary`，否则“分层记忆”无法在持久化层闭环。
+*   **SystemPromptAssembler 全局 system prompt 管理**：
+    *   `HierarchicalChatMemoryStore.getMessages()` 先从 L1 Redis 消息里抽取历史 system 片段，再注入用户偏好、L3 摘要、L2 摘要，最后统一交给 `systemPromptAssembler.assemble(systemSegments)` 合并成单条 `SystemMessage`。
+    *   `SystemPromptAssembler.registerStatic(...)` 只应在启动期（`@PostConstruct`）写入静态片段；`assemble(...)` 使用 `LinkedHashSet` 去重并保持顺序，永远让静态片段排在动态片段之前。
+    *   组装出来的 `SystemMessage` 会以 `SYNTHETIC_MARKER` 开头，`HierarchicalChatMemoryStore.updateMessages()` 会用 `isSynthetic(...)` 将其从持久化消息里过滤掉，防止合成 system prompt 被写回 L1 后再次注入，形成重复系统上下文。
+    *   这套机制是“全局 system prompt 只有一条”的硬约束，兼容只接受单 system 消息的后端，也把 prompt 逻辑从 Controller / Tool / Agent 流程里彻底剥离出去。
 
 ## 5. 异构文档处理与消息管道模块
 
