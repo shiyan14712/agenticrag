@@ -21,7 +21,7 @@ import com.yoswell.agenticrag.core.agent.context.RagRetrievalContextHolder;
 import com.yoswell.agenticrag.core.agent.dto.CitationDTO;
 import com.yoswell.agenticrag.core.agent.dto.RagSearchResultDTO;
 import com.yoswell.agenticrag.core.agent.dto.RetrievedChunkDTO;
-import com.yoswell.agenticrag.core.agent.rag.RerankerClient;
+import com.yoswell.agenticrag.core.agent.llm.RerankerClient;
 import com.yoswell.agenticrag.retrieval.document.service.KnowledgeSearchService;
 import com.yoswell.agenticrag.web.security.context.TenantContextHolder;
 import com.yoswell.agenticrag.web.security.model.TenantUser;

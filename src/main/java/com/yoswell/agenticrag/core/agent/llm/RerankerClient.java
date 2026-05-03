@@ -1,4 +1,4 @@
-package com.yoswell.agenticrag.core.agent.rag;
+package com.yoswell.agenticrag.core.agent.llm;
 
 import java.io.IOException;
 import java.net.ConnectException;
