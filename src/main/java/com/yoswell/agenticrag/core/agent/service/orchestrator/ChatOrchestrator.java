@@ -248,10 +248,6 @@ public class ChatOrchestrator {
             List<ToolExecutionRequest> toolRequests = aiMessage.toolExecutionRequests();
             log.info("[Harness] Turn {} 产生 {} 个 ToolExecutionRequest: session={}",
                     turn, toolRequests.size(), sessionId);
-            if (!turnTextBuffer.isEmpty()) {
-                emitSseEvent(emitter, SseEventType.THINKING, turnTextBuffer.toString());
-            }
-
             List<ToolExecutionResultMessage> observations = executeToolRequests(
                     sessionId, turn, toolRequests, toolRuntime.executors(), invocationContext, emitter, toolStartTimestamp);
             observations.forEach(chatMemory::add);
@@ -283,6 +279,7 @@ public class ChatOrchestrator {
                 bindRagContextToCurrentThread(sessionId);
                 if (partialResponse != null && !partialResponse.isEmpty()) {
                     turnTextBuffer.append(partialResponse);
+                    emitSseEvent(emitter, SseEventType.MESSAGE, partialResponse);
                 }
             }
 
@@ -412,7 +409,9 @@ public class ChatOrchestrator {
             return;
         }
         fullResponse.append(finalText);
-        emitSseEvent(emitter, SseEventType.MESSAGE, finalText);
+        if (turnTextBuffer.isEmpty()) {
+            emitSseEvent(emitter, SseEventType.MESSAGE, finalText);
+        }
     }
 
     private ToolRuntime buildToolRuntime() {

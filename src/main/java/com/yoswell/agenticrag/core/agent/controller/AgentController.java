@@ -49,7 +49,7 @@ public class AgentController {
      * @param message 用户输入消息
      * @return SSE 流式响应发射器
      */
-    @PostMapping("/chat/stream")
+    @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chatStream(
             @RequestHeader(value = "X-Session-Id", required = false) String sessionId,
             @RequestBody String message) {
